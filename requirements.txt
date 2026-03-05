@@ -1,1 +1,15 @@
-streamlit
+streamlit>=1.54.0
+pandas>=2.1.0
+numpy>=1.26.0
+openpyxl
+st-gsheets-connection
+imagehash
+Pillow
+requests
+opencv-python-headless
+google-generativeai
+numpy>=1.26.0
+xlsxwriter
+mediapipe
+scikit-learn
+st-styled
