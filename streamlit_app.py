@@ -63,6 +63,7 @@ COUNTRY_CURRENCY = {
 
 @st.cache_data(ttl=3600)
 def fetch_exchange_rate(country: str) -> float:
+    """Fetch live USD → local currency rate from open.er-api.com (free, no key needed)."""
     cfg = COUNTRY_CURRENCY.get(country)
     if not cfg:
         return 1.0
@@ -78,6 +79,7 @@ def fetch_exchange_rate(country: str) -> float:
         return fallbacks.get(country, 1.0)
 
 def format_local_price(usd_price, country: str) -> str:
+    """Convert USD price to formatted local currency string."""
     try:
         price = float(usd_price)
         if price <= 0:
@@ -138,14 +140,9 @@ if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'image_advisor_cache' not in st.session_state: st.session_state.image_advisor_cache = {}
 if 'bg_executor' not in st.session_state: st.session_state.bg_executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
-if 'active_batch_reason' not in st.session_state: st.session_state.active_batch_reason = "Poor Image Quality"
-if 'cols_per_row_override' not in st.session_state: st.session_state.cols_per_row_override = None
-if 'show_prices' not in st.session_state: st.session_state.show_prices = True
-if 'show_image_warnings' not in st.session_state: st.session_state.show_image_warnings = True
-if 'sidebar_section' not in st.session_state: st.session_state.sidebar_section = "upload"
 
 try:
-    st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode, initial_sidebar_state="expanded")
+    st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
 
 st_yled.init()
@@ -169,104 +166,6 @@ st.markdown(f"""
         .stButton > button[kind="secondary"]:hover {{ background-color: {JUMIA_COLORS['light_gray']} !important; }}
         div[data-testid="stMetricValue"] {{ color: {JUMIA_COLORS['dark_gray']}; font-weight: 700; }}
         div[data-testid="stMetricLabel"] {{ color: {JUMIA_COLORS['medium_gray']}; }}
-
-        /* Sidebar custom styles */
-        section[data-testid="stSidebar"] {{
-            background: linear-gradient(180deg, #1a1a1e 0%, #242428 100%) !important;
-        }}
-        section[data-testid="stSidebar"] * {{
-            color: #F0F0F0 !important;
-        }}
-        section[data-testid="stSidebar"] .stSelectbox label,
-        section[data-testid="stSidebar"] .stRadio label,
-        section[data-testid="stSidebar"] .stCheckbox label,
-        section[data-testid="stSidebar"] .stSlider label {{
-            color: #C0C0C0 !important;
-            font-size: 12px !important;
-        }}
-        section[data-testid="stSidebar"] .stButton > button {{
-            background: #2e2e34 !important;
-            border: 1px solid #444 !important;
-            color: #F0F0F0 !important;
-            font-size: 12px !important;
-        }}
-        section[data-testid="stSidebar"] .stButton > button:hover {{
-            background: {JUMIA_COLORS['primary_orange']} !important;
-            border-color: {JUMIA_COLORS['primary_orange']} !important;
-            color: white !important;
-            transform: none !important;
-        }}
-        section[data-testid="stSidebar"] .stButton > button[kind="primary"] {{
-            background: {JUMIA_COLORS['primary_orange']} !important;
-            border: none !important;
-            color: white !important;
-        }}
-        section[data-testid="stSidebar"] hr {{
-            border-color: #3a3a40 !important;
-        }}
-        .sidebar-section-header {{
-            font-size: 10px !important;
-            font-weight: 700 !important;
-            text-transform: uppercase !important;
-            letter-spacing: 1.2px !important;
-            color: {JUMIA_COLORS['primary_orange']} !important;
-            padding: 6px 0 4px 0 !important;
-            border-bottom: 1px solid #3a3a40 !important;
-            margin-bottom: 10px !important;
-        }}
-        .sidebar-stat-box {{
-            background: #2a2a30;
-            border-radius: 8px;
-            padding: 10px 12px;
-            margin-bottom: 8px;
-            border-left: 3px solid {JUMIA_COLORS['primary_orange']};
-        }}
-        .sidebar-stat-value {{
-            font-size: 22px;
-            font-weight: 800;
-            color: #FFFFFF !important;
-            line-height: 1.1;
-        }}
-        .sidebar-stat-label {{
-            font-size: 10px;
-            color: #888 !important;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            margin-top: 2px;
-        }}
-        .sidebar-pill {{
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 700;
-            margin: 2px 2px;
-        }}
-        .pill-approved {{ background: rgba(76,175,80,0.2); color: #4CAF50 !important; border: 1px solid rgba(76,175,80,0.4); }}
-        .pill-rejected {{ background: rgba(231,60,23,0.2); color: #E73C17 !important; border: 1px solid rgba(231,60,23,0.4); }}
-        .pill-total {{ background: rgba(246,139,30,0.2); color: {JUMIA_COLORS['primary_orange']} !important; border: 1px solid rgba(246,139,30,0.4); }}
-        .reason-chip {{
-            display: block;
-            padding: 7px 12px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-bottom: 5px;
-            cursor: pointer;
-            border: 1px solid #3a3a40;
-            background: #2a2a30;
-            transition: all 0.15s ease;
-        }}
-        .reason-chip.active {{
-            background: rgba(246,139,30,0.15);
-            border-color: {JUMIA_COLORS['primary_orange']};
-            color: {JUMIA_COLORS['primary_orange']} !important;
-        }}
-        .nav-btn-active > button {{
-            background: rgba(246,139,30,0.18) !important;
-            border: 1px solid {JUMIA_COLORS['primary_orange']} !important;
-            color: {JUMIA_COLORS['primary_orange']} !important;
-        }}
 
         @media (prefers-color-scheme: dark) {{
             div[data-testid="stMetricValue"] {{ color: #F5F5F5 !important; }}
@@ -466,6 +365,7 @@ def load_excel_file(filename: str, column: Optional[str] = None):
     except Exception: return [] if column else pd.DataFrame()
 
 def safe_gsheets_read(url: str, worksheet, ttl: int = 3600, retries: int = 3, **kwargs) -> pd.DataFrame:
+    """Helper to read Google Sheets with automatic retry logic for 429 Quota errors."""
     for attempt in range(retries + 1):
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
@@ -482,6 +382,7 @@ def safe_gsheets_read(url: str, worksheet, ttl: int = 3600, retries: int = 3, **
             raise e
     return pd.DataFrame()
 
+# --- GSHEET: PROHIBITED PRODUCTS ---
 @st.cache_data(ttl=3600)
 def load_prohibited_from_sheet() -> Dict[str, List[Dict]]:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1XkWkSKre4hp-h98GA17e76lVXhS01Re03EL242nHrpg/edit"
@@ -511,6 +412,7 @@ def load_prohibited_from_sheet() -> Dict[str, List[Dict]]:
             prohibited_by_country[tab] = []
     return prohibited_by_country
 
+# --- GSHEET: RESTRICTED BRANDS ---
 @st.cache_data(ttl=3600)
 def load_restricted_brands_from_sheet() -> Dict[str, List[Dict]]:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1jXRkKRul6VhdnTaItyYR4IZOM9qBe4B217UD7WsYWFA/edit"
@@ -550,6 +452,7 @@ def load_restricted_brands_from_sheet() -> Dict[str, List[Dict]]:
             config_by_country[country_name] = []
     return config_by_country
 
+# --- GSHEET: REFURBISHED DATA ---
 @st.cache_data(ttl=3600)
 def load_refurb_data_from_sheet() -> dict:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1mGmXEvNZsKUta82X82-lISSf3rzDU7yBRh5F4R6mYwE/edit"
@@ -586,12 +489,14 @@ def load_refurb_data_from_sheet() -> dict:
         result["keywords"] = {"refurb", "refurbished", "renewed"}
     return result
 
+# --- GSHEET: PERFUME DATA ---
 @st.cache_data(ttl=3600)
 def load_perfume_data_from_sheet() -> Dict:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1BvS13LAtPd1tE0O12ZnJPIGdhXf_KJm7jix4nVqOC60/edit"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     KEYWORDS_TAB = "Keywords"
     result = {"sellers": {}, "keywords": set(), "category_codes": set()}
+
     for tab in COUNTRY_TABS:
         try:
             df = safe_gsheets_read(url=SHEET_URL, worksheet=tab, ttl=3600)
@@ -605,7 +510,8 @@ def load_perfume_data_from_sheet() -> Dict:
                 result["sellers"][tab] = sellers
         except Exception as e:
             logger.warning(f"Perfume sellers tab '{tab}' failed: {e}")
-            result["sellers"][tab] = set()
+            result["sellers"][tab] = set() 
+
     try:
         df_kw = safe_gsheets_read(url=SHEET_URL, worksheet=KEYWORDS_TAB, ttl=3600)
         if not df_kw.empty:
@@ -619,6 +525,7 @@ def load_perfume_data_from_sheet() -> Dict:
     except Exception as e:
         logger.warning(f"Perfume Keywords tab failed: {e}")
         result["keywords"] = set()
+
     try:
         df_cats = safe_gsheets_read(url=SHEET_URL, worksheet="Categories", ttl=3600)
         if not df_cats.empty:
@@ -634,11 +541,13 @@ def load_perfume_data_from_sheet() -> Dict:
         result["category_codes"] = set()
     return result
 
+# --- GSHEET: BOOKS DATA ---
 @st.cache_data(ttl=3600)
 def load_books_data_from_sheet() -> Dict:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/17ZGqh3ycH4iW1V_p75L8wEIobpM2ZgGxGRfvCaBioF8/edit"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     result = {"sellers": {}, "category_codes": set()}
+
     for tab in COUNTRY_TABS:
         try:
             df = safe_gsheets_read(url=SHEET_URL, worksheet=tab, ttl=3600)
@@ -653,6 +562,7 @@ def load_books_data_from_sheet() -> Dict:
         except Exception as e:
             logger.warning(f"Books sellers tab '{tab}' failed: {e}")
             result["sellers"][tab] = set()
+
     try:
         df_cats = safe_gsheets_read(url=SHEET_URL, worksheet="Categories", ttl=3600)
         if not df_cats.empty:
@@ -668,12 +578,14 @@ def load_books_data_from_sheet() -> Dict:
         result["category_codes"] = set()
     return result
 
+# --- GSHEET: JERSEYS DATA ---
 @st.cache_data(ttl=3600)
 def load_jerseys_from_sheet() -> Dict:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1W5yW6lDEW1CAqm9--ultMrNL_CWabab3Fr9fnKJ6xXY/edit"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     CATEGORIES_TAB = "categories"
     result: Dict = {"keywords": {tab: set() for tab in COUNTRY_TABS}, "exempted": {tab: set() for tab in COUNTRY_TABS}, "categories": set()}
+
     for tab in COUNTRY_TABS:
         try:
             df = safe_gsheets_read(url=SHEET_URL, worksheet=tab, ttl=3600)
@@ -688,6 +600,7 @@ def load_jerseys_from_sheet() -> Dict:
                     result["exempted"][tab] = exempted
         except Exception as e:
             logger.warning(f"load_jerseys_from_sheet [{tab}]: {e}")
+
     try:
         df_cats = safe_gsheets_read(url=SHEET_URL, worksheet=CATEGORIES_TAB, ttl=3600)
         if not df_cats.empty:
@@ -698,6 +611,7 @@ def load_jerseys_from_sheet() -> Dict:
         logger.warning(f"load_jerseys_from_sheet [categories tab]: {e}")
     return result
 
+# --- GSHEET: SUSPECTED FAKE DATA ---
 @st.cache_data(ttl=3600)
 def load_suspected_fake_from_sheet() -> pd.DataFrame:
     SHEET_URL = "https://docs.google.com/spreadsheets/d/1OdunXvEi1zNvAdWznvo2QLGFufUlN00V03ZWnd8pBCo/edit"
@@ -706,11 +620,14 @@ def load_suspected_fake_from_sheet() -> pd.DataFrame:
         if not df.empty: return df
     except Exception as e:
         logger.warning(f"Failed to load Suspected Fake from Google Sheet, falling back to local: {e}")
+    
+    # Fallback to local file if Sheet is unavailable
     try:
         if os.path.exists('suspected_fake.xlsx'):
             return pd.read_excel('suspected_fake.xlsx', engine='openpyxl', dtype=str)
     except: pass
     return pd.DataFrame()
+
 
 @st.cache_data(ttl=3600)
 def load_flags_mapping(filename="reason.xlsx") -> Dict[str, Tuple[str, str]]:
@@ -1016,7 +933,12 @@ def check_product_warranty(data: pd.DataFrame, warranty_category_codes: List[str
     mask = ~(is_present(target['PRODUCT_WARRANTY']) | is_present(target['WARRANTY_DURATION']))
     return target[mask].drop(columns=['CAT_CLEAN'], errors='ignore').drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-def check_seller_approved_for_books(data: pd.DataFrame, books_data: Dict, country_code: str, book_category_codes: List[str]) -> pd.DataFrame:
+def check_seller_approved_for_books(
+    data: pd.DataFrame,
+    books_data: Dict,
+    country_code: str,
+    book_category_codes: List[str],
+) -> pd.DataFrame:
     if not {'CATEGORY_CODE', 'SELLER_NAME'}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
     category_codes = books_data.get('category_codes') or set(clean_category_code(c) for c in book_category_codes)
@@ -1034,7 +956,10 @@ def check_seller_approved_for_books(data: pd.DataFrame, books_data: Dict, countr
         flagged['Comment_Detail'] = "Seller not approved to sell books: " + flagged['SELLER_NAME'].astype(str)
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-def check_perfume_wrong_category(data: pd.DataFrame, perfume_data: Dict) -> pd.DataFrame:
+def check_perfume_wrong_category(
+    data: pd.DataFrame,
+    perfume_data: Dict,
+) -> pd.DataFrame:
     if not {'NAME', 'CATEGORY_CODE'}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
     category_codes = perfume_data.get('category_codes', set())
@@ -1056,12 +981,19 @@ def check_perfume_wrong_category(data: pd.DataFrame, perfume_data: Dict) -> pd.D
         )
     return flagged.drop(columns=['_cat_clean'], errors='ignore').drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-def check_seller_approved_for_perfume(data: pd.DataFrame, perfume_category_codes: List[str], perfume_data: Dict, country_code: str) -> pd.DataFrame:
+def check_seller_approved_for_perfume(
+    data: pd.DataFrame,
+    perfume_category_codes: List[str],
+    perfume_data: Dict,
+    country_code: str,
+) -> pd.DataFrame:
     if not {'CATEGORY_CODE', 'SELLER_NAME', 'BRAND', 'NAME'}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
     sheet_cat_codes = perfume_data.get('category_codes')
     cat_codes = sheet_cat_codes if sheet_cat_codes else set(clean_category_code(c) for c in perfume_category_codes)
-    perfume = data[data['CATEGORY_CODE'].apply(clean_category_code).isin(cat_codes)].copy()
+    perfume = data[
+        data['CATEGORY_CODE'].apply(clean_category_code).isin(cat_codes)
+    ].copy()
     if perfume.empty:
         return pd.DataFrame(columns=data.columns)
     keywords = perfume_data.get('keywords', set())
@@ -1525,7 +1457,7 @@ def analyze_image_quality(url: str, cache_dict: dict) -> List[str]:
     return warnings
 
 @st.fragment
-def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warnings=None, show_prices: bool = True, show_image_warnings: bool = True):
+def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warnings=None):
     if advisor_warnings is None:
         advisor_warnings = []
     sid = str(row['PRODUCT_SET_SID'])
@@ -1561,8 +1493,9 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
             return f if f > 0 else None
         except (TypeError, ValueError):
             return None
+            
     raw_price = _to_float(row.get('GLOBAL_SALE_PRICE')) or _to_float(row.get('GLOBAL_PRICE')) or 0
-    price_str = format_local_price(raw_price, country) if show_prices else ""
+    price_str = format_local_price(raw_price, country)
     price_overlay_html = (
         f"<div style='position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.72);"
         f"color:#fff;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;"
@@ -1597,12 +1530,10 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
                     st.caption(raw_name)
 
             is_checked = st.session_state.get(f"grid_chk_{sid}", False)
-
-            # Build warnings HTML only if enabled
             warnings_html = ""
-            if show_image_warnings and advisor_warnings:
+            if advisor_warnings:
                 badges = "".join([
-                    f'<div style="background:rgba(255,193,7,0.95);color:#313133;font-size:10px;font-weight:800;padding:4px 8px;border-radius:12px;box-shadow:0 2px 4px rgba(0,0,0,0.2);display:flex;align-items:center;margin-bottom:4px;">'
+                    f'<div style="background:rgba(255,193,7,0.95);color:#313133;font-size:10px;font-weight:800;padding:4px 8px;border-radius:12px;box-shadow:0 2px 4px rgba(0,0,0,0.2);display:flex;align-items:center;margin-bottom:4px;">' +
                     f'<span class="material-symbols-outlined" style="font-size:13px;margin-right:4px;">warning</span>{w}</div>'
                     for w in advisor_warnings
                 ])
@@ -1624,6 +1555,7 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
                 if is_checked else ""
             )
 
+            # Unique key for this card's image click area
             img_div_id = f"imgclick-{sid}"
 
             st.markdown(
@@ -1640,17 +1572,18 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
                 f'<script>'
                 f'(function(){{'
                 f'  var el=document.getElementById("{img_div_id}");'
-                f'  if(el&&!el._bound){{'
+                f'  if(el && !el._bound){{'
                 f'    el._bound=true;'
-                f'    el.addEventListener("click",function(e){{'
+                f'    el.addEventListener("click", function(e){{'
                 f'      e.stopPropagation();'
-                f'      var root=window.parent?window.parent.document:document;'
-                f'      var allCbs=root.querySelectorAll(\'input[type="checkbox"]\');'
-                f'      allCbs.forEach(function(cb){{'
-                f'        var section=cb.closest(\'[data-testid="stVerticalBlockBorderWrapper"]\');'
-                f'        if(!section)section=cb.closest(\'[data-testid="column"]\');'
-                f'        if(section&&section.textContent.indexOf("{sid}")>-1){{cb.click();}}'
-                f'      }});'
+                f'      /* Find the parent container wrapping this specific product card */'
+                f'      var card = el.closest(\'[data-testid="stVerticalBlockBorderWrapper"]\');'
+                f'      if(!card) card = el.closest(\'[data-testid="stVerticalBlock"]\');'
+                f'      if(card){{'
+                f'        /* Find the checkbox inside this exact card and click it */'
+                f'        var cb = card.querySelector(\'input[type="checkbox"]\');'
+                f'        if(cb) cb.click();'
+                f'      }}'
                 f'    }});'
                 f'  }}'
                 f'}})();'
@@ -1676,7 +1609,7 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
                     st.button("Restricted Brand",   key=f"brnd_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, brnd_code,        brnd_cmt,        'Restricted brands',                             toast_name))
                     st.button("Prohibited Product", key=f"proh_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, proh_code,        proh_cmt,        'Prohibited products',                           toast_name))
                     st.button("Wrong Color",        key=f"colr_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, color_code,       color_cmt,       'Missing COLOR',                                 toast_name))
-                    st.button("Wrong Brand",        key=f"wbrnd_{sid}", use_container_width=True, on_click=quick_reject_item, args=(sid, wrong_brand_code, wrong_brand_cmt, 'Generic branded products with genuine brands',  toast_name))
+                    st.button("Wrong Brand",        key=f"wbrnd_{sid}", use_container_width=True, on_click=quick_reject_item, args=(sid, wrong_brand_code, wrong_brand_cmt, 'Generic branded products with genuine brands',      toast_name))
 
 @st.dialog("Confirm Bulk Approval")
 def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator):
@@ -1758,259 +1691,12 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ==========================================================
-# SIDEBAR — full control panel
-# ==========================================================
 with st.sidebar:
-    # ── Logo / Title ──────────────────────────────────────
-    st.markdown(f"""
-    <div style="text-align:center;padding:16px 0 10px 0;">
-        <div style="font-size:28px;font-weight:900;color:{JUMIA_COLORS['primary_orange']};letter-spacing:-0.5px;line-height:1;">
-            JUMIA
-        </div>
-        <div style="font-size:10px;color:#888;letter-spacing:2px;text-transform:uppercase;margin-top:2px;">
-            Product Validation
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.divider()
-
-    # ── Live Stats (only shown when data is loaded) ───────
-    if not st.session_state.final_report.empty:
-        fr = st.session_state.final_report
-        total = len(st.session_state.all_data_map)
-        approved = int((fr['Status'] == 'Approved').sum())
-        rejected = int((fr['Status'] == 'Rejected').sum())
-        rate = f"{(rejected/total*100):.1f}%" if total > 0 else "0%"
-
-        st.markdown('<div class="sidebar-section-header">📊 Live Stats</div>', unsafe_allow_html=True)
-
-        # Big rejection rate
-        st.markdown(f"""
-        <div style="text-align:center;padding:12px 0 8px 0;">
-            <div style="font-size:42px;font-weight:900;color:{JUMIA_COLORS['jumia_red']};line-height:1;">{rate}</div>
-            <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:2px;">Rejection Rate</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown(f"""
-            <div class="sidebar-stat-box" style="border-left-color:{JUMIA_COLORS['success_green']};">
-                <div class="sidebar-stat-value" style="color:{JUMIA_COLORS['success_green']} !important;">{approved:,}</div>
-                <div class="sidebar-stat-label">Approved</div>
-            </div>""", unsafe_allow_html=True)
-        with col_b:
-            st.markdown(f"""
-            <div class="sidebar-stat-box" style="border-left-color:{JUMIA_COLORS['jumia_red']};">
-                <div class="sidebar-stat-value" style="color:{JUMIA_COLORS['jumia_red']} !important;">{rejected:,}</div>
-                <div class="sidebar-stat-label">Rejected</div>
-            </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="sidebar-stat-box">
-            <div class="sidebar-stat-value">{total:,}</div>
-            <div class="sidebar-stat-label">Total Products</div>
-        </div>""", unsafe_allow_html=True)
-
-        # Rejection breakdown mini-chart
-        if rejected > 0:
-            flag_counts = fr[fr['Status'] == 'Rejected']['FLAG'].value_counts().head(5)
-            st.markdown('<div class="sidebar-section-header" style="margin-top:14px;">🚩 Top Flags</div>', unsafe_allow_html=True)
-            for flag, count in flag_counts.items():
-                pct = count / rejected * 100
-                short = str(flag)[:22] + ("…" if len(str(flag)) > 22 else "")
-                st.markdown(f"""
-                <div style="margin-bottom:6px;">
-                    <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;">
-                        <span style="color:#C0C0C0;">{short}</span>
-                        <span style="color:{JUMIA_COLORS['primary_orange']};font-weight:700;">{count}</span>
-                    </div>
-                    <div style="background:#333;border-radius:4px;height:4px;overflow:hidden;">
-                        <div style="background:{JUMIA_COLORS['primary_orange']};height:100%;width:{pct:.0f}%;border-radius:4px;"></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        st.divider()
-
-    # ── Country Selection ─────────────────────────────────
-    st.markdown('<div class="sidebar-section-header">🌍 Country</div>', unsafe_allow_html=True)
-
-    country_flags = {"Kenya": "🇰🇪", "Uganda": "🇺🇬", "Nigeria": "🇳🇬", "Ghana": "🇬🇭", "Morocco": "🇲🇦"}
-    current_country = st.session_state.get('selected_country', 'Kenya')
-
-    selected_country_sidebar = st.radio(
-        "Select country",
-        list(country_flags.keys()),
-        index=list(country_flags.keys()).index(current_country),
-        format_func=lambda x: f"{country_flags[x]} {x}",
-        label_visibility="collapsed",
-        key="sidebar_country_radio"
-    )
-    if selected_country_sidebar != st.session_state.get('selected_country'):
-        st.session_state.selected_country = selected_country_sidebar
+    st.header("Display Settings")
+    new_mode = "wide" if "Wide" in st.radio("Layout Mode", ["Centered", "Wide"], index=1 if st.session_state.layout_mode == "wide" else 0) else "centered"
+    if new_mode != st.session_state.layout_mode:
+        st.session_state.layout_mode = new_mode
         st.rerun()
-
-    st.divider()
-
-    # ── Layout & Display ──────────────────────────────────
-    st.markdown('<div class="sidebar-section-header">🖥️ Display Settings</div>', unsafe_allow_html=True)
-
-    new_mode = st.radio(
-        "Layout",
-        ["Wide", "Centered"],
-        index=0 if st.session_state.layout_mode == "wide" else 1,
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    desired_mode = "wide" if new_mode == "Wide" else "centered"
-    if desired_mode != st.session_state.layout_mode:
-        st.session_state.layout_mode = desired_mode
-        st.rerun()
-
-    cols_options = {"Auto": None, "2 cols": 2, "3 cols": 3, "4 cols": 4, "5 cols": 5, "6 cols": 6}
-    cols_choice = st.selectbox(
-        "Grid columns",
-        list(cols_options.keys()),
-        index=0,
-        key="sidebar_cols_choice"
-    )
-    st.session_state.cols_per_row_override = cols_options[cols_choice]
-
-    items_choice = st.select_slider(
-        "Items per page",
-        options=[25, 50, 100, 200, 500],
-        value=st.session_state.grid_items_per_page,
-        key="sidebar_items_per_page"
-    )
-    if items_choice != st.session_state.grid_items_per_page:
-        st.session_state.grid_items_per_page = items_choice
-        st.session_state.grid_page = 0
-
-    st.session_state.show_prices = st.toggle("Show prices on cards", value=st.session_state.show_prices, key="sidebar_show_prices")
-    st.session_state.show_image_warnings = st.toggle("Show image warnings", value=st.session_state.show_image_warnings, key="sidebar_show_img_warnings")
-
-    st.divider()
-
-    # ── Batch Rejection Mode ──────────────────────────────
-    st.markdown('<div class="sidebar-section-header">⚡ Batch Rejection Mode</div>', unsafe_allow_html=True)
-    st.caption("Active reason used by Reject All & batch buttons")
-
-    batch_reasons = {
-        "Poor Image Quality": "🖼️",
-        "Wrong Category": "📂",
-        "Suspected Fake": "🚫",
-        "Restricted Brand": "®️",
-        "Wrong Brand": "🏷️",
-    }
-
-    current_batch = st.session_state.get('active_batch_reason', 'Poor Image Quality')
-    for reason_label, emoji in batch_reasons.items():
-        is_active = (current_batch == reason_label)
-        btn_style = "primary" if is_active else "secondary"
-        if st.button(
-            f"{emoji} {reason_label}{'  ✓' if is_active else ''}",
-            key=f"sidebar_batch_{reason_label}",
-            use_container_width=True,
-            type=btn_style
-        ):
-            st.session_state.active_batch_reason = reason_label
-            st.rerun()
-
-    st.divider()
-
-    # ── Quick Navigation ──────────────────────────────────
-    st.markdown('<div class="sidebar-section-header">🧭 Quick Navigation</div>', unsafe_allow_html=True)
-
-    if st.button("⬆ Upload & Validate", use_container_width=True, key="nav_upload"):
-        st.session_state.main_toasts.append(("Scroll to Upload section", "📤"))
-    if st.button("📊 Validation Results", use_container_width=True, key="nav_results", disabled=st.session_state.final_report.empty):
-        st.session_state.main_toasts.append(("Scroll to Results section", "📊"))
-    if st.button("🖼️ Image Review", use_container_width=True, key="nav_review", disabled=st.session_state.final_report.empty):
-        st.session_state.main_toasts.append(("Scroll to Image Review section", "🖼️"))
-    if st.button("📥 Downloads", use_container_width=True, key="nav_downloads", disabled=st.session_state.final_report.empty):
-        st.session_state.main_toasts.append(("Scroll to Downloads section", "📥"))
-
-    st.divider()
-
-    # ── Page Navigation (when in review) ─────────────────
-    if not st.session_state.final_report.empty:
-        fr_nav = st.session_state.final_report
-        quick_rej_sids_nav = [k.replace("quick_rej_", "") for k in st.session_state.keys() if k.startswith("quick_rej_") and "reason" not in k]
-        mask_nav = (fr_nav['Status'] == 'Approved') | (fr_nav['ProductSetSid'].isin(quick_rej_sids_nav))
-        review_count = int(mask_nav.sum())
-        items_pp = st.session_state.grid_items_per_page
-        total_pages_nav = max(1, (review_count + items_pp - 1) // items_pp)
-        current_page = st.session_state.grid_page
-
-        st.markdown('<div class="sidebar-section-header">📄 Page Navigation</div>', unsafe_allow_html=True)
-        st.markdown(f"""
-        <div style="text-align:center;padding:6px 0 10px 0;">
-            <span style="font-size:20px;font-weight:800;color:#fff;">{current_page + 1}</span>
-            <span style="font-size:12px;color:#888;"> / {total_pages_nav}</span>
-            <div style="font-size:10px;color:#666;margin-top:2px;">{review_count:,} items in review</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        col_prev, col_next = st.columns(2)
-        with col_prev:
-            if st.button("◀ Prev", use_container_width=True, disabled=(current_page == 0), key="sidebar_prev"):
-                st.session_state.grid_page = max(0, current_page - 1)
-                st.rerun()
-        with col_next:
-            if st.button("Next ▶", use_container_width=True, disabled=(current_page >= total_pages_nav - 1), key="sidebar_next"):
-                st.session_state.grid_page = min(total_pages_nav - 1, current_page + 1)
-                st.rerun()
-
-        jump_page = st.number_input(
-            "Jump to page",
-            min_value=1,
-            max_value=total_pages_nav,
-            value=current_page + 1,
-            step=1,
-            key="sidebar_jump_page",
-            label_visibility="collapsed"
-        )
-        if st.button("Go to page", use_container_width=True, key="sidebar_go_page"):
-            st.session_state.grid_page = int(jump_page) - 1
-            st.rerun()
-
-        st.divider()
-
-    # ── Cache Management ──────────────────────────────────
-    st.markdown('<div class="sidebar-section-header">🔧 Tools</div>', unsafe_allow_html=True)
-
-    if st.button("🗑️ Clear Export Cache", use_container_width=True, key="sidebar_clear_exports"):
-        st.session_state.exports_cache.clear()
-        st.session_state.main_toasts.append(("Export cache cleared", "🗑️"))
-        st.rerun()
-
-    if st.button("🔄 Clear Image Cache", use_container_width=True, key="sidebar_clear_img_cache"):
-        st.session_state.image_advisor_cache.clear()
-        st.session_state.main_toasts.append(("Image cache cleared", "🔄"))
-        st.rerun()
-
-    if not st.session_state.final_report.empty:
-        if st.button("↩️ Reset All to Approved", use_container_width=True, key="sidebar_reset_approved"):
-            st.session_state.final_report.loc[:, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', '']
-            keys_to_delete = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_"))]
-            for k in keys_to_delete:
-                del st.session_state[k]
-            st.session_state.exports_cache.clear()
-            st.session_state.main_toasts.append(("All products reset to Approved", "↩️"))
-            st.rerun()
-
-    st.divider()
-
-    # ── Footer ────────────────────────────────────────────
-    st.markdown(f"""
-    <div style="text-align:center;padding:8px 0 4px 0;">
-        <div style="font-size:10px;color:#555;">Powered by Jumia QC</div>
-        <div style="font-size:9px;color:#444;margin-top:2px;">{datetime.now().strftime('%d %b %Y')}</div>
-    </div>
-    """, unsafe_allow_html=True)
 
 # ==========================================
 # SECTION 1: UPLOAD & VALIDATION
@@ -2018,18 +1704,11 @@ with st.sidebar:
 st.header(":material/upload_file: Upload Files", anchor=False)
 
 current_country = st.session_state.get('selected_country', 'Kenya')
+country_choice = st.segmented_control("Country", ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"], default=current_country)
 
-# Country segmented control (main area) — stays in sync with sidebar
-country_choice = st.segmented_control(
-    "Country",
-    ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"],
-    default=current_country,
-    key="main_country_control"
-)
-if country_choice and country_choice != st.session_state.get('selected_country'):
+if country_choice:
     st.session_state.selected_country = country_choice
-    st.rerun()
-if not country_choice:
+else:
     country_choice = current_country
 
 country_validator = CountryValidator(st.session_state.selected_country)
@@ -2167,12 +1846,10 @@ if not st.session_state.final_report.empty:
     mask = (fr['Status'] == 'Approved') | (fr['ProductSetSid'].isin(quick_rej_sids))
     valid_grid_df = fr[mask]
 
-    c_rev_1, c_rev_2 = st.columns([1.5, 1.5])
+    c_rev_1, c_rev_2, c_rev_3 = st.columns([1.5, 1.5, 2])
     with c_rev_1: search_n = st.text_input("Search by Name", placeholder="Product name...")
     with c_rev_2: search_sc = st.text_input("Search by Seller / Category", placeholder="Seller or Category...")
-
-    # Batch reason: use sidebar value
-    grid_reason = st.session_state.get('active_batch_reason', 'Poor Image Quality')
+    with c_rev_3: st.session_state.grid_items_per_page = st.select_slider("Items per page", options=[50, 100, 200], value=st.session_state.grid_items_per_page)
 
     def get_batch_labels():
         return {
@@ -2183,16 +1860,13 @@ if not st.session_state.final_report.empty:
             "Wrong Brand": "Generic branded products with genuine brands"
         }
 
-    # Show active reason banner
-    st.markdown(f"""
-    <div class='batch-info-box' style='background: var(--background-color, {JUMIA_COLORS['light_gray']});margin-bottom:12px;'>
-        <span style='font-size: 12px; font-weight: 600;'>⚡ Active Batch Reason:</span>
-        <span style='font-size: 13px; font-weight: 700; margin-left: 8px; color:{JUMIA_COLORS['primary_orange']};'>{grid_reason}</span>
-        <span style='font-size: 11px; color:#888; margin-left: 8px;'>(change in sidebar)</span>
-    </div>
-    """, unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown(f"<p style='font-weight: 700; margin: 0 0 10px 0;'>Batch Rejection Mode</p>", unsafe_allow_html=True)
+        grid_reason = st.segmented_control("Select rejection reason for batch actions:", list(get_batch_labels().keys()), default="Poor Image Quality", label_visibility="collapsed")
+        if not grid_reason: grid_reason = "Poor Image Quality"
+        st.markdown(f"""<div class='batch-info-box' style='background: var(--background-color, {JUMIA_COLORS['light_gray']});'><span style='font-size: 12px; font-weight: 600;'>Active Reason:</span><span style='font-size: 13px; font-weight: 700; margin-left: 8px;'>{grid_reason}</span></div>""", unsafe_allow_html=True)
 
-    review_data = pd.merge(valid_grid_df[['ProjectSetSid' if 'ProjectSetSid' in valid_grid_df.columns else 'ProductSetSid']], st.session_state.all_data_map, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left') if 'ProductSetSid' in valid_grid_df.columns else pd.merge(valid_grid_df[['ProductSetSid']], st.session_state.all_data_map, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')
+    review_data = pd.merge(valid_grid_df[['ProductSetSid']], st.session_state.all_data_map, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')
 
     if search_n: review_data = review_data[review_data['NAME'].astype(str).str.contains(search_n, case=False, na=False)]
     if search_sc:
@@ -2254,25 +1928,13 @@ if not st.session_state.final_report.empty:
             try: page_warnings[sid] = future.result()
             except Exception: page_warnings[sid] = []
 
-    # Determine columns per row
-    if st.session_state.cols_per_row_override:
-        cols_per_row = st.session_state.cols_per_row_override
-    else:
-        cols_per_row = 3 if st.session_state.layout_mode == "centered" else 5
-
+    cols_per_row = 3 if st.session_state.layout_mode == "centered" else 5
     for i in range(0, len(page_data), cols_per_row):
         cols = st.columns(cols_per_row)
         for j, (_, row) in enumerate(page_data.iloc[i:i+cols_per_row].iterrows()):
             with cols[j]:
                 sid_for_row = str(row['PRODUCT_SET_SID'])
-                render_product_card(
-                    row,
-                    support_files['flags_mapping'],
-                    st.session_state.get('selected_country', 'Kenya'),
-                    page_warnings.get(sid_for_row, []),
-                    show_prices=st.session_state.show_prices,
-                    show_image_warnings=st.session_state.show_image_warnings,
-                )
+                render_product_card(row, support_files['flags_mapping'], st.session_state.get('selected_country', 'Kenya'), page_warnings.get(sid_for_row, []))
 
     if st.session_state.grid_page < total_pages - 1:
         next_page_data = review_data.iloc[(st.session_state.grid_page + 1) * items_per_page : (st.session_state.grid_page + 2) * items_per_page]
