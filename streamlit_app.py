@@ -132,7 +132,8 @@ if 'all_data_map' not in st.session_state: st.session_state.all_data_map = pd.Da
 if 'intersection_sids' not in st.session_state: st.session_state.intersection_sids = set()
 if 'intersection_count' not in st.session_state: st.session_state.intersection_count = 0
 if 'grid_page' not in st.session_state: st.session_state.grid_page = 0
-if 'grid_items_per_page' not in st.session_state: st.session_state.grid_items_per_page = 100
+# DEFAULT TO 50 FOR FASTER RENDER
+if 'grid_items_per_page' not in st.session_state: st.session_state.grid_items_per_page = 50
 if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'image_advisor_cache' not in st.session_state: st.session_state.image_advisor_cache = {}
@@ -202,6 +203,17 @@ st.markdown(f"""
         div[data-testid="stVerticalBlockBorderWrapper"] {{ overflow: visible !important; }}
 
         .rejected-card-overlay {{ position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(231, 60, 23, 0.9); color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 12px; white-space: nowrap; display: flex; align-items: center; }}
+        
+        /* Prevent product card buttons from wrapping */
+        div[data-testid="stVerticalBlockBorderWrapper"] .stButton > button {{
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            font-size: 11px !important;
+            padding: 6px 4px !important;
+            min-height: 36px !important;
+            line-height: 1.2 !important;
+        }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -1501,7 +1513,7 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
 
     with st.container(border=True):
         if is_rejected:
-            st.markdown(f"""<div style="position: relative;"><img src="{img_url}" loading="lazy" style="width: 100%; height: 220px; object-fit: contain; background-color: #FFFFFF; border-radius: 8px; border: 1px solid #eee; opacity: 0.4; filter: grayscale(100%);"><div class="rejected-card-overlay"><span class="material-symbols-outlined" style="margin-right: 6px; font-size: 16px;">block</span> REJECTED</div></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div style="position: relative;"><img src="{img_url}" loading="lazy" style="width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background-color: #FFFFFF; border-radius: 8px; border: 1px solid #eee; opacity: 0.4; filter: grayscale(100%);"><div class="rejected-card-overlay"><span class="material-symbols-outlined" style="margin-right: 6px; font-size: 16px;">block</span> REJECTED</div></div>""", unsafe_allow_html=True)
             st.markdown(f"""<div style="font-size: 13px; line-height: 1.4; margin: 8px 0;"><span class="prod-name-tip" data-full="{raw_name_attr}">{name_text}</span>{color_badge_html}<div class="prod-meta-text" style="font-size: 11px; margin-bottom: 4px;">{cat_text}</div><div class="prod-brand-text" style="font-weight: 600; margin-bottom: 8px;">{brand_text}</div><div class="prod-meta-text" style="font-size: 10px; padding-top: 8px; border-top: 1px dashed #E0E0E0;">{seller_text}</div></div>""", unsafe_allow_html=True)
             col_msg, col_btn = st.columns([3.5, 1])
             with col_msg:
@@ -1553,7 +1565,7 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
                 f'transition:border 0.15s ease,box-shadow 0.15s ease;overflow:hidden;margin-bottom:8px;">'
                 f'{warnings_html}'
                 f'{green_overlay}'
-                f'<img src="{img_url}" loading="lazy" style="width:100%;height:220px;object-fit:contain;'
+                f'<img src="{img_url}" loading="lazy" style="width:100%;aspect-ratio: 1 / 1;object-fit:contain;'
                 f'background-color:#FFFFFF;border-radius:8px;display:block;">'
                 f'{price_overlay_html}'
                 f'{tick_html}'
@@ -1568,11 +1580,11 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
 <div class='prod-meta-text' style="font-size:10px;padding-top:8px;border-top:1px dashed #E0E0E0;">{seller_text}</div>
 </div>""", unsafe_allow_html=True)
 
-            col_img, col_more = st.columns([1, 1], gap="small")
+            col_img, col_more = st.columns([1.2, 0.8], gap="small")
             with col_img:
-                st.button("Poor Image", key=f"btn_img_{sid}", use_container_width=True, on_click=quick_reject_item, args=(sid, img_code, img_cmt, 'Poor images', toast_name), type="primary", help="Reject: Poor Image Quality")
+                st.button("🖼 Poor Image", key=f"btn_img_{sid}", use_container_width=True, on_click=quick_reject_item, args=(sid, img_code, img_cmt, 'Poor images', toast_name), type="primary", help="Reject: Poor Image Quality")
             with col_more:
-                with st.popover("✕ More...", use_container_width=True):
+                with st.popover("✕ More", use_container_width=True):
                     st.markdown("<p style='font-size:12px;font-weight:700;margin:0 0 8px 0;'>Select rejection reason:</p>", unsafe_allow_html=True)
                     st.button("Wrong Category",     key=f"cat_{sid}",   use_container_width=True, on_click=quick_reject_item, args=(sid, cat_code,         cat_cmt,         'Wrong Category',                                toast_name))
                     st.button("Fake Product",       key=f"fake_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, fake_code,        fake_cmt,        'Suspected Fake product',                        toast_name))
@@ -1859,7 +1871,7 @@ if not st.session_state.final_report.empty:
     c_rev_1, c_rev_2, c_rev_3 = st.columns([1.5, 1.5, 2])
     with c_rev_1: search_n = st.text_input("Search by Name", placeholder="Product name...")
     with c_rev_2: search_sc = st.text_input("Search by Seller / Category", placeholder="Seller or Category...")
-    with c_rev_3: st.session_state.grid_items_per_page = st.select_slider("Items per page", options=[50, 100, 200], value=st.session_state.grid_items_per_page)
+    with c_rev_3: st.session_state.grid_items_per_page = st.select_slider("Items per page", options=[20, 50, 100, 200], value=st.session_state.grid_items_per_page)
 
     def get_batch_labels():
         return {
@@ -1938,7 +1950,9 @@ if not st.session_state.final_report.empty:
             try: page_warnings[sid] = future.result()
             except Exception: page_warnings[sid] = []
 
-    cols_per_row = 3 if st.session_state.layout_mode == "centered" else 5
+    # REVISED GRID SIZE: 4 columns instead of 5 for wider cards on laptop
+    cols_per_row = 3 if st.session_state.layout_mode == "centered" else 4
+    
     for i in range(0, len(page_data), cols_per_row):
         cols = st.columns(cols_per_row)
         for j, (_, row) in enumerate(page_data.iloc[i:i+cols_per_row].iterrows()):
