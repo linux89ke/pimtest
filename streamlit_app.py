@@ -63,7 +63,6 @@ COUNTRY_CURRENCY = {
 
 @st.cache_data(ttl=3600)
 def fetch_exchange_rate(country: str) -> float:
-    """Fetch live USD → local currency rate from open.er-api.com (free, no key needed)."""
     cfg = COUNTRY_CURRENCY.get(country)
     if not cfg:
         return 1.0
@@ -79,7 +78,6 @@ def fetch_exchange_rate(country: str) -> float:
         return fallbacks.get(country, 1.0)
 
 def format_local_price(usd_price, country: str) -> str:
-    """Convert USD price to formatted local currency string."""
     try:
         price = float(usd_price)
         if price <= 0:
@@ -408,7 +406,9 @@ def load_prohibited_from_sheet() -> Dict[str, List[Dict]]:
                 country_rules.append({'keyword': keyword, 'categories': categories})
             prohibited_by_country[tab] = country_rules
         except Exception as e:
-            logger.error(f"Error loading prohibited words for {tab}: {e}")
+            msg = f"⚠️ **Google Sheets Error:** Failed to load Prohibited Products for **{tab}**. (Error: {e})"
+            logger.error(msg)
+            st.error(msg)
             prohibited_by_country[tab] = []
     return prohibited_by_country
 
@@ -448,7 +448,9 @@ def load_restricted_brands_from_sheet() -> Dict[str, List[Dict]]:
                 country_rules.append({'brand': b_lower, 'brand_raw': data['brand_raw'], 'sellers': data['sellers'], 'categories': data['categories'], 'variations': list(data['variations'])})
             config_by_country[country_name] = country_rules
         except Exception as e:
-            logger.error(f"Error loading restricted brands for {tab_name}: {e}")
+            msg = f"⚠️ **Google Sheets Error:** Failed to load Restricted Brands for **{tab_name}**. (Error: {e})"
+            logger.error(msg)
+            st.error(msg)
             config_by_country[country_name] = []
     return config_by_country
 
@@ -469,7 +471,9 @@ def load_refurb_data_from_sheet() -> dict:
                 laptops_set = set(df.iloc[:, 1].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "laptops"}
                 result["sellers"][tab] = {"Phones": phones_set, "Laptops": laptops_set}
         except Exception as e:
-            logger.warning(f"Error loading {tab} refurb sellers: {e}")
+            msg = f"⚠️ **Google Sheets Error:** Failed to load Refurb Sellers for **{tab}**. (Error: {e})"
+            logger.error(msg)
+            st.warning(msg)
             result["sellers"][tab] = {"Phones": set(), "Laptops": set()}
     try:
         df_cats = safe_gsheets_read(url=SHEET_URL, worksheet=CATEGORY_TAB, usecols=[0, 1], ttl=3600)
@@ -478,14 +482,18 @@ def load_refurb_data_from_sheet() -> dict:
             result["categories"]["Phones"] = {clean_category_code(c) for c in df_cats.iloc[:, 0].dropna().astype(str) if c.strip() and c.strip().lower() not in ("phones", "phone", "nan")}
             result["categories"]["Laptops"] = {clean_category_code(c) for c in df_cats.iloc[:, 1].dropna().astype(str) if c.strip() and c.strip().lower() not in ("laptops", "laptop", "nan")}
     except Exception as e:
-        logger.warning(f"Error loading refurb categories: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Failed to load Refurb Categories. (Error: {e})"
+        logger.error(msg)
+        st.warning(msg)
     try:
         df_names = safe_gsheets_read(url=SHEET_URL, worksheet=NAME_TAB, usecols=[0], ttl=3600)
         if not df_names.empty:
             first_col = df_names.columns[0]
             result["keywords"] = {k for k in df_names[first_col].dropna().astype(str).str.strip().str.lower() if k and k not in ("name", "keyword", "keywords", "words", "nan")}
     except Exception as e:
-        logger.warning(f"Error loading refurb keywords: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Failed to load Refurb Keywords. (Error: {e})"
+        logger.error(msg)
+        st.warning(msg)
         result["keywords"] = {"refurb", "refurbished", "renewed"}
     return result
 
@@ -509,7 +517,9 @@ def load_perfume_data_from_sheet() -> Dict:
                 )
                 result["sellers"][tab] = sellers
         except Exception as e:
-            logger.warning(f"Perfume sellers tab '{tab}' failed: {e}")
+            msg = f"⚠️ **Google Sheets Error:** Perfume Sellers tab '{tab}' failed. (Error: {e})"
+            logger.error(msg)
+            st.warning(msg)
             result["sellers"][tab] = set() 
 
     try:
@@ -523,7 +533,9 @@ def load_perfume_data_from_sheet() -> Dict:
             )
             result["keywords"] = keywords
     except Exception as e:
-        logger.warning(f"Perfume Keywords tab failed: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Perfume Keywords tab failed. (Error: {e})"
+        logger.error(msg)
+        st.warning(msg)
         result["keywords"] = set()
 
     try:
@@ -537,7 +549,9 @@ def load_perfume_data_from_sheet() -> Dict:
             )
             result["category_codes"] = cat_codes
     except Exception as e:
-        logger.warning(f"Perfume Categories tab failed: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Perfume Categories tab failed. (Error: {e})"
+        logger.error(msg)
+        st.warning(msg)
         result["category_codes"] = set()
     return result
 
@@ -560,7 +574,9 @@ def load_books_data_from_sheet() -> Dict:
                 )
                 result["sellers"][tab] = sellers
         except Exception as e:
-            logger.warning(f"Books sellers tab '{tab}' failed: {e}")
+            msg = f"⚠️ **Google Sheets Error:** Books Sellers tab '{tab}' failed. (Error: {e})"
+            logger.error(msg)
+            st.warning(msg)
             result["sellers"][tab] = set()
 
     try:
@@ -574,7 +590,9 @@ def load_books_data_from_sheet() -> Dict:
             )
             result["category_codes"] = cat_codes
     except Exception as e:
-        logger.warning(f"Books Categories tab failed: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Books Categories tab failed. (Error: {e})"
+        logger.error(msg)
+        st.warning(msg)
         result["category_codes"] = set()
     return result
 
@@ -599,7 +617,9 @@ def load_jerseys_from_sheet() -> Dict:
                     exempted = set(df[ex_col].dropna().astype(str).str.strip().str.lower().pipe(lambda s: s[~s.isin(["", "nan", "exempted sellers", "seller"])]))
                     result["exempted"][tab] = exempted
         except Exception as e:
-            logger.warning(f"load_jerseys_from_sheet [{tab}]: {e}")
+            msg = f"⚠️ **Google Sheets Error:** Jerseys tab '{tab}' failed. (Error: {e})"
+            logger.error(msg)
+            st.warning(msg)
 
     try:
         df_cats = safe_gsheets_read(url=SHEET_URL, worksheet=CATEGORIES_TAB, ttl=3600)
@@ -608,7 +628,9 @@ def load_jerseys_from_sheet() -> Dict:
             cat_col = next((c for c in df_cats.columns if "cat" in c), df_cats.columns[0])
             result["categories"] = set(df_cats[cat_col].dropna().astype(str).apply(clean_category_code).pipe(lambda s: s[~s.isin(["", "nan", "categories", "category"])]))
     except Exception as e:
-        logger.warning(f"load_jerseys_from_sheet [categories tab]: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Jerseys Categories tab failed. (Error: {e})"
+        logger.error(msg)
+        st.warning(msg)
     return result
 
 # --- GSHEET: SUSPECTED FAKE DATA ---
@@ -619,7 +641,9 @@ def load_suspected_fake_from_sheet() -> pd.DataFrame:
         df = safe_gsheets_read(url=SHEET_URL, worksheet=0, ttl=3600)
         if not df.empty: return df
     except Exception as e:
-        logger.warning(f"Failed to load Suspected Fake from Google Sheet, falling back to local: {e}")
+        msg = f"⚠️ **Google Sheets Error:** Failed to load Suspected Fake from Google Sheet, falling back to local. (Error: {e})"
+        logger.warning(msg)
+        st.warning(msg)
     
     # Fallback to local file if Sheet is unavailable
     try:
@@ -1692,6 +1716,12 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 with st.sidebar:
+    st.header("System Status")
+    if st.button("🔄 Clear Cache & Reload Data", use_container_width=True, type="secondary", help="Use this if Google Sheets fail to load due to rate limits."):
+        st.cache_data.clear()
+        st.rerun()
+        
+    st.markdown("---")
     st.header("Display Settings")
     new_mode = "wide" if "Wide" in st.radio("Layout Mode", ["Centered", "Wide"], index=1 if st.session_state.layout_mode == "wide" else 0) else "centered"
     if new_mode != st.session_state.layout_mode:
