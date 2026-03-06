@@ -343,7 +343,7 @@ def extract_product_attributes(name: str, explicit_color: Optional[str] = None, 
     return attrs
 
 # -------------------------------------------------
-# LOCAL CSV DATA LOADING HELPERS
+# LOCAL EXCEL DATA LOADING HELPERS
 # -------------------------------------------------
 def load_txt_file(filename: str) -> List[str]:
     try:
@@ -361,31 +361,27 @@ def load_excel_file(filename: str, column: Optional[str] = None):
         return df
     except Exception: return [] if column else pd.DataFrame()
 
-def safe_local_read(filename: str, usecols=None) -> pd.DataFrame:
-    """Helper to safely read local fallback CSVs replacing Google Sheets"""
+def safe_excel_read(filename: str, sheet_name, usecols=None) -> pd.DataFrame:
+    """Helper to safely read specific tabs from local Excel files"""
     if not os.path.exists(filename):
         logger.warning(f"Local file not found: {filename}")
         return pd.DataFrame()
     try:
-        df = pd.read_csv(filename, usecols=usecols, dtype=str)
+        df = pd.read_excel(filename, sheet_name=sheet_name, usecols=usecols, engine='openpyxl', dtype=str)
         return df.dropna(how='all')
     except Exception as e:
-        try:
-            # Fallback for weird encoding or separators often seen in Excel CSV exports
-            df = pd.read_csv(filename, sep=';', encoding='ISO-8859-1', usecols=usecols, dtype=str)
-            return df.dropna(how='all')
-        except Exception as e2:
-            logger.error(f"Error reading local file {filename}: {e2}")
-            return pd.DataFrame()
+        logger.error(f"Error reading tab '{sheet_name}' from {filename}: {e}")
+        return pd.DataFrame()
 
 # --- LOCAL: PROHIBITED PRODUCTS ---
 @st.cache_data(ttl=3600)
 def load_prohibited_from_local() -> Dict[str, List[Dict]]:
+    FILE_NAME = "Prohibbited.xlsx"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     prohibited_by_country = {}
     for tab in COUNTRY_TABS:
         try:
-            df = safe_local_read(f"Prohibbited.xlsx - {tab}.csv")
+            df = safe_excel_read(FILE_NAME, sheet_name=tab)
             if df.empty: 
                 prohibited_by_country[tab] = []
                 continue
@@ -405,7 +401,7 @@ def load_prohibited_from_local() -> Dict[str, List[Dict]]:
                 country_rules.append({'keyword': keyword, 'categories': categories})
             prohibited_by_country[tab] = country_rules
         except Exception as e:
-            msg = f"⚠️ **File Error:** Failed to load local Prohibited Products for **{tab}**. (Error: {e})"
+            msg = f"⚠️ **File Error:** Failed to load {FILE_NAME} - Tab **{tab}**. (Error: {e})"
             logger.error(msg)
             st.error(msg)
             prohibited_by_country[tab] = []
@@ -414,11 +410,12 @@ def load_prohibited_from_local() -> Dict[str, List[Dict]]:
 # --- LOCAL: RESTRICTED BRANDS ---
 @st.cache_data(ttl=3600)
 def load_restricted_brands_from_local() -> Dict[str, List[Dict]]:
+    FILE_NAME = "Restricted_Brands.xlsx"
     COUNTRY_TABS = {"Kenya": "KE", "Uganda": "UG", "Nigeria": "NG", "Ghana": "GH", "Morocco": "MA"}
     config_by_country = {}
     for country_name, tab_name in COUNTRY_TABS.items():
         try:
-            df = safe_local_read(f"Restricted_Brands.xlsx - {tab_name}.csv")
+            df = safe_excel_read(FILE_NAME, sheet_name=tab_name)
             if df.empty: 
                 config_by_country[country_name] = []
                 continue
@@ -448,7 +445,7 @@ def load_restricted_brands_from_local() -> Dict[str, List[Dict]]:
                 country_rules.append({'brand': b_lower, 'brand_raw': data['brand_raw'], 'sellers': data['sellers'], 'categories': data['categories'], 'variations': list(data['variations'])})
             config_by_country[country_name] = country_rules
         except Exception as e:
-            msg = f"⚠️ **File Error:** Failed to load local Restricted Brands for **{tab_name}**. (Error: {e})"
+            msg = f"⚠️ **File Error:** Failed to load {FILE_NAME} - Tab **{tab_name}**. (Error: {e})"
             logger.error(msg)
             st.error(msg)
             config_by_country[country_name] = []
@@ -457,38 +454,43 @@ def load_restricted_brands_from_local() -> Dict[str, List[Dict]]:
 # --- LOCAL: REFURBISHED DATA ---
 @st.cache_data(ttl=3600)
 def load_refurb_data_from_local() -> dict:
+    FILE_NAME = "Refurb.xlsx"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     result = {"sellers": {}, "categories": {"Phones": set(), "Laptops": set()}, "keywords": set()}
     for tab in COUNTRY_TABS:
         try:
-            df = safe_local_read(f"Refurb.xlsx - {tab}.csv", usecols=[0, 1])
+            df = safe_excel_read(FILE_NAME, sheet_name=tab, usecols=[0, 1])
             if not df.empty:
                 df.columns = [str(c).strip() for c in df.columns]
                 phones_set = set(df.iloc[:, 0].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "phones"}
                 laptops_set = set(df.iloc[:, 1].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "laptops"}
                 result["sellers"][tab] = {"Phones": phones_set, "Laptops": laptops_set}
         except Exception as e:
-            msg = f"⚠️ **File Error:** Failed to load local Refurb Sellers for **{tab}**. (Error: {e})"
+            msg = f"⚠️ **File Error:** Failed to load {FILE_NAME} - Sellers Tab **{tab}**. (Error: {e})"
             logger.error(msg)
             st.warning(msg)
             result["sellers"][tab] = {"Phones": set(), "Laptops": set()}
     try:
-        df_cats = safe_local_read("Refurb.xlsx - Categories.csv", usecols=[0, 1])
+        # Handling potential typo in sheet name
+        df_cats = safe_excel_read(FILE_NAME, sheet_name="Categories", usecols=[0, 1])
+        if df_cats.empty:
+            df_cats = safe_excel_read(FILE_NAME, sheet_name="Categries", usecols=[0, 1])
+            
         if not df_cats.empty:
             df_cats.columns = [str(c).strip() for c in df_cats.columns]
             result["categories"]["Phones"] = {clean_category_code(c) for c in df_cats.iloc[:, 0].dropna().astype(str) if c.strip() and c.strip().lower() not in ("phones", "phone", "nan")}
             result["categories"]["Laptops"] = {clean_category_code(c) for c in df_cats.iloc[:, 1].dropna().astype(str) if c.strip() and c.strip().lower() not in ("laptops", "laptop", "nan")}
     except Exception as e:
-        msg = f"⚠️ **File Error:** Failed to load local Refurb Categories. (Error: {e})"
+        msg = f"⚠️ **File Error:** Failed to load {FILE_NAME} - Categories Tab. (Error: {e})"
         logger.error(msg)
         st.warning(msg)
     try:
-        df_names = safe_local_read("Refurb.xlsx - Name.csv", usecols=[0])
+        df_names = safe_excel_read(FILE_NAME, sheet_name="Name", usecols=[0])
         if not df_names.empty:
             first_col = df_names.columns[0]
             result["keywords"] = {k for k in df_names[first_col].dropna().astype(str).str.strip().str.lower() if k and k not in ("name", "keyword", "keywords", "words", "nan")}
     except Exception as e:
-        msg = f"⚠️ **File Error:** Failed to load local Refurb Keywords. (Error: {e})"
+        msg = f"⚠️ **File Error:** Failed to load {FILE_NAME} - Name Tab. (Error: {e})"
         logger.error(msg)
         st.warning(msg)
         result["keywords"] = {"refurb", "refurbished", "renewed"}
@@ -497,12 +499,13 @@ def load_refurb_data_from_local() -> dict:
 # --- LOCAL: PERFUME DATA ---
 @st.cache_data(ttl=3600)
 def load_perfume_data_from_local() -> Dict:
+    FILE_NAME = "Perfume.xlsx"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     result = {"sellers": {}, "keywords": set(), "category_codes": set()}
 
     for tab in COUNTRY_TABS:
         try:
-            df = safe_local_read(f"Perfume.xlsx - {tab}.csv")
+            df = safe_excel_read(FILE_NAME, sheet_name=tab)
             if not df.empty:
                 df.columns = [str(c).strip() for c in df.columns]
                 seller_col = next((c for c in df.columns if 'seller' in c.lower()), df.columns[0])
@@ -512,13 +515,13 @@ def load_perfume_data_from_local() -> Dict:
                 )
                 result["sellers"][tab] = sellers
         except Exception as e:
-            msg = f"⚠️ **File Error:** Local Perfume Sellers tab '{tab}' failed. (Error: {e})"
+            msg = f"⚠️ **File Error:** {FILE_NAME} - Sellers tab '{tab}' failed. (Error: {e})"
             logger.error(msg)
             st.warning(msg)
             result["sellers"][tab] = set() 
 
     try:
-        df_kw = safe_local_read("Perfume.xlsx - Keywords.csv")
+        df_kw = safe_excel_read(FILE_NAME, sheet_name="Keywords")
         if not df_kw.empty:
             df_kw.columns = [str(c).strip() for c in df_kw.columns]
             kw_col = next((c for c in df_kw.columns if 'brand' in c.lower() or 'keyword' in c.lower()), df_kw.columns[0])
@@ -528,13 +531,13 @@ def load_perfume_data_from_local() -> Dict:
             )
             result["keywords"] = keywords
     except Exception as e:
-        msg = f"⚠️ **File Error:** Local Perfume Keywords tab failed. (Error: {e})"
+        msg = f"⚠️ **File Error:** {FILE_NAME} - Keywords tab failed. (Error: {e})"
         logger.error(msg)
         st.warning(msg)
         result["keywords"] = set()
 
     try:
-        df_cats = safe_local_read("Perfume.xlsx - Categories.csv")
+        df_cats = safe_excel_read(FILE_NAME, sheet_name="Categories")
         if not df_cats.empty:
             df_cats.columns = [str(c).strip() for c in df_cats.columns]
             cat_col = next((c for c in df_cats.columns if 'cat' in c.lower()), df_cats.columns[0])
@@ -544,7 +547,7 @@ def load_perfume_data_from_local() -> Dict:
             )
             result["category_codes"] = cat_codes
     except Exception as e:
-        msg = f"⚠️ **File Error:** Local Perfume Categories tab failed. (Error: {e})"
+        msg = f"⚠️ **File Error:** {FILE_NAME} - Categories tab failed. (Error: {e})"
         logger.error(msg)
         st.warning(msg)
         result["category_codes"] = set()
@@ -553,12 +556,13 @@ def load_perfume_data_from_local() -> Dict:
 # --- LOCAL: BOOKS DATA ---
 @st.cache_data(ttl=3600)
 def load_books_data_from_local() -> Dict:
+    FILE_NAME = "Books_sellers.xlsx"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     result = {"sellers": {}, "category_codes": set()}
 
     for tab in COUNTRY_TABS:
         try:
-            df = safe_local_read(f"Books_sellers.xlsx - {tab}.csv")
+            df = safe_excel_read(FILE_NAME, sheet_name=tab)
             if not df.empty:
                 df.columns = [str(c).strip() for c in df.columns]
                 seller_col = next((c for c in df.columns if 'seller' in c.lower()), df.columns[0])
@@ -568,13 +572,13 @@ def load_books_data_from_local() -> Dict:
                 )
                 result["sellers"][tab] = sellers
         except Exception as e:
-            msg = f"⚠️ **File Error:** Local Books Sellers tab '{tab}' failed. (Error: {e})"
+            msg = f"⚠️ **File Error:** {FILE_NAME} - Sellers tab '{tab}' failed. (Error: {e})"
             logger.error(msg)
             st.warning(msg)
             result["sellers"][tab] = set()
 
     try:
-        df_cats = safe_local_read("Books_sellers.xlsx - Categories.csv")
+        df_cats = safe_excel_read(FILE_NAME, sheet_name="Categories")
         if not df_cats.empty:
             df_cats.columns = [str(c).strip() for c in df_cats.columns]
             cat_col = next((c for c in df_cats.columns if 'cat' in c.lower()), df_cats.columns[0])
@@ -584,7 +588,7 @@ def load_books_data_from_local() -> Dict:
             )
             result["category_codes"] = cat_codes
     except Exception as e:
-        msg = f"⚠️ **File Error:** Local Books Categories tab failed. (Error: {e})"
+        msg = f"⚠️ **File Error:** {FILE_NAME} - Categories tab failed. (Error: {e})"
         logger.error(msg)
         st.warning(msg)
         result["category_codes"] = set()
@@ -593,12 +597,13 @@ def load_books_data_from_local() -> Dict:
 # --- LOCAL: JERSEYS DATA ---
 @st.cache_data(ttl=3600)
 def load_jerseys_from_local() -> Dict:
+    FILE_NAME = "Jersey_validation.xlsx"
     COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
     result: Dict = {"keywords": {tab: set() for tab in COUNTRY_TABS}, "exempted": {tab: set() for tab in COUNTRY_TABS}, "categories": set()}
 
     for tab in COUNTRY_TABS:
         try:
-            df = safe_local_read(f"Jersey_validation.xlsx - {tab}.csv")
+            df = safe_excel_read(FILE_NAME, sheet_name=tab)
             if not df.empty:
                 df.columns = [str(c).strip() for c in df.columns]
                 kw_col = next((c for c in df.columns if "keyword" in c.lower()), df.columns[0])
@@ -609,18 +614,18 @@ def load_jerseys_from_local() -> Dict:
                     exempted = set(df[ex_col].dropna().astype(str).str.strip().str.lower().pipe(lambda s: s[~s.isin(["", "nan", "exempted sellers", "seller"])]))
                     result["exempted"][tab] = exempted
         except Exception as e:
-            msg = f"⚠️ **File Error:** Local Jerseys tab '{tab}' failed. (Error: {e})"
+            msg = f"⚠️ **File Error:** {FILE_NAME} - Tab '{tab}' failed. (Error: {e})"
             logger.error(msg)
             st.warning(msg)
 
     try:
-        df_cats = safe_local_read("Jersey_validation.xlsx - categories.csv")
+        df_cats = safe_excel_read(FILE_NAME, sheet_name="categories")
         if not df_cats.empty:
             df_cats.columns = [str(c).strip().lower() for c in df_cats.columns]
             cat_col = next((c for c in df_cats.columns if "cat" in c), df_cats.columns[0])
             result["categories"] = set(df_cats[cat_col].dropna().astype(str).apply(clean_category_code).pipe(lambda s: s[~s.isin(["", "nan", "categories", "category"])]))
     except Exception as e:
-        msg = f"⚠️ **File Error:** Local Jerseys Categories tab failed. (Error: {e})"
+        msg = f"⚠️ **File Error:** {FILE_NAME} - Categories tab failed. (Error: {e})"
         logger.error(msg)
         st.warning(msg)
     return result
@@ -629,14 +634,10 @@ def load_jerseys_from_local() -> Dict:
 @st.cache_data(ttl=3600)
 def load_suspected_fake_from_local() -> pd.DataFrame:
     try:
-        # Check standard suspected_fake file if present
         if os.path.exists('suspected_fake.xlsx'):
-            return pd.read_excel('suspected_fake.xlsx', engine='openpyxl', dtype=str)
-        # Fallback to the country-specific CSV exports
-        df = safe_local_read("suspected_fake.xlsx - KE.csv")
-        if not df.empty: return df
+            return pd.read_excel('suspected_fake.xlsx', sheet_name=0, engine='openpyxl', dtype=str)
     except Exception as e:
-        msg = f"⚠️ **File Error:** Failed to load local Suspected Fake data. (Error: {e})"
+        msg = f"⚠️ **File Error:** Failed to load local Suspected Fake data from suspected_fake.xlsx. (Error: {e})"
         logger.warning(msg)
         st.warning(msg)
     return pd.DataFrame()
