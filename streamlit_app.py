@@ -1531,14 +1531,14 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
             border_style = "3px solid #4CAF50" if is_checked else "1px solid #eee"
             box_shadow = "0 0 0 3px rgba(76,175,80,0.2), 0 4px 16px rgba(76,175,80,0.15)" if is_checked else "none"
             green_overlay = (
-                "<div style='position:absolute;inset:0;background:rgba(76,175,80,0.07);border-radius:8px;pointer-events:none;z-index:2;'></div>"
+                "<div style='position:absolute;inset:0;background:rgba(76,175,80,0.1);border-radius:8px;pointer-events:none;z-index:2;'></div>"
                 if is_checked else ""
             )
             tick_html = (
-                "<div style='position:absolute;bottom:10px;right:10px;width:26px;height:26px;"
+                "<div style='position:absolute;bottom:10px;right:10px;width:28px;height:28px;"
                 "background:#4CAF50;border-radius:50%;display:flex;align-items:center;"
-                "justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.25);z-index:10;'>"
-                "<span class='material-symbols-outlined' style='color:#fff;font-size:17px;line-height:1;'>check</span>"
+                "justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:10;'>"
+                "<span class='material-symbols-outlined' style='color:#fff;font-size:18px;line-height:1;font-weight:bold;'>check</span>"
                 "</div>"
                 if is_checked else ""
             )
@@ -1546,6 +1546,7 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
             # Unique key for this card's image click area
             img_div_id = f"imgclick-{sid}"
 
+            # Output the image card HTML (without inline script to avoid Streamlit stripping)
             st.markdown(
                 f'<div id="{img_div_id}" style="position:relative;cursor:pointer;border-radius:10px;'
                 f'border:{border_style};box-shadow:{box_shadow};'
@@ -1556,26 +1557,7 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
                 f'background-color:#FFFFFF;border-radius:8px;display:block;">'
                 f'{price_overlay_html}'
                 f'{tick_html}'
-                f'</div>'
-                f'<script>'
-                f'(function(){{'
-                f'  var el=document.getElementById("{img_div_id}");'
-                f'  if(el && !el._bound){{'
-                f'    el._bound=true;'
-                f'    el.addEventListener("click", function(e){{'
-                f'      e.stopPropagation();'
-                f'      /* Find the parent container wrapping this specific product card */'
-                f'      var card = el.closest(\'[data-testid="stVerticalBlockBorderWrapper"]\');'
-                f'      if(!card) card = el.closest(\'[data-testid="stVerticalBlock"]\');'
-                f'      if(card){{'
-                f'        /* Find the checkbox inside this exact card and click it */'
-                f'        var cb = card.querySelector(\'input[type="checkbox"]\');'
-                f'        if(cb) cb.click();'
-                f'      }}'
-                f'    }});'
-                f'  }}'
-                f'}})();'
-                f'</script>',
+                f'</div>',
                 unsafe_allow_html=True
             )
 
@@ -1834,6 +1816,40 @@ if uploaded_files and not st.session_state.final_report.empty:
 if not st.session_state.final_report.empty:
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
+
+    # ---------------------------------------------------------
+    # GLOBAL CLICK LISTENER FOR IMAGE SELECTION
+    # This prevents the need for 100s of iframe components 
+    # and fixes the issue where Streamlit removes scripts.
+    # ---------------------------------------------------------
+    components.html(
+        """
+        <script>
+        const doc = window.parent.document;
+        if (!doc.getElementById("global-img-click-listener")) {
+            let scriptTag = doc.createElement("script");
+            scriptTag.id = "global-img-click-listener";
+            scriptTag.text = `
+                document.addEventListener("click", function(e) {
+                    let target = e.target.closest('div[id^="imgclick-"]');
+                    if (target) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        // Find the Streamlit card container holding the actual checkbox
+                        let card = target.closest('[data-testid="stVerticalBlockBorderWrapper"]') || target.closest('[data-testid="stVerticalBlock"]');
+                        if (card) {
+                            let cb = card.querySelector('input[type="checkbox"]');
+                            if (cb) cb.click();
+                        }
+                    }
+                });
+            `;
+            doc.body.appendChild(scriptTag);
+        }
+        </script>
+        """,
+        height=0, width=0
+    )
 
     fr = st.session_state.final_report
     quick_rej_sids = [k.replace("quick_rej_", "") for k in st.session_state.keys() if k.startswith("quick_rej_") and "reason" not in k]
