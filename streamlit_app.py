@@ -1462,7 +1462,6 @@ def analyze_image_quality(url: str, cache_dict: dict) -> List[str]:
     cache_dict[url] = warnings
     return warnings
 
-@st.fragment
 def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warnings=None):
     if advisor_warnings is None: advisor_warnings = []
     sid = str(row['PRODUCT_SET_SID'])
@@ -1589,7 +1588,6 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             st.session_state.exports_cache.clear()
         st.rerun()
 
-@st.fragment
 def render_flag_expander(title, df_display, subset_data, data_has_warranty_cols_check, support_files, country_validator):
     c1, c2 = st.columns([1, 1])
     with c1: search_term = st.text_input("Search", placeholder="Name, Brand...", key=f"s_{title}")
