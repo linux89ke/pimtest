@@ -94,44 +94,6 @@ def format_local_price(usd_price, country: str) -> str:
 
 SPLIT_LIMIT = 9998
 
-# ── Color palette for each FLAG type in the breakdown UI ──────────────────────
-FLAG_COLORS = {
-    "Wrong Category":                              {"bg": "#FFF3CD", "color": "#856404",  "icon": "category"},
-    "Restricted brands":                           {"bg": "#F8D7DA", "color": "#721C24",  "icon": "gavel"},
-    "Suspected Fake product":                      {"bg": "#F8D7DA", "color": "#721C24",  "icon": "report"},
-    "Seller Not approved to sell Refurb":          {"bg": "#FFE5D0", "color": "#7B3F00",  "icon": "recycling"},
-    "Product Warranty":                            {"bg": "#D1ECF1", "color": "#0C5460",  "icon": "verified_user"},
-    "Seller Approve to sell books":                {"bg": "#D4EDDA", "color": "#155724",  "icon": "menu_book"},
-    "Seller Approved to Sell Perfume":             {"bg": "#E8D5F5", "color": "#5B2C6F",  "icon": "water_drop"},
-    "Counterfeit Sneakers":                        {"bg": "#F8D7DA", "color": "#721C24",  "icon": "content_cut"},
-    "Suspected counterfeit Jerseys":               {"bg": "#F8D7DA", "color": "#721C24",  "icon": "sports_soccer"},
-    "Prohibited products":                         {"bg": "#F5C6CB", "color": "#491217",  "icon": "block"},
-    "Unnecessary words in NAME":                   {"bg": "#FFF3CD", "color": "#856404",  "icon": "text_fields"},
-    "Single-word NAME":                            {"bg": "#FFF3CD", "color": "#856404",  "icon": "short_text"},
-    "Generic BRAND Issues":                        {"bg": "#D1ECF1", "color": "#0C5460",  "icon": "label_off"},
-    "Fashion brand issues":                        {"bg": "#D1ECF1", "color": "#0C5460",  "icon": "checkroom"},
-    "BRAND name repeated in NAME":                 {"bg": "#FFE5D0", "color": "#7B3F00",  "icon": "repeat"},
-    "Wrong Variation":                             {"bg": "#E2E3E5", "color": "#383D41",  "icon": "device_hub"},
-    "Generic branded products with genuine brands":{"bg": "#FFE5D0", "color": "#7B3F00",  "icon": "swap_horiz"},
-    "Missing COLOR":                               {"bg": "#E8D5F5", "color": "#5B2C6F",  "icon": "palette"},
-    "Missing Weight/Volume":                       {"bg": "#D4EDDA", "color": "#155724",  "icon": "scale"},
-    "Incomplete Smartphone Name":                  {"bg": "#D1ECF1", "color": "#0C5460",  "icon": "smartphone"},
-    "Duplicate product":                           {"bg": "#E2E3E5", "color": "#383D41",  "icon": "content_copy"},
-    "Poor images":                                 {"bg": "#FFF3CD", "color": "#856404",  "icon": "image_not_supported"},
-    "Other Reason (Custom)":                       {"bg": "#E2E3E5", "color": "#383D41",  "icon": "edit_note"},
-}
-_FLAG_DEFAULT_COLOR = {"bg": "#E2E3E5", "color": "#383D41", "icon": "flag"}
-
-def flag_badge_html(flag_name: str, count: int) -> str:
-    cfg = FLAG_COLORS.get(flag_name, _FLAG_DEFAULT_COLOR)
-    return (
-        f"<span class='flag-badge' style='background:{cfg['bg']};color:{cfg['color']};'>"
-        f"<span class='material-symbols-outlined' style='font-size:14px;vertical-align:middle;'>{cfg['icon']}</span>"
-        f"&nbsp;{flag_name}&nbsp;"
-        f"<span style='background:{cfg['color']};color:{cfg['bg']};border-radius:10px;padding:1px 7px;font-size:11px;'>{count}</span>"
-        f"</span>"
-    )
-
 NEW_FILE_MAPPING = {
     'cod_productset_sid': 'PRODUCT_SET_SID',
     "2qz3wx4ec5rv6b7hnj8kl;'[]": 'PRODUCT_SET_SID',
@@ -299,40 +261,6 @@ st.markdown(f"""
             min-height: 36px !important;
             line-height: 1.2 !important;
         }}
-
-        /* ── FLAG BADGE in expander header ── */
-        .flag-badge {{
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.3px;
-            border: none;
-            white-space: nowrap;
-        }}
-
-        /* ── IMAGE HOVER TOOLTIP ── */
-        .card-img-wrap {{ position: relative; overflow: hidden; border-radius: 8px; }}
-        .card-img-wrap .img-hover-tip {{
-            display: none;
-            position: absolute;
-            bottom: 0; left: 0; right: 0;
-            background: linear-gradient(to top, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.60) 55%, transparent 100%);
-            color: #fff;
-            padding: 32px 10px 10px 10px;
-            border-radius: 0 0 8px 8px;
-            font-size: 11px;
-            line-height: 1.45;
-            z-index: 8;
-            pointer-events: none;
-        }}
-        .card-img-wrap:hover .img-hover-tip {{ display: block; }}
-        .img-hover-tip .tip-name {{ font-size: 12px; font-weight: 700; margin-bottom: 4px; word-break: break-word; white-space: normal; }}
-        .img-hover-tip .tip-row {{ opacity: 0.88; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-        .img-hover-tip .tip-price {{ font-size: 13px; font-weight: 800; color: #FF9933; margin-top: 5px; }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -1608,28 +1536,11 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
             tick_html = ("<div style='position:absolute;bottom:10px;right:10px;width:28px;height:28px;background:#4CAF50;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:10;'><span class='material-symbols-outlined' style='color:#fff;font-size:18px;line-height:1;font-weight:bold;'>check</span></div>" if is_checked else "")
             img_div_id = f"imgclick-{sid}"
 
-            # Build hover tooltip content
-            _hover_name = raw_name.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
-            _hover_cat   = cat_text.replace('<', '&lt;').replace('>', '&gt;')
-            _hover_brand = brand_text.replace('<', '&lt;').replace('>', '&gt;')
-            _hover_seller = seller_text.replace('<', '&lt;').replace('>', '&gt;')
-            _hover_price = price_str if price_str else ""
-            hover_tip_html = (
-                f"<div class='img-hover-tip'>"
-                f"<div class='tip-name'>{_hover_name}</div>"
-                f"<div class='tip-row'>📦 {_hover_cat}</div>"
-                f"<div class='tip-row'>🏷️ {_hover_brand}</div>"
-                f"<div class='tip-row'>🏪 {_hover_seller}</div>"
-                + (f"<div class='tip-price'>{_hover_price}</div>" if _hover_price else "")
-                + "</div>"
-            )
-
             st.markdown(
-                f'<div id="{img_div_id}" class="card-img-wrap" style="position:relative;cursor:pointer;border-radius:10px;border:{border_style};box-shadow:{box_shadow};transition:border 0.15s ease,box-shadow 0.15s ease;overflow:hidden;margin-bottom:8px;">'
+                f'<div id="{img_div_id}" style="position:relative;cursor:pointer;border-radius:10px;border:{border_style};box-shadow:{box_shadow};transition:border 0.15s ease,box-shadow 0.15s ease;overflow:hidden;margin-bottom:8px;">'
                 f'{warnings_html}{green_overlay}'
                 f'<img src="{img_url}" loading="lazy" style="width:100%;aspect-ratio: 1 / 1;object-fit:contain;background-color:#FFFFFF;border-radius:8px;display:block;">'
                 f'{price_overlay_html}{tick_html}'
-                f'{hover_tip_html}'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -1958,7 +1869,7 @@ if uploaded_files and not st.session_state.final_report.empty:
             df_display = pd.merge(df_flagged[['ProductSetSid']], data, left_on='ProjectSetSid', right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]] if False else pd.merge(df_flagged[['ProjectSetSid' if 'ProjectSetSid' in df_flagged.columns else 'ProductSetSid']], data, left_on=df_flagged.columns[0], right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]]
             # Safe merge
             df_display = pd.merge(df_flagged[['ProductSetSid']], data, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]]
-            with st.expander(flag_badge_html(title, len(df_display)), expanded=False):
+            with st.expander(f"{title} ({len(df_display)})"):
                 render_flag_expander(title, df_display, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator)
     else:
         st.success("All products passed validation — no rejections found.")
