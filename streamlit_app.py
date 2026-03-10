@@ -1244,7 +1244,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Generic BRAND Issues", check_generic_brand_issues, {}),
         ("Fashion brand issues", check_fashion_brand_issues, {}),
         ("BRAND name repeated in NAME", check_brand_in_name, {}),
-        ("Wrong Variation", check_wrong_variation, {'allowed_variation_codes': support_files.get('variation_allowed_codes', [])}),
+        ("Wrong Variation", check_wrong_variation, {'allowed_variation_codes': list(set(support_files.get('variation_allowed_codes', []) + support_files.get('category_fas', [])))}),
         ("Generic branded products with genuine brands", check_generic_with_brand_in_name, {'brands_list': support_files.get('known_brands', [])}),
         ("Missing COLOR", check_missing_color, {'pattern': compile_regex_patterns(support_files['colors']), 'color_categories': support_files['color_categories'], 'country_code': country_validator.code}),
         ("Missing Weight/Volume", check_weight_volume_in_name, {'weight_category_codes': support_files.get('weight_category_codes', [])}),
