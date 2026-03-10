@@ -1,13 +1,3 @@
-"""
-postqc.py
----------
-Self-contained Post-QC module for the Jumia Product Validation Tool.
-
-Handles detection, normalisation, validation checks, UI rendering and
-export for post-QC (live listing / scrape) files.  Import and call
-render_post_qc_section() from app.py — nothing else needs to be touched
-in the main file.
-"""
 
 import re
 import logging
@@ -305,7 +295,7 @@ def render_post_qc_section(support_files: Dict) -> None:
     clean_df   = summary[summary['Flag'] == '']
     flag_rate  = len(flagged_df) / len(summary) * 100 if len(summary) > 0 else 0
 
-    st.info("📊 **Post-QC Mode** — this file was detected as a live Jumia product listing. Running post-listing quality checks.", icon="ℹ️")
+    
 
     st.header(":material/bar_chart: Post-QC Results", anchor=False)
     with st.container(border=True):
