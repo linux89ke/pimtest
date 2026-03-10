@@ -770,18 +770,9 @@ class CountryValidator:
 # DATA PREPROCESSING
 # -------------------------------------------------
 def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalise column names using NEW_FILE_MAPPING.
-    Handles both exact-case and case-insensitive matches so that
-    'Colour', 'COLOUR', 'colour family', 'COLOUR FAMILY', etc. all
-    resolve to the canonical COLOR / COLOR_FAMILY column names.
-    """
     df = df.copy()
     df.columns = df.columns.str.strip()
-
-    # Build a lowercase lookup that covers every alias in the mapping
     map_lower = {k.lower(): v for k, v in NEW_FILE_MAPPING.items()}
-
     renamed = {}
     for col in df.columns:
         col_lower = col.lower()
@@ -790,7 +781,6 @@ def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
         else:
             renamed[col] = col.upper()
     df = df.rename(columns=renamed)
-
     for col in ['ACTIVE_STATUS_COUNTRY', 'CATEGORY_CODE', 'BRAND', 'TAX_CLASS', 'NAME', 'SELLER_NAME']:
         if col in df.columns: df[col] = df[col].astype(str)
     return df
@@ -799,10 +789,6 @@ def validate_input_schema(df: pd.DataFrame) -> Tuple[bool, List[str]]:
     errors = [f"Missing: {f}" for f in ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY_CODE', 'ACTIVE_STATUS_COUNTRY'] if f not in df.columns]
     return len(errors) == 0, errors
 
-# ── MULTI-COUNTRY VALUES TREATED AS NIGERIA ──────────────────────────────────
-# Rows where ACTIVE_STATUS_COUNTRY is one of these values are included when
-# the selected country is Nigeria and are tagged with _IS_MULTI_COUNTRY = True
-# so the dashboard can show a dedicated metric for them.
 MULTI_COUNTRY_VALUES = {'MULTIPLE', 'MULTI'}
 
 def filter_by_country(df: pd.DataFrame, country_validator: CountryValidator) -> Tuple[pd.DataFrame, List[str]]:
@@ -811,7 +797,6 @@ def filter_by_country(df: pd.DataFrame, country_validator: CountryValidator) -> 
     df['ACTIVE_STATUS_COUNTRY'] = s
 
     if country_validator.code == 'NG':
-        # Nigeria: include exact NG rows AND multi-country rows
         is_ng = df['ACTIVE_STATUS_COUNTRY'] == 'NG'
         is_multi = df['ACTIVE_STATUS_COUNTRY'].isin(MULTI_COUNTRY_VALUES)
         filtered = df[is_ng | is_multi].copy()
@@ -1606,7 +1591,29 @@ def render_flag_expander(title, df_display, subset_data, data_has_warranty_cols_
     if seller_filter: df_display = df_display[df_display['SELLER_NAME'].isin(seller_filter)]
     df_display = df_display.reset_index(drop=True)
     if 'NAME' in df_display.columns: df_display['NAME'] = df_display['NAME'].apply(strip_html)
-    event = st.dataframe(df_display, hide_index=True, use_container_width=True, selection_mode="multi-row", on_select="rerun", column_config={"PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True), "NAME": st.column_config.TextColumn(pinned=True)}, key=f"df_{title}")
+    event = st.dataframe(
+        df_display,
+        hide_index=True,
+        use_container_width=True,
+        selection_mode="multi-row",
+        on_select="rerun",
+        column_config={
+            "PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True),
+            "NAME": st.column_config.TextColumn(pinned=True),
+            # ── PRICE COLUMNS ──────────────────────────────────────────────
+            "GLOBAL_SALE_PRICE": st.column_config.NumberColumn(
+                "Sale Price (USD)",
+                format="$%.2f",
+                help="Global sale price in USD",
+            ),
+            "GLOBAL_PRICE": st.column_config.NumberColumn(
+                "Price (USD)",
+                format="$%.2f",
+                help="Global listed price in USD",
+            ),
+        },
+        key=f"df_{title}"
+    )
     raw_selected_indices = list(event.selection.rows)
     selected_indices = [i for i in raw_selected_indices if i < len(df_display)]
     st.caption(f"{len(selected_indices)} of {len(df_display)} rows selected")
@@ -1832,7 +1839,6 @@ if uploaded_files and not st.session_state.final_report.empty:
     with st.container(border=True):
         cols = st.columns(5 if st.session_state.layout_mode == "wide" else 3)
 
-        # ── Multi-country metric (Nigeria only) ──────────────────────────────
         is_nigeria = st.session_state.get('selected_country') == 'Nigeria'
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
@@ -1841,7 +1847,6 @@ if uploaded_files and not st.session_state.final_report.empty:
             ("Approved", len(app_df), JUMIA_COLORS['success_green']),
             ("Rejected", len(rej_df), JUMIA_COLORS['jumia_red']),
             ("Rejection Rate", f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%", JUMIA_COLORS['primary_orange']),
-            # 5th metric: Multi-Country SKUs for Nigeria, Common SKUs otherwise
             (
                 "Multi-Country SKUs" if is_nigeria else "Common SKUs",
                 multi_count if is_nigeria else st.session_state.intersection_count,
@@ -1859,16 +1864,26 @@ if uploaded_files and not st.session_state.final_report.empty:
 
     st.subheader(":material/flag: Flags Breakdown", anchor=False)
     if not rej_df.empty:
-        base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR', 'PARENTSKU', 'SELLER_NAME']
+        # ── base_display_cols now includes price columns ──────────────────
+        base_display_cols = [
+            'PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR',
+            'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE',
+            'PARENTSKU', 'SELLER_NAME'
+        ]
         for title in rej_df['FLAG'].unique():
             df_flagged = rej_df[rej_df['FLAG'] == title]
             current_display_cols = base_display_cols.copy()
             if title == "Wrong Variation":
                 if 'COUNT_VARIATIONS' in data.columns: current_display_cols.append('COUNT_VARIATIONS')
                 if 'LIST_VARIATIONS' in data.columns: current_display_cols.append('LIST_VARIATIONS')
-            df_display = pd.merge(df_flagged[['ProductSetSid']], data, left_on='ProjectSetSid', right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]] if False else pd.merge(df_flagged[['ProjectSetSid' if 'ProjectSetSid' in df_flagged.columns else 'ProductSetSid']], data, left_on=df_flagged.columns[0], right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]]
             # Safe merge
-            df_display = pd.merge(df_flagged[['ProductSetSid']], data, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]]
+            df_display = pd.merge(
+                df_flagged[['ProductSetSid']],
+                data,
+                left_on='ProductSetSid',
+                right_on='PRODUCT_SET_SID',
+                how='left'
+            )[[c for c in current_display_cols if c in data.columns]]
             with st.expander(f"{title} ({len(df_display)})"):
                 render_flag_expander(title, df_display, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator)
     else:
@@ -1934,7 +1949,6 @@ if not st.session_state.final_report.empty:
         grid_reason = st.segmented_control("Select rejection reason for batch actions:", list(get_batch_labels().keys()), default="Poor Image Quality", label_visibility="collapsed")
         if not grid_reason: grid_reason = "Poor Image Quality"
 
-        # Custom comment input — only shown when Other Reason selected
         grid_custom_comment = ""
         if grid_reason == "Other Reason (Custom)":
             grid_custom_comment = st.text_area(
@@ -1986,7 +2000,6 @@ if not st.session_state.final_report.empty:
         st.session_state.exports_cache.clear()
         st.session_state.main_toasts.append((f"Batch rejected {len(flagged)} items", "✅"))
 
-    # --- PAGINATION AUTO SCROLL FIX ---
     def cb_prev(sids, active_reason): 
         cb_process_batch(False, sids, active_reason)
         st.session_state.grid_page -= 1
@@ -2012,7 +2025,6 @@ if not st.session_state.final_report.empty:
         col_desel.button("Deselect All", key="desel_all_top", use_container_width=True, on_click=cb_desel_all, args=(cur_sids,))
         col_rej.button(f":material/block: Reject All — {grid_reason}", key="reject_active_top", type="primary", use_container_width=True, on_click=cb_reject_all, args=(cur_sids, grid_reason))
 
-    # --- EXECUTE AUTO SCROLL IF FLAGGED ---
     if st.session_state.get('do_scroll_top', False):
         components.html("""
             <script>
