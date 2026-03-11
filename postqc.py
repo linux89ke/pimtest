@@ -1,4 +1,3 @@
-
 import re
 import logging
 from io import BytesIO
@@ -84,7 +83,7 @@ def normalize_post_qc(df: pd.DataFrame) -> pd.DataFrame:
 
     if 'ACTIVE_STATUS_COUNTRY' not in df.columns:
         df['ACTIVE_STATUS_COUNTRY'] = 'UNKNOWN'
-        
+
     df['_IS_MULTI_COUNTRY'] = False
     df['PARENTSKU']         = df.get('PRODUCT_SET_SID', pd.Series(dtype=str))
     df['COLOR']             = ''
@@ -121,20 +120,14 @@ def check_brand_in_name(df: pd.DataFrame) -> pd.DataFrame:
 def check_fashion_brand(df: pd.DataFrame, fashion_categories: list) -> pd.DataFrame:
     if 'BRAND' not in df.columns or 'CATEGORY' not in df.columns:
         return _empty(df)
-        
+
     d = df.copy()
     d['_brand_lower'] = d['BRAND'].astype(str).str.strip().str.lower()
-    
-    # Clean the scrape's category: lower it, remove spaces, and convert '>' to '/'
     d['_cat_clean'] = d['CATEGORY'].astype(str).str.lower().str.replace('>', '/').str.replace(r'\s+', '', regex=True)
-    
+
     if fashion_categories:
-        # Clean the file's categories exactly the same way to ensure a match
         valid_cats = [str(c).lower().replace('>', '/').replace(' ', '') for c in fashion_categories if str(c).strip()]
-        
-        # Create a regex pattern to see if the product's category contains any of the allowed paths
         pattern = '|'.join([re.escape(cat) for cat in valid_cats if cat])
-        
         if pattern:
             is_valid_category = d['_cat_clean'].str.contains(pattern, regex=True, na=False)
         else:
@@ -142,13 +135,11 @@ def check_fashion_brand(df: pd.DataFrame, fashion_categories: list) -> pd.DataFr
     else:
         is_valid_category = pd.Series(False, index=d.index)
 
-    # Flag it if the brand is 'Fashion' AND the cleaned category path is NOT in the allowed list
     mask = (d['_brand_lower'] == 'fashion') & (~is_valid_category)
-    
     flagged = d[mask].copy()
     if not flagged.empty:
         flagged['Comment_Detail'] = "Brand is 'Fashion' but category is not an approved Fashion category"
-        
+
     return flagged.drop(columns=['_brand_lower', '_cat_clean']).drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_fake_discount(df: pd.DataFrame, multiplier_threshold: float = 10.0) -> pd.DataFrame:
@@ -159,7 +150,10 @@ def check_fake_discount(df: pd.DataFrame, multiplier_threshold: float = 10.0) ->
     mask = (d['_price'].notna() & d['_old_price'].notna() & (d['_price'] > 0) & (d['_old_price'] > d['_price'] * multiplier_threshold))
     flagged = d[mask].copy()
     if not flagged.empty:
-        flagged['Comment_Detail'] = flagged.apply(lambda r: f"Old price {float(r['_old_price']):,.0f} is {float(r['_old_price']) / float(r['_price']):,.0f}x current price {float(r['_price']):,.0f}", axis=1)
+        flagged['Comment_Detail'] = flagged.apply(
+            lambda r: f"Old price {float(r['_old_price']):,.0f} is {float(r['_old_price']) / float(r['_price']):,.0f}x current price {float(r['_price']):,.0f}",
+            axis=1
+        )
     return flagged.drop(columns=['_price', '_old_price'], errors='ignore').drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_low_rating(df: pd.DataFrame, threshold: float = 3.0) -> pd.DataFrame:
@@ -276,7 +270,7 @@ def build_export(summary: pd.DataFrame, results: Dict[str, pd.DataFrame]) -> byt
 
         for check_name, res in results.items():
             if res.empty or 'PRODUCT_SET_SID' not in res.columns: continue
-            sheet_name = check_name[:31] 
+            sheet_name = check_name[:31]
             res.to_excel(writer, sheet_name=sheet_name, index=False)
 
     out.seek(0)
@@ -294,8 +288,6 @@ def render_post_qc_section(support_files: Dict) -> None:
     flagged_df = summary[summary['Flag'] != '']
     clean_df   = summary[summary['Flag'] == '']
     flag_rate  = len(flagged_df) / len(summary) * 100 if len(summary) > 0 else 0
-
-    
 
     st.header(":material/bar_chart: Post-QC Results", anchor=False)
     with st.container(border=True):
@@ -366,8 +358,10 @@ def render_post_qc_section(support_files: Dict) -> None:
     else:
         date_str = datetime.now().strftime('%Y-%m-%d')
         st.download_button(
-            "Download Post-QC Report", data=st.session_state.exports_cache[export_key], file_name=f"PostQC_Report_{date_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", icon=":material/file_download:"
+            "Download Post-QC Report", data=st.session_state.exports_cache[export_key],
+            file_name=f"PostQC_Report_{date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", icon=":material/file_download:"
         )
         if st.button("Clear", key="clr_post_qc_export"):
             del st.session_state.exports_cache[export_key]
