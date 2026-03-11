@@ -1,8 +1,4 @@
 
-Gemini
-Alpha
-Ask about your files
-Gemini in Workspace can make mistakes. Learn more
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
