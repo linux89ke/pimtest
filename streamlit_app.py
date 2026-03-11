@@ -19,7 +19,6 @@ import hashlib
 import requests
 from PIL import Image
 
-
 try:
     from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
 except ImportError:
@@ -1214,6 +1213,7 @@ def prepare_full_data_merged(data_df, final_report_df):
         return merged
     except Exception: return pd.DataFrame()
 
+
 # -------------------------------------------------
 # UTILITIES FOR BRIDGE & DATA MUTATION
 # -------------------------------------------------
@@ -1241,10 +1241,6 @@ REASON_MAP = {
     "OTHER_CUSTOM": "Other Reason (Custom)"
 }
 
-# ── FIXED: _process_card_bridge_action ───────────────────────────────────────
-# Key fix: st.rerun(scope="app") is called by the caller (render_image_grid),
-# not here. This function only mutates state and returns True/False.
-# ─────────────────────────────────────────────────────────────────────────────
 def _process_card_bridge_action(action_str: str, support_files: dict) -> bool:
     if not action_str or not isinstance(action_str, str):
         return False
@@ -1305,10 +1301,10 @@ def _process_card_bridge_action(action_str: str, support_files: dict) -> bool:
     return False
 
 # -------------------------------------------------
-# HTML GRID BUILDER  ── FIXED sendBridge + navAction
+# HTML GRID BUILDER
 # -------------------------------------------------
 def build_fast_grid_html(
-    page_data: pd.DataFrame,
+    page_data: "pd.DataFrame",
     flags_mapping: dict,
     country: str,
     page_warnings: dict,
@@ -1336,7 +1332,9 @@ def build_fast_grid_html(
     )
 
     committed_json = json.dumps(rejected_state)
-    all_sids_json  = json.dumps(page_data["PRODUCT_SET_SID"].astype(str).tolist())
+    all_sids_json  = json.dumps(
+        page_data["PRODUCT_SET_SID"].astype(str).tolist()
+    )
 
     cards_data = []
     for _, row in page_data.iterrows():
@@ -1419,6 +1417,8 @@ def build_fast_grid_html(
   .act-poor{{background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;
              outline:none;cursor:pointer;background:#fff;}}
+
+  /* toast notification */
   #toast{{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
           background:{DG};color:#fff;padding:10px 22px;border-radius:20px;
           font-size:13px;font-weight:700;opacity:0;transition:opacity .3s;
@@ -1427,7 +1427,9 @@ def build_fast_grid_html(
 </style>
 </head>
 <body>
+
 <div id="toast"></div>
+
 <div class="toolbar">
   <div style="display:flex;align-items:center;gap:8px;">
     <button class="nav" id="btn-prev" {prev_disabled} onclick="navAction('NAV_PREV')">&#8592; Prev</button>
@@ -1443,6 +1445,7 @@ def build_fast_grid_html(
     <button style="background:{G};color:#fff;border-color:{G};" onclick="commitPending()">&#10003; Commit</button>
   </div>
 </div>
+
 <div class="grid" id="card-grid"></div>
 
 <script>
@@ -1453,25 +1456,44 @@ const ALL_SIDS  = {all_sids_json};
 let selectedSids      = new Set();
 let pendingRejections = {{}};
 
-/* ── query_params bridge ─────────────────────────────────────────────────
-   postMessage race-conditions because the Python listener only has a 300ms
-   window each render cycle and often misses the event.
-   
-   The reliable alternative: write the action into the parent page URL as a
-   query param (?grid_action=...). Streamlit reads st.query_params on EVERY
-   rerun, so nothing is ever missed. The parent URL is always accessible via
-   window.parent.location even inside sandboxed iframes on same origin.
-───────────────────────────────────────────────────────────────────────── */
+/* ── Robust DOM Bridge ─────────────────────────────────────────────────── */
 function sendBridge(action) {{
   try {{
-    const url = new URL(window.parent.location.href);
-    url.searchParams.set('grid_action', encodeURIComponent(action));
-    window.parent.history.replaceState(null, '', url.toString());
-    // Also fire postMessage as backup signal to trigger Streamlit rerun
-    window.parent.postMessage({{ type: 'streamlit:rerun' }}, '*');
-  }} catch(e) {{
-    // Same-origin fallback: try postMessage only
-    window.parent.postMessage({{ type: 'GRID_ACTION', payload: action }}, '*');
+    let doc = window.parent.document;
+    let input = doc.querySelector('input[placeholder="__CARD_ACT__"]');
+    
+    // Fallback if nested inside multiple Streamlit containers
+    if (!input) {{
+      for (const frame of doc.querySelectorAll('iframe')) {{
+        try {{
+          const innerDoc = frame.contentDocument || frame.contentWindow.document;
+          input = innerDoc.querySelector('input[placeholder="__CARD_ACT__"]');
+          if (input) break;
+        }} catch(e) {{}} // Ignore cross-origin frame errors
+      }}
+    }}
+    
+    if (!input) {{
+      console.error("Streamlit Bridge Error: Hidden input not found.");
+      showToast("Connection lost. Please refresh the page.");
+      return;
+    }}
+
+    // Bypass React's event pooling to strictly set the value
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeInputValueSetter.call(input, action);
+    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+    // Force the hidden form to submit, triggering Python to catch the action
+    const form = input.closest('div[data-testid="stForm"]');
+    if (form) {{
+        const submitBtn = form.querySelector('button[kind="formSubmit"]');
+        if (submitBtn) setTimeout(() => submitBtn.click(), 50);
+    }} else {{
+        console.error("Streamlit Bridge Error: Form wrapper not found.");
+    }}
+  }} catch (err) {{
+    console.error("Bridge script error:", err);
   }}
 }}
 
@@ -1482,7 +1504,7 @@ function showToast(msg) {{
   setTimeout(() => t.classList.remove('show'), 2200);
 }}
 
-/* ── card rendering ──────────────────────────────────────────────────── */
+/* ── card rendering ────────────────────────────────────────────────────── */
 function renderCard(card) {{
   const {{sid, img, name, brand, cat, seller, warnings}} = card;
   const isCommitted = sid in COMMITTED;
@@ -1549,7 +1571,7 @@ function renderAll() {{
   document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join('');
 }}
 
-/* ── interactions ────────────────────────────────────────────────────── */
+/* ── interactions ──────────────────────────────────────────────────────── */
 function toggleSelect(sid) {{
   if (sid in pendingRejections || sid in COMMITTED) return;
   if (selectedSids.has(sid)) selectedSids.delete(sid);
@@ -1599,7 +1621,7 @@ function deselectAll() {{
   document.getElementById('sel-count').textContent = 0;
 }}
 
-/* Batch reject: mark pending then immediately commit to Python */
+/* Batch reject: mark pending then immediately commit */
 function doBatchReject() {{
   const reasonKey = document.getElementById('batch-reason').value;
   if (selectedSids.size === 0) {{
@@ -1618,34 +1640,32 @@ function commitPending() {{
     showToast('Nothing pending to commit.');
     return;
   }}
-  const count   = Object.keys(pendingRejections).length;
   const payload = JSON.stringify(pendingRejections);
-  showToast('Saving ' + count + ' rejection(s)…');
+  showToast('Saving ' + Object.keys(pendingRejections).length + ' rejection(s)…');
   pendingRejections = {{}};
   sendBridge('BATCH_COMMIT:' + payload);
 }}
 
-/* Navigate pages – warn if there are pending or selected items */
+/* Navigate pages – ask user if there are pending uncommitted rejections */
 function navAction(direction) {{
-  const pendingCount  = Object.keys(pendingRejections).length;
-  const selectedCount = selectedSids.size;
-
+  const pendingCount = Object.keys(pendingRejections).length;
   if (pendingCount > 0) {{
     const ok = confirm(
       pendingCount + ' rejection(s) are uncommitted.\\n\\n' +
       'Click OK to SAVE them and navigate.\\n' +
-      'Click Cancel to stay and review.'
+      'Click Cancel to go back and review.'
     );
-    if (!ok) return;
+    if (!ok) return;          // user chose to stay
     const payload = JSON.stringify(pendingRejections);
     pendingRejections = {{}};
+    // commit first, then navigate – small delay so Python processes in order
     sendBridge('BATCH_COMMIT:' + payload);
-    setTimeout(() => sendBridge(direction + ':1'), 250);
-  }} else if (selectedCount > 0) {{
+    setTimeout(() => sendBridge(direction + ':1'), 200);
+  }} else if (selectedSids.size > 0) {{
     const ok = confirm(
-      selectedCount + ' product(s) are selected but NOT rejected yet.\\n\\n' +
+      selectedSids.size + ' product(s) are selected but NOT rejected yet.\\n\\n' +
       'Click OK to navigate anyway (selection will be lost).\\n' +
-      'Click Cancel to go back and pick a rejection reason.'
+      'Click Cancel to go back and choose a rejection reason.'
     );
     if (!ok) return;
     selectedSids.clear();
@@ -1660,7 +1680,6 @@ renderAll();
 </body>
 </html>"""
     return html
-
 
 # -------------------------------------------------
 # UI COMPONENTS (Metrics & Expanders)
@@ -1903,7 +1922,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                 is_valid, errors = validate_input_schema(data_prop)
                 if is_valid:
                     data_filtered, det_names = filter_by_country(data_prop, country_validator)
-                    if data_filtered.empty:
+                    if data_filtered.empty: 
                         st.error(f"No {country_validator.country} products found. Detected countries: {', '.join(det_names) if det_names else 'None'}", icon=":material/error:")
                         st.stop()
                     actual_counts = data_filtered.groupby('PRODUCT_SET_SID')['PRODUCT_SET_SID'].transform('count')
@@ -1973,9 +1992,9 @@ if uploaded_files and not st.session_state.final_report.empty and st.session_sta
     else: st.success("All products passed validation — no rejections found.")
 
 
-# ==========================================
-# SECTION 2: MANUAL IMAGE REVIEW  ── FIXED
-# ==========================================
+# ─────────────────────────────────────────────────────────────────────────────
+# FIX 4: Replace render_image_grid entirely
+# ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
 def render_image_grid():
     if st.session_state.final_report.empty or st.session_state.file_mode == "post_qc":
@@ -1984,21 +2003,28 @@ def render_image_grid():
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
 
-    # ── query_params bridge ───────────────────────────────────────────────
-    # JS writes the action into ?grid_action=... in the parent URL.
-    # st.query_params reads it on every Streamlit rerun — 100% reliable,
-    # no race conditions, no 300ms polling windows.
-    # ─────────────────────────────────────────────────────────────────────
-    raw_action = st.query_params.get("grid_action", "")
-    if raw_action:
-        # Clear the param immediately so it doesn't re-fire on the next render
-        st.query_params.pop("grid_action", None)
-        action_str = raw_action.strip()
-        changed = _process_card_bridge_action(action_str, support_files)
+    # ── Hidden Form Bridge ────────────────────────────────────────────────
+    # Visually hide the form so it doesn't disrupt the UI layout
+    st.markdown("""
+    <style>
+        div[data-testid="stForm"]:has(input[placeholder="__CARD_ACT__"]) {
+            display: none !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    with st.form(key="bridge_form", clear_on_submit=True):
+        action_bridge = st.text_input("bridge", key="card_action_bridge", label_visibility="collapsed", placeholder="__CARD_ACT__")
+        submit_bridge = st.form_submit_button("Submit")
+
+    # When JS clicks the hidden submit button, catch and process the action
+    if submit_bridge and action_bridge:
+        changed = _process_card_bridge_action(action_bridge, support_files)
         if changed:
+            # Force dataframe mutation awareness for the charts/expanders above
             st.session_state.final_report = st.session_state.final_report.copy()
-            # Full-app rerun so the validation expanders above also refresh
-            st.rerun(scope="app")
+            # Full app rerun is strictly required here to break out of the @st.fragment 
+            st.rerun(scope="app") 
         return
 
     fr   = st.session_state.final_report
@@ -2050,6 +2076,7 @@ def render_image_grid():
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start : page_start + ipp]
 
+    # Async image quality checks
     page_warnings: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         future_to_sid = {
@@ -2086,7 +2113,7 @@ def render_image_grid():
     if st.session_state.get("do_scroll_top", False):
         st.components.v1.html(
             "<script>window.parent.document.querySelector('.main')"
-            ".scrollTo({top:0,behavior:'smooth'});</script>",
+            ".scrollTo({{top:0,behavior:'smooth'}});</script>",
             height=0,
         )
         st.session_state.do_scroll_top = False
@@ -2112,7 +2139,7 @@ def render_exports_section():
     st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>Download Reports</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
 
     exports_config = [
-        ("Final Report",  fr,     'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
+        ("Final Report",  fr,      'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
         ("Rejected Only", rej_df, 'block',        'Products that failed validation', lambda df: generate_smart_export(df, f"{c_code}_Rejected_{date_str}", 'simple', reasons_df)),
         ("Approved Only", app_df, 'check_circle', 'Products that passed validation', lambda df: generate_smart_export(df, f"{c_code}_Approved_{date_str}", 'simple', reasons_df)),
         ("Full Data",     data,   'database',     'Complete dataset with validation flags', lambda df: generate_smart_export(prepare_full_data_merged(df, fr), f"{c_code}_Full_{date_str}", 'full')),
