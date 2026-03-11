@@ -1747,7 +1747,45 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.rerun()
 
+# ==========================================
+# APP INITIALIZATION
+# ==========================================
+try: 
+    support_files = load_support_files_lazy()
+except Exception as e: 
+    st.error(f"Failed to load configs: {e}")
+    st.stop()
 
+def get_image_base64(path):
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as img_file: return base64.b64encode(img_file.read()).decode('utf-8')
+        except Exception: return ""
+    return ""
+
+logo_base64 = get_image_base64("jumia logo.png") or get_image_base64("jumia_logo.png")
+logo_html = f"<img src='data:image/png;base64,{logo_base64}' style='height: 42px; margin-right: 15px;'>" if logo_base64 else "<span class='material-symbols-outlined' style='font-size: 42px; margin-right: 15px;'>verified_user</span>"
+
+st.markdown(f"""<div class="back-to-top" onclick="window.parent.document.querySelector('.main').scrollTo({{top: 0, behavior: 'smooth'}});" title="Back to Top"><span class="material-symbols-outlined">arrow_upward</span></div>""", unsafe_allow_html=True)
+
+st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.3);'><h1 style='color: white; margin: 0; font-size: 36px; display: flex; align-items: center;'>{logo_html}Product Validation Tool</h1></div>""", unsafe_allow_html=True)
+
+with st.sidebar:
+    st.header("System Status")
+    if st.button("🔄 Clear Cache & Reload Data", use_container_width=True, type="secondary", help="Forces a reload of all support rules from local files."):
+        st.cache_data.clear()
+        st.session_state.display_df_cache = {}
+        st.rerun()
+    st.markdown("---")
+    st.header("Display Settings")
+    new_mode = "wide" if "Wide" in st.radio("Layout Mode", ["Centered", "Wide"], index=1 if st.session_state.layout_mode == "wide" else 0) else "centered"
+    if new_mode != st.session_state.layout_mode: 
+        st.session_state.layout_mode = new_mode
+        st.rerun()
+
+# ==========================================
+# SECTION 1: UPLOAD & VALIDATION
+# ==========================================
 # ==========================================
 # SECTION 1: UPLOAD & VALIDATION
 # ==========================================
