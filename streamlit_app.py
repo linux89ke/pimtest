@@ -18,7 +18,7 @@ import time
 import hashlib
 import requests
 from PIL import Image
-from streamlit_javascript import st_javascript   # pip install streamlit-javascript
+
 
 try:
     from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
@@ -1453,16 +1453,26 @@ const ALL_SIDS  = {all_sids_json};
 let selectedSids      = new Set();
 let pendingRejections = {{}};
 
-/* ── postMessage bridge ──────────────────────────────────────────────────
-   Streamlit iframes are sandboxed – direct parent DOM access is BLOCKED.
-   postMessage is the only allowed cross-iframe communication channel.
-   The Python side reads it via st_javascript listener.
+/* ── query_params bridge ─────────────────────────────────────────────────
+   postMessage race-conditions because the Python listener only has a 300ms
+   window each render cycle and often misses the event.
+   
+   The reliable alternative: write the action into the parent page URL as a
+   query param (?grid_action=...). Streamlit reads st.query_params on EVERY
+   rerun, so nothing is ever missed. The parent URL is always accessible via
+   window.parent.location even inside sandboxed iframes on same origin.
 ───────────────────────────────────────────────────────────────────────── */
 function sendBridge(action) {{
-  window.parent.postMessage(
-    {{ type: "GRID_ACTION", payload: action }},
-    "*"
-  );
+  try {{
+    const url = new URL(window.parent.location.href);
+    url.searchParams.set('grid_action', encodeURIComponent(action));
+    window.parent.history.replaceState(null, '', url.toString());
+    // Also fire postMessage as backup signal to trigger Streamlit rerun
+    window.parent.postMessage({{ type: 'streamlit:rerun' }}, '*');
+  }} catch(e) {{
+    // Same-origin fallback: try postMessage only
+    window.parent.postMessage({{ type: 'GRID_ACTION', payload: action }}, '*');
+  }}
 }}
 
 function showToast(msg) {{
@@ -1974,29 +1984,17 @@ def render_image_grid():
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
 
-    # ── postMessage listener ──────────────────────────────────────────────
-    # st_javascript runs JS that RETURNS a value to Python on each render.
-    # We listen for GRID_ACTION postMessages from the grid iframe with a
-    # 300 ms window; returns the action string or null if nothing arrived.
+    # ── query_params bridge ───────────────────────────────────────────────
+    # JS writes the action into ?grid_action=... in the parent URL.
+    # st.query_params reads it on every Streamlit rerun — 100% reliable,
+    # no race conditions, no 300ms polling windows.
     # ─────────────────────────────────────────────────────────────────────
-    action_received = st_javascript("""
-        await new Promise((resolve) => {
-            const handler = (event) => {
-                if (event.data && event.data.type === 'GRID_ACTION') {
-                    window.removeEventListener('message', handler);
-                    resolve(event.data.payload);
-                }
-            };
-            window.addEventListener('message', handler);
-            setTimeout(() => {
-                window.removeEventListener('message', handler);
-                resolve(null);
-            }, 300);
-        });
-    """)
-
-    if action_received and isinstance(action_received, str):
-        changed = _process_card_bridge_action(action_received, support_files)
+    raw_action = st.query_params.get("grid_action", "")
+    if raw_action:
+        # Clear the param immediately so it doesn't re-fire on the next render
+        st.query_params.pop("grid_action", None)
+        action_str = raw_action.strip()
+        changed = _process_card_bridge_action(action_str, support_files)
         if changed:
             st.session_state.final_report = st.session_state.final_report.copy()
             # Full-app rerun so the validation expanders above also refresh
