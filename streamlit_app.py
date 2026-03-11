@@ -150,6 +150,11 @@ if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
 if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
 
+# Session state counters for dynamic st_javascript keys
+if 'desel_counter' not in st.session_state: st.session_state.desel_counter = 0
+if 'batch_counter' not in st.session_state: st.session_state.batch_counter = 0  
+if 'clear_counter' not in st.session_state: st.session_state.clear_counter = 0
+
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
 
@@ -1815,9 +1820,10 @@ def render_image_grid():
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
 
-    # Fix 4 Top
+    # Fix 4 Top (Deselect)
     if st.session_state.pop("_deselect_pending", False):
-        st_javascript("localStorage.removeItem('_grid_pending');", key="ls_desel_exec")
+        st.session_state.desel_counter += 1
+        st_javascript("localStorage.removeItem('_grid_pending');", key=f"ls_desel_exec_{st.session_state.desel_counter}")
         st.rerun(scope="fragment")
 
     # Fix 2 Top
@@ -1839,7 +1845,7 @@ def render_image_grid():
     ]
     batch_labels = [l for l, _ in batch_reason_options]
 
-    # Fix 3 Top
+    # Fix 3 Top (Batch Reject)
     if st.session_state.get("_batch_reject_pending") and ls_data and ls_data not in ("0", "null"):
         st.session_state.pop("_batch_reject_pending")
         chosen_label_val = st.session_state.pop("_batch_reject_reason", batch_labels[0])
@@ -1856,20 +1862,23 @@ def render_image_grid():
                     st.session_state[f"quick_rej_{s}"] = True
                     st.session_state[f"quick_rej_reason_{s}"] = flag_name
             except: pass
-            st_javascript("localStorage.removeItem('_grid_pending');", key="ls_clr_batch")
+            
+            st.session_state.batch_counter += 1
+            st_javascript("localStorage.removeItem('_grid_pending');", key=f"ls_clr_batch_{st.session_state.batch_counter}")
             st.session_state.main_toasts.append((f"Batch rejected {count} product(s)", "✅"))
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
             st.rerun(scope="app")
 
-    # Fix 2 continued
-    if ls_data and isinstance(ls_data, str) and ls_data not in ("0", "null") and not st.session_state.ls_processed_flag:
+    # Fix 2 continued (Auto Processing)
+    elif ls_data and isinstance(ls_data, str) and ls_data not in ("0", "null") and not st.session_state.ls_processed_flag:
         st.session_state.ls_processed_flag = True
         count = _process_grid_selections(ls_data, support_files)
         if count > 0:
+            st.session_state.clear_counter += 1
             st_javascript(
                 "localStorage.removeItem('_grid_pending');",
-                key="ls_clear_stable",
+                key=f"ls_clear_{st.session_state.clear_counter}",
             )
             st.session_state.ls_processed_flag = False
             st.session_state.main_toasts.append((f"Rejected {count} product(s)", "✅"))
@@ -1879,7 +1888,6 @@ def render_image_grid():
             st.rerun(scope="app")
         else:
             st.session_state.ls_processed_flag = False
-        return
     elif ls_data in ("0", "null", None):
         st.session_state.ls_processed_flag = False
 
