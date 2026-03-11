@@ -803,6 +803,14 @@ def build_fast_grid_html(page_data: pd.DataFrame, flags_mapping: dict, country: 
 try: support_files = load_support_files_lazy()
 except Exception as e: st.error(f"Failed to load configs: {e}"); st.stop()
 
+# Add this missing function back
+def get_image_base64(path):
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as img_file: return base64.b64encode(img_file.read()).decode('utf-8')
+        except Exception: return ""
+    return ""
+
 logo_base64 = get_image_base64("jumia logo.png") or get_image_base64("jumia_logo.png")
 logo_html = f"<img src='data:image/png;base64,{logo_base64}' style='height: 42px; margin-right: 15px;'>" if logo_base64 else "<span class='material-symbols-outlined' style='font-size: 42px; margin-right: 15px;'>verified_user</span>"
 
