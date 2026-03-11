@@ -16,7 +16,6 @@ import os
 import concurrent.futures
 from dataclasses import dataclass
 import base64
-
 import requests
 from PIL import Image
 
@@ -110,7 +109,6 @@ NEW_FILE_MAPPING = {
 }
 
 logger = logging.getLogger(__name__)
-
 from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
 
 # -------------------------------------------------
@@ -130,11 +128,11 @@ for k, v in defaults.items():
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
-
 st_yled.init()
 
 # --- GLOBAL CSS ---
-st.markdown(f"""<style>
+st.markdown(f"""
+<style>
     @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
     :root {{ --jumia-orange: {JUMIA_COLORS['primary_orange']}; --jumia-red: {JUMIA_COLORS['jumia_red']}; }}
     header[data-testid="stHeader"] {{ background: transparent !important; }}
@@ -150,18 +148,21 @@ st.markdown(f"""<style>
     div[data-testid="stExpander"] summary {{ background-color: {JUMIA_COLORS['light_gray']}; padding: 12px; border-radius: 8px 8px 0 0; }}
     h1, h2, h3 {{ color: {JUMIA_COLORS['dark_gray']} !important; }}
     div[data-baseweb="segmented-control"] button[aria-pressed="true"] {{ background-color: {JUMIA_COLORS['primary_orange']} !important; color: white !important; }}
+    
     /* Hide bridge inputs */
     div[data-testid="stTextInput"]:has(input[placeholder="__CARD_ACT__"]) {{
         position: absolute !important; opacity: 0 !important; pointer-events: none !important;
         height: 0 !important; overflow: hidden !important; width: 1px !important;
     }}
+    
     @media (prefers-color-scheme: dark) {{
         h1, h2, h3 {{ color: #F5F5F5 !important; }}
         .metric-card-inner {{ background: #2a2a2e !important; }}
         ::-webkit-scrollbar-track {{ background: #1e1e1e; }}
         ::-webkit-scrollbar-thumb {{ background: #555; border-color: #1e1e1e; }}
     }}
-</style>""", unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
 def get_default_country():
     try:
@@ -643,7 +644,7 @@ def propagate_metadata(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # -------------------------------------------------
-# VALIDATION CHECKS (unchanged logic)
+# VALIDATION CHECKS
 # -------------------------------------------------
 def check_miscellaneous_category(data: pd.DataFrame) -> pd.DataFrame:
     if 'CATEGORY' not in data.columns: return pd.DataFrame(columns=data.columns)
@@ -1134,7 +1135,6 @@ def render_flag_expander(title, df_flagged, data, data_has_warranty_cols_check, 
         df_display = pd.merge(df_flagged[['ProductSetSid']], data, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')[[c for c in disp_cols if c in data.columns]]
         st.session_state.display_df_cache[cache_key] = df_display
     df_display = st.session_state.display_df_cache[cache_key].copy()
-
     c1, c2 = st.columns([1,1])
     with c1: search_term = st.text_input("Search", placeholder="Name, Brand...", key=f"s_{title}")
     with c2: seller_filter = st.multiselect("Filter by Seller", sorted(df_display['SELLER_NAME'].astype(str).unique()), key=f"f_{title}")
@@ -1142,7 +1142,6 @@ def render_flag_expander(title, df_flagged, data, data_has_warranty_cols_check, 
     if seller_filter: df_display = df_display[df_display['SELLER_NAME'].isin(seller_filter)]
     df_display = df_display.reset_index(drop=True)
     if 'NAME' in df_display.columns: df_display['NAME'] = df_display['NAME'].apply(strip_html)
-
     event = st.dataframe(df_display, hide_index=True, use_container_width=True, selection_mode="multi-row", on_select="rerun",
         column_config={
             "PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True),
@@ -1150,13 +1149,11 @@ def render_flag_expander(title, df_flagged, data, data_has_warranty_cols_check, 
             "GLOBAL_SALE_PRICE": st.column_config.NumberColumn("Sale Price (USD)", format="$%.2f"),
             "GLOBAL_PRICE": st.column_config.NumberColumn("Price (USD)", format="$%.2f"),
         }, key=f"df_{title}")
-
     selected_indices = [i for i in list(event.selection.rows) if i < len(df_display)]
     st.caption(f"{len(selected_indices)} of {len(df_display)} rows selected")
     has_sel = len(selected_indices) > 0
     _fm = support_files['flags_mapping']
     _reason_options = ["Wrong Category","Restricted brands","Suspected Fake product","Seller Not approved to sell Refurb","Product Warranty","Seller Approve to sell books","Seller Approved to Sell Perfume","Counterfeit Sneakers","Suspected counterfeit Jerseys","Prohibited products","Unnecessary words in NAME","Single-word NAME","Generic BRAND Issues","Fashion brand issues","BRAND name repeated in NAME","Wrong Variation","Generic branded products with genuine brands","Missing COLOR","Missing Weight/Volume","Incomplete Smartphone Name","Duplicate product","Poor images","Other Reason (Custom)"]
-
     bc1, bc2 = st.columns([1,1])
     with bc1:
         if st.button("✓ Approve Selected", key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_sel):
@@ -1228,7 +1225,6 @@ def _process_card_bridge_action(action_bridge: str, support_files: dict) -> bool
     action_type = action_bridge[:ci]
     target = action_bridge[ci+1:]
     fm = support_files['flags_mapping']
-
     if action_type == 'RESTORE':
         sid = target
         st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status','Reason','Comment','FLAG']] = ['Approved','','','Approved by User']
@@ -1237,7 +1233,6 @@ def _process_card_bridge_action(action_bridge: str, support_files: dict) -> bool
         st.session_state.exports_cache.clear(); st.session_state.display_df_cache.clear()
         st.session_state.main_toasts.append("Item restored!")
         return True
-
     card_action_map = {
         'REJECT_POOR_IMAGE': 'Poor images',
         'REJECT_WRONG_CAT': 'Wrong Category',
@@ -1257,7 +1252,6 @@ def _process_card_bridge_action(action_bridge: str, support_files: dict) -> bool
         st.session_state.exports_cache.clear(); st.session_state.display_df_cache.clear()
         st.session_state.main_toasts.append(f"Rejected as '{flag_name}'")
         return True
-
     if action_type.startswith('BATCH_REJECT_'):
         flag_name = action_type[len('BATCH_REJECT_'):]
         sids = [s.strip() for s in target.split(',') if s.strip()]
@@ -1270,21 +1264,16 @@ def _process_card_bridge_action(action_bridge: str, support_files: dict) -> bool
         st.session_state.exports_cache.clear(); st.session_state.display_df_cache.clear()
         st.session_state.main_toasts.append((f"Batch rejected {len(sids)} as '{flag_name}'", "✅"))
         return True
-
     if action_type == 'NAV_PREV':
         st.session_state.grid_page = max(0, st.session_state.grid_page - 1)
         st.session_state.do_scroll_top = True; return True
     if action_type == 'NAV_NEXT':
         st.session_state.grid_page += 1
         st.session_state.do_scroll_top = True; return True
-
     return False
 
-
-def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
-                          rejected_state, cols_per_row, current_page, total_pages) -> str:
+def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejected_state, cols_per_row, current_page, total_pages) -> str:
     O = "#F68B1E"; R = "#E73C17"; G = "#4CAF50"; DG = "#313133"
-
     batch_options = [
         ("Poor Image Quality", "Poor images"),
         ("Wrong Category", "Wrong Category"),
@@ -1319,11 +1308,18 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         
         function sendBridge(action) {{
             // Target the hidden Streamlit text input across the iframe boundary
-            const input = window.parent.document.querySelector('input[placeholder="__CARD_ACT__"]');
-            if (input) {{
+            const inputs = window.parent.document.querySelectorAll('input');
+            let bridgeInput = null;
+            for (let i = 0; i < inputs.length; i++) {{
+                if (inputs[i].placeholder === "__CARD_ACT__") {{
+                    bridgeInput = inputs[i];
+                    break;
+                }}
+            }}
+            if (bridgeInput) {{
                 const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-                nativeSetter.call(input, action);
-                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                nativeSetter.call(bridgeInput, action);
+                bridgeInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
             }} else {{
                 console.error("Bridge input not found. Make sure the hidden text_input is rendered.");
             }}
@@ -1447,15 +1443,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     return "".join(html_parts)
 
 # ==========================================
-# APP INITIALIZATION
-# ==========================================
-try: support_files = load_support_files_lazy()
-except Exception as e: st.error(f"Failed to load configs: {e}"); st.stop()
-
-# ... (Keep existing UI header and sidebar code here) ...
-
-# ==========================================
-# SECTION 1: UPLOAD & VALIDATION (WITH PARQUET CACHE)
+# APP UI & DATA PIPELINE
 # ==========================================
 st.header(":material/upload_file: Upload Files", anchor=False)
 
@@ -1526,7 +1514,6 @@ if st.session_state.get('last_processed_files') != process_signature:
                 st.session_state.file_mode = file_mode
 
                 if file_mode == 'post_qc':
-                    # ... (Post-QC logic remains exactly the same) ...
                     norm_dfs = [normalize_post_qc(df) for df in all_dfs]
                     merged = pd.concat(norm_dfs, ignore_index=True).drop_duplicates(subset=['PRODUCT_SET_SID'])
                     summary_df, results = run_post_qc_checks(merged, support_files)
@@ -1580,6 +1567,47 @@ if st.session_state.get('last_processed_files') != process_signature:
             except Exception as e:
                 st.error(f"Processing error: {e}")
                 st.session_state.last_processed_files = "error"
+
+# ==========================================
+# POST-QC RESULTS SECTION
+# ==========================================
+if uploaded_files and st.session_state.file_mode == 'post_qc' and not st.session_state.post_qc_summary.empty:
+    render_post_qc_section(support_files)
+
+# ==========================================
+# RESULTS SECTION
+# ==========================================
+if uploaded_files and not st.session_state.final_report.empty and st.session_state.file_mode != 'post_qc':
+    fr = st.session_state.final_report
+    data = st.session_state.all_data_map
+    app_df = fr[fr['Status'] == 'Approved']
+    rej_df = fr[fr['Status'] == 'Rejected']
+
+    st.header(":material/bar_chart: Validation Results", anchor=False)
+    with st.container(border=True):
+        cols = st.columns(5 if st.session_state.layout_mode == "wide" else 3)
+        is_nigeria = st.session_state.get('selected_country') == 'Nigeria'
+        multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
+
+        metrics_config = [
+            ("Total Products", len(data), JUMIA_COLORS['dark_gray']),
+            ("Approved", len(app_df), JUMIA_COLORS['success_green']),
+            ("Rejected", len(rej_df), JUMIA_COLORS['jumia_red']),
+            ("Rejection Rate", f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%", JUMIA_COLORS['primary_orange']),
+            ("Multi-Country SKUs" if is_nigeria else "Common SKUs", multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
+        ]
+        for i, (label, value, color) in enumerate(metrics_config):
+            with cols[i % len(cols)]:
+                st.markdown(f"""<div class="metric-card-inner" style='text-align: center; padding: 18px 12px; background: {JUMIA_COLORS['light_gray']}; border-radius: 8px; border-left: 4px solid {color};'><div class="metric-card-value" style='font-size: 28px; font-weight: 700; color: {color}; margin-bottom: 4px;'>{value}</div><div class="metric-card-label" style='font-size: 11px; color: {JUMIA_COLORS['medium_gray']}; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600;'>{label}</div></div>""", unsafe_allow_html=True)
+
+    st.subheader(":material/flag: Flags Breakdown", anchor=False)
+    if not rej_df.empty:
+        for title in rej_df['FLAG'].unique():
+            df_flagged = rej_df[rej_df['FLAG'] == title]
+            with st.expander(f"{title} ({len(df_flagged)})"):
+                render_flag_expander(title, df_flagged, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator)
+    else: st.success("All products passed validation — no rejections found.")
+
 
 # ==========================================
 # SECTION 2: FAST IMAGE REVIEW GRID
@@ -1652,6 +1680,56 @@ def render_image_grid():
         st.components.v1.html("<script>window.parent.document.querySelector('.main').scrollTo({top: 0, behavior: 'smooth'});</script>", height=0)
         st.session_state.do_scroll_top = False
 
-# Call fragmented blocks (Assuming `render_exports_section()` is the same as the user's snippet above)
+
+# ==========================================
+# SECTION 3: EXPORTS
+# ==========================================
+@st.fragment
+def render_exports_section():
+    if st.session_state.final_report.empty or st.session_state.file_mode == 'post_qc':
+        return
+
+    fr = st.session_state.final_report
+    data = st.session_state.all_data_map
+    app_df = fr[fr['Status'] == 'Approved']
+    rej_df = fr[fr['Status'] == 'Rejected']
+    c_code = st.session_state.selected_country[:2].upper()
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    reasons_df = support_files.get('reasons', pd.DataFrame())
+
+    st.markdown("---")
+    st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>Download Reports</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
+
+    exports_config = [
+        ("Final Report",  fr,     'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
+        ("Rejected Only", rej_df, 'block',        'Products that failed validation', lambda df: generate_smart_export(df, f"{c_code}_Rejected_{date_str}", 'simple', reasons_df)),
+        ("Approved Only", app_df, 'check_circle', 'Products that passed validation', lambda df: generate_smart_export(df, f"{c_code}_Approved_{date_str}", 'simple', reasons_df)),
+        ("Full Data",     data,   'database',     'Complete dataset with validation flags', lambda df: generate_smart_export(prepare_full_data_merged(df, fr), f"{c_code}_Full_{date_str}", 'full')),
+    ]
+
+    cols_count = 4 if st.session_state.layout_mode == "wide" else 2
+    for i in range(0, len(exports_config), cols_count):
+        cols = st.columns(cols_count)
+        for j, col in enumerate(cols):
+            if i + j < len(exports_config):
+                title, df, icon, desc, func = exports_config[i + j]
+                with col:
+                    with st.container(border=True):
+                        st.markdown(f"""<div style='text-align: center; margin-bottom: 15px;'><div style='font-size: 48px; margin-bottom: 8px;' class='material-symbols-outlined'>{icon}</div><div style='font-size: 18px; font-weight: 700;'>{title}</div><div style='font-size: 11px; margin-top: 4px; opacity: 0.7;'>{desc}</div><div style='background: {JUMIA_COLORS['light_gray']}; color: {JUMIA_COLORS['primary_orange']}; padding: 8px; border-radius: 6px; margin-top: 12px; font-weight: 600;'>{len(df):,} rows</div></div>""", unsafe_allow_html=True)
+                        export_key = title
+                        if export_key not in st.session_state.exports_cache:
+                            if st.button("Generate", key=f"gen_{title}", type="primary", use_container_width=True, icon=":material/download:"):
+                                with st.spinner(f"Generating {title}..."):
+                                    res, fname, mime = func(df)
+                                    st.session_state.exports_cache[export_key] = {"data": res.getvalue(), "fname": fname, "mime": mime}
+                                st.rerun()
+                        else:
+                            cache = st.session_state.exports_cache[export_key]
+                            st.download_button("Download", data=cache["data"], file_name=cache["fname"], mime=cache["mime"], use_container_width=True, type="primary", icon=":material/file_download:", key=f"dl_{title}")
+                            if st.button("Clear", key=f"clr_{title}", use_container_width=True):
+                                del st.session_state.exports_cache[export_key]
+                                st.rerun()
+
+# Call fragmented blocks
 render_image_grid()
 render_exports_section()
