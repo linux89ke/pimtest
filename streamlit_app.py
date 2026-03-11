@@ -1,5 +1,3 @@
-python
-
 import math
 import hashlib
 import pandas as pd
