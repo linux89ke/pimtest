@@ -15,6 +15,7 @@ import concurrent.futures
 from dataclasses import dataclass
 import base64
 import time
+import hashlib
 
 # --- IMPORTS FOR IMAGE ADVISOR ---
 import requests
@@ -140,9 +141,9 @@ if 'grid_page' not in st.session_state: st.session_state.grid_page = 0
 if 'grid_items_per_page' not in st.session_state: st.session_state.grid_items_per_page = 50
 if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
-if 'image_advisor_cache' not in st.session_state: st.session_state.image_advisor_cache = {}
 if 'bg_executor' not in st.session_state: st.session_state.bg_executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
+if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
@@ -268,6 +269,13 @@ def create_match_key(row: pd.Series) -> str:
     brand = normalize_text(row.get('BRAND', ''))
     color = normalize_text(row.get('COLOR', ''))
     return f"{brand}|{name}|{color}"
+
+# --- FIX 1: df_hash utility ---
+def df_hash(df: pd.DataFrame) -> str:
+    try:
+        return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
+    except Exception:
+        return hashlib.md5(str(df.shape).encode()).hexdigest()
 
 COLOR_PATTERNS = {
     'red': ['red', 'crimson', 'scarlet', 'maroon', 'burgundy', 'wine', 'ruby'],
@@ -397,7 +405,7 @@ def load_prohibited_from_local() -> Dict[str, List[Dict]]:
     for tab in COUNTRY_TABS:
         try:
             df = safe_excel_read(FILE_NAME, sheet_name=tab)
-            if df.empty: 
+            if df.empty:
                 prohibited_by_country[tab] = []
                 continue
             df.columns = [str(c).strip().lower() for c in df.columns]
@@ -429,7 +437,7 @@ def load_restricted_brands_from_local() -> Dict[str, List[Dict]]:
     for country_name, tab_name in COUNTRY_TABS.items():
         try:
             df = safe_excel_read(FILE_NAME, sheet_name=tab_name)
-            if df.empty: 
+            if df.empty:
                 config_by_country[country_name] = []
                 continue
             df.columns = [str(c).strip().lower() for c in df.columns]
@@ -513,7 +521,7 @@ def load_perfume_data_from_local() -> Dict:
                 result["sellers"][tab] = sellers
         except Exception as e:
             logger.error(f"Error: {e}")
-            result["sellers"][tab] = set() 
+            result["sellers"][tab] = set()
     try:
         df_kw = safe_excel_read(FILE_NAME, sheet_name="Keywords")
         if not df_kw.empty:
@@ -637,24 +645,18 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, Tuple[str, str]]:
 @st.cache_data(ttl=3600)
 def load_all_support_files() -> Dict:
     def safe_load_txt(f): return load_txt_file(f) if os.path.exists(f) else []
-    
-    # --- NEW: Clean reader for proper XLSX format ---
+
     fashion_paths = []
     try:
-        fash_file = 'fashion brands.xlsx'  # <--- Now looking for the .xlsx file
+        fash_file = 'fashion brands.xlsx'
         if os.path.exists(fash_file):
             df_fash = pd.read_excel(fash_file, dtype=str)
-            
-            # Force headers to lowercase and strip hidden spaces just to be safe
             df_fash.columns = df_fash.columns.astype(str).str.strip().str.lower()
-            
-            # Hunt for the 'category path' column automatically
             path_col = next((col for col in df_fash.columns if 'path' in col), None)
-            
             if path_col:
                 fashion_paths = df_fash[path_col].dropna().astype(str).tolist()
     except Exception as e:
-        logger.error(f"Error loading {fash_file}: {e}")
+        logger.error(f"Error loading fashion brands: {e}")
 
     return {
         'postqc_fashion_cats': fashion_paths,
@@ -1092,64 +1094,53 @@ def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_cod
     if not flagged.empty: flagged['Comment_Detail'] = "Name missing Storage/Memory spec (e.g., 64GB)"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
+# --- FIX 4: Fast O(n) duplicate check replacing O(n²) TF-IDF ---
 def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = None, similarity_threshold: float = 0.70, known_colors: List[str] = None, **kwargs) -> pd.DataFrame:
-    dt = int(similarity_threshold * 100) if similarity_threshold <= 1 else int(similarity_threshold)
-    if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
+    if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
     d = data.copy()
-    if exempt_categories and 'CATEGORY_CODE' in d.columns: d = d[~d['CATEGORY_CODE'].apply(clean_category_code).isin(set(clean_category_code(c) for c in exempt_categories))]
-    if d.empty: return pd.DataFrame(columns=data.columns)
-    names = d['NAME'].values
-    colors = d['COLOR'].values if 'COLOR' in d.columns else [None] * len(d)
-    brands = d['BRAND'].values if 'BRAND' in d.columns else [None] * len(d)
-    d['_attrs'] = [extract_product_attributes(n, c, b) for n, c, b in zip(names, colors, brands)]
-    d['_base'] = d['_attrs'].apply(lambda x: x.get_base_key())
-    d['_var'] = d['_attrs'].apply(lambda x: x.get_variant_key().replace(x.get_base_key(), ''))
-    d['_seller'] = d['SELLER_NAME'].astype(str).str.strip().str.lower()
-    rej = set()
-    details = {}
-    try:
-        import importlib.util
-        if importlib.util.find_spec('sklearn') is None: raise ImportError("sklearn not found")
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.metrics.pairwise import cosine_similarity
-        for _, group in d.groupby(['_seller', '_var']):
-            if len(group) < 2: continue
-            sids, bases, attrs = group['PRODUCT_SET_SID'].tolist(), group['_base'].tolist(), group['_attrs'].tolist()
-            try: sim = cosine_similarity(TfidfVectorizer(analyzer='word').fit_transform(bases))
-            except ValueError: sim = [[1.0]*len(bases) for _ in range(len(bases))]
-            tsim = (dt - 30) / 70.0
-            for i in range(len(sids)):
-                if str(sids[i]) in rej: continue
-                for j in range(i + 1, len(sids)):
-                    if str(sids[j]) in rej: continue
-                    if sim[i][j] >= tsim:
-                        rej.add(str(sids[j]))
-                        vdesc = []
-                        if attrs[i].colors: vdesc.append(f"Color: {','.join(attrs[i].colors)}")
-                        if attrs[i].sizes: vdesc.append(f"Size: {','.join(attrs[i].sizes)}")
-                        if attrs[i].storage: vdesc.append(f"Storage: {','.join(attrs[i].storage)}")
-                        if attrs[i].memory: vdesc.append(f"Memory: {','.join(attrs[i].memory)}")
-                        if attrs[i].quantities: vdesc.append(f"Qty: {','.join(attrs[i].quantities)}")
-                        details[str(sids[j])] = {'base': bases[i][:40], 'variant': ",".join(vdesc) or "Same specs", 'score': (sim[i][j]*70)+30}
-    except ImportError:
-        for _, group in d.groupby(['_seller', '_base', '_var']):
-            if len(group) < 2: continue
-            sids = group['PRODUCT_SET_SID'].tolist()
-            for j in range(1, len(sids)):
-                rej.add(str(sids[j]))
-                details[str(sids[j])] = {'base': group['_base'].tolist()[0][:40], 'variant': 'Same specs', 'score': 100}
-    if not rej: return pd.DataFrame(columns=data.columns)
+    if exempt_categories and 'CATEGORY_CODE' in d.columns:
+        d = d[~d['CATEGORY_CODE'].apply(clean_category_code).isin(
+            set(clean_category_code(c) for c in exempt_categories))]
+    if d.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    # Fast exact normalized key — O(n)
+    d['_norm_name'] = d['NAME'].astype(str).apply(lambda x: re.sub(r'\s+', '', normalize_text(x)))
+    d['_norm_brand'] = d['BRAND'].astype(str).str.lower().str.strip()
+    d['_norm_seller'] = d['SELLER_NAME'].astype(str).str.lower().str.strip()
+    d['_dedup_key'] = d['_norm_seller'] + '|' + d['_norm_brand'] + '|' + d['_norm_name']
+
+    seen_keys: dict = {}
+    rej: set = set()
+    details: dict = {}
+
+    for _, row in d.iterrows():
+        key = row['_dedup_key']
+        sid = str(row['PRODUCT_SET_SID'])
+        if key in seen_keys:
+            rej.add(sid)
+            details[sid] = {'base': str(row['NAME'])[:40]}
+        else:
+            seen_keys[key] = sid
+
+    if not rej:
+        return pd.DataFrame(columns=data.columns)
+
     rdf = d[d['PRODUCT_SET_SID'].astype(str).isin(rej)].copy()
-    def apply_dup_comment(sid):
-        if str(sid) in details: return f"Duplicate: Base '{details[str(sid)]['base']}', {details[str(sid)]['variant']}, Conf: {details[str(sid)]['score']:.0f}%"
-        return "Duplicate detected"
-    rdf['Comment_Detail'] = rdf['PRODUCT_SET_SID'].apply(apply_dup_comment)
-    cols = data.columns.tolist()
-    if 'Comment_Detail' not in cols: cols.append('Comment_Detail')
-    return rdf[cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
+    rdf['Comment_Detail'] = rdf['PRODUCT_SET_SID'].apply(
+        lambda sid: f"Duplicate: '{details[str(sid)]['base']}'" if str(sid) in details else "Duplicate detected"
+    )
+    base_cols = data.columns.tolist()
+    extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
+    return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
+
 
 # -------------------------------------------------
 # MASTER VALIDATION RUNNER
+# --- FIX 2: Removed st.write from ThreadPoolExecutor ---
+# --- FIX 1: Wrapped in cached_validate_products below ---
 # -------------------------------------------------
 def validate_products(data: pd.DataFrame, support_files: Dict, country_validator: CountryValidator, data_has_warranty_cols: bool, common_sids: Optional[set] = None, skip_validators: Optional[List[str]] = None):
     data['PRODUCT_SET_SID'] = data['PRODUCT_SET_SID'].astype(str).str.strip()
@@ -1189,7 +1180,9 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
                 for sid in v: dup_groups[sid] = v
     restricted_keys = {}
     validation_errors = []
-    with st.status("Validating products...", expanded=True) as status:
+
+    # FIX 2: Use spinner instead of st.status + st.write to avoid per-check rerenders
+    with st.spinner("Validating products... This may take a moment."):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             future_to_name = {}
             for i, (name, func, kwargs) in enumerate(validations):
@@ -1200,7 +1193,6 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
                 future_to_name[executor.submit(func, **ckwargs)] = name
             for future in concurrent.futures.as_completed(future_to_name):
                 name = future_to_name[future]
-                st.write(f"Completed: {name}")
                 try:
                     res = future.result()
                     if not res.empty and 'PRODUCT_SET_SID' in res.columns:
@@ -1221,7 +1213,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
                     logger.error(f"Error in {name}: {e}")
                     validation_errors.append((name, str(e)))
                     if name not in results: results[name] = pd.DataFrame(columns=data.columns)
-        status.update(label="Validation complete!", state="complete", expanded=False)
+
     if validation_errors:
         st.warning(f"{len(validation_errors)} validation checks encountered errors.")
         with st.expander("View Error Details"):
@@ -1258,6 +1250,20 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     for c in ["ProductSetSid", "ParentSKU", "Status", "Reason", "Comment", "FLAG", "SellerName"]:
         if c not in final_df.columns: final_df[c] = ""
     return country_validator.ensure_status_column(final_df), results
+
+
+# --- FIX 1: Cached wrapper for validate_products ---
+@st.cache_data(show_spinner=False, ttl=3600)
+def cached_validate_products(data_hash: str, _data: pd.DataFrame, _support_files: Dict, country_code: str, data_has_warranty_cols: bool):
+    """Cache validation results keyed by data hash + country. 
+    Prevents re-running 21 checks on every button click or widget interaction."""
+    country_name = next(
+        (k for k, v in CountryValidator.COUNTRY_CONFIG.items() if v['code'] == country_code),
+        "Kenya"
+    )
+    cv = CountryValidator(country_name)
+    return validate_products(_data, _support_files, cv, data_has_warranty_cols)
+
 
 # -------------------------------------------------
 # EXPORTS UTILITIES
@@ -1325,12 +1331,14 @@ def prepare_full_data_merged(data_df, final_report_df):
 def apply_rejection(sids: list, reason_code: str, comment: str, flag_name: str):
     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(sids), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', reason_code, comment, flag_name]
     st.session_state.exports_cache.clear()
+    st.session_state.display_df_cache.clear()
 
 def restore_single_item(sid):
     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
     st.session_state.pop(f"quick_rej_{sid}", None)
     st.session_state.pop(f"quick_rej_reason_{sid}", None)
     st.session_state.exports_cache.clear()
+    st.session_state.display_df_cache.clear()
     st.session_state.main_toasts.append("Restored item to previous state!")
 
 def quick_reject_item(sid, reason_code, comment, flag_name, toast_name):
@@ -1341,21 +1349,27 @@ def quick_reject_item(sid, reason_code, comment, flag_name, toast_name):
 
 def strip_html(text): return re.sub('<[^<]+?>', '', text) if isinstance(text, str) else text
 
-def analyze_image_quality(url: str, cache_dict: dict) -> List[str]:
-    if not url or not str(url).startswith("http"): return []
-    if url in cache_dict: return cache_dict[url]
+# --- FIX 5: Image quality cache persisted via st.cache_data (survives reruns) ---
+@st.cache_data(ttl=86400, show_spinner=False)
+def analyze_image_quality_cached(url: str) -> List[str]:
+    """Cached image quality check — persists across reruns for 24 hours."""
+    if not url or not str(url).startswith("http"):
+        return []
     warnings = []
     try:
         resp = requests.get(url, timeout=2, stream=True)
         if resp.status_code == 200:
             img = Image.open(resp.raw)
             w, h = img.size
-            if w < 300 or h < 300: warnings.append("Low Resolution")
+            if w < 300 or h < 300:
+                warnings.append("Low Resolution")
             ratio = h / w if w > 0 else 1
-            if ratio > 1.5: warnings.append("Tall (Screenshot?)")
-            elif ratio < 0.6: warnings.append("Wide Aspect")
-    except Exception: pass
-    cache_dict[url] = warnings
+            if ratio > 1.5:
+                warnings.append("Tall (Screenshot?)")
+            elif ratio < 0.6:
+                warnings.append("Wide Aspect")
+    except Exception:
+        pass
     return warnings
 
 def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warnings=None):
@@ -1458,7 +1472,8 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
     st.warning(f"You are about to approve **{len(sids_to_process)}** items from `{title}`.")
     if st.button("Confirm Approval", type="primary", use_container_width=True):
         with st.spinner("Processing..."):
-            new_report, _ = validate_products(subset_data, support_files, country_validator, data_has_warranty_cols_check, skip_validators=[title])
+            data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
+            new_report, _ = cached_validate_products(data_hash, subset_data, support_files, country_validator.code, data_has_warranty_cols_check)
             msg_moved, msg_approved = {}, 0
             for sid in sids_to_process:
                 new_row = new_report[new_report['ProductSetSid'] == sid]
@@ -1472,28 +1487,51 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
             st.session_state.exports_cache.clear()
+            st.session_state.display_df_cache.clear()
         st.rerun()
 
-def render_flag_expander(title, df_display, subset_data, data_has_warranty_cols_check, support_files, country_validator):
+# --- FIX 3: Cache merged display DataFrames in render_flag_expander ---
+def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check, support_files, country_validator):
+    # Build display df once and cache it — avoids repeated pd.merge on every interaction
+    cache_key = f"display_df_{title}"
+    base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR', 'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
+    current_display_cols = base_display_cols.copy()
+    if title == "Wrong Variation":
+        if 'COUNT_VARIATIONS' in data.columns: current_display_cols.append('COUNT_VARIATIONS')
+        if 'LIST_VARIATIONS' in data.columns: current_display_cols.append('LIST_VARIATIONS')
+
+    if cache_key not in st.session_state.display_df_cache:
+        df_display = pd.merge(
+            df_flagged_sids[['ProductSetSid']],
+            data,
+            left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left'
+        )[[c for c in current_display_cols if c in data.columns]]
+        st.session_state.display_df_cache[cache_key] = df_display
+    else:
+        df_display = st.session_state.display_df_cache[cache_key]
+
     c1, c2 = st.columns([1, 1])
     with c1: search_term = st.text_input("Search", placeholder="Name, Brand...", key=f"s_{title}")
     with c2: seller_filter = st.multiselect("Filter by Seller", sorted(df_display['SELLER_NAME'].astype(str).unique()), key=f"f_{title}")
-    if search_term: df_display = df_display[df_display.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
-    if seller_filter: df_display = df_display[df_display['SELLER_NAME'].isin(seller_filter)]
-    df_display = df_display.reset_index(drop=True)
-    if 'NAME' in df_display.columns: df_display['NAME'] = df_display['NAME'].apply(strip_html)
+
+    df_view = df_display.copy()
+    if search_term: df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
+    if seller_filter: df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
+    df_view = df_view.reset_index(drop=True)
+    if 'NAME' in df_view.columns: df_view['NAME'] = df_view['NAME'].apply(strip_html)
+
     event = st.dataframe(
-        df_display, hide_index=True, use_container_width=True, selection_mode="multi-row", on_select="rerun",
+        df_view, hide_index=True, use_container_width=True, selection_mode="multi-row", on_select="rerun",
         column_config={
             "PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True),
             "NAME": st.column_config.TextColumn(pinned=True),
-            "GLOBAL_SALE_PRICE": st.column_config.NumberColumn("Sale Price (USD)", format="$%.2f", help="Global sale price in USD"),
-            "GLOBAL_PRICE": st.column_config.NumberColumn("Price (USD)", format="$%.2f", help="Global listed price in USD"),
+            "GLOBAL_SALE_PRICE": st.column_config.NumberColumn("Sale Price (USD)", format="$%.2f"),
+            "GLOBAL_PRICE": st.column_config.NumberColumn("Price (USD)", format="$%.2f"),
         }, key=f"df_{title}"
     )
     raw_selected_indices = list(event.selection.rows)
-    selected_indices = [i for i in raw_selected_indices if i < len(df_display)]
-    st.caption(f"{len(selected_indices)} of {len(df_display)} rows selected")
+    selected_indices = [i for i in raw_selected_indices if i < len(df_view)]
+    st.caption(f"{len(selected_indices)} of {len(df_view)} rows selected")
     has_selection = len(selected_indices) > 0
 
     _fm = support_files['flags_mapping']
@@ -1509,8 +1547,9 @@ def render_flag_expander(title, df_display, subset_data, data_has_warranty_cols_
     btn_col1, btn_col2 = st.columns([1, 1])
     with btn_col1:
         if st.button("✓ Approve Selected", key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
-            sids_to_process = df_display.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
-            bulk_approve_dialog(sids_to_process, title, subset_data[subset_data['PRODUCT_SET_SID'].isin(sids_to_process)], data_has_warranty_cols_check, support_files, country_validator)
+            sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
+            subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
+            bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
     with btn_col2:
         with st.popover("↓ Reject As...", use_container_width=True, disabled=not has_selection):
             st.markdown("<p style='font-size:12px;font-weight:700;margin:0 0 8px 0;'>Select rejection reason:</p>", unsafe_allow_html=True)
@@ -1518,20 +1557,22 @@ def render_flag_expander(title, df_display, subset_data, data_has_warranty_cols_
             if chosen_reason == "Other Reason (Custom)":
                 custom_comment = st.text_area("Custom comment", placeholder="Type your rejection reason here...", key=f"custom_comment_{title}", height=80)
                 if st.button("Apply Custom Rejection", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
-                    to_reject = df_display.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
+                    to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     final_comment = custom_comment.strip() if custom_comment.strip() else "Other Reason"
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', '1000007 - Other Reason', final_comment, 'Other Reason (Custom)']
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected with custom reason.")
                     st.session_state.exports_cache.clear()
+                    st.session_state.display_df_cache.clear()
                     st.rerun()
             else:
                 _rcode, _rcmt = _fm.get(chosen_reason, ('1000007 - Other Reason', chosen_reason))
                 st.caption(f"Code: {_rcode[:40]}...")
                 if st.button("Apply Rejection", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
-                    to_reject = df_display.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
+                    to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
                     st.session_state.exports_cache.clear()
+                    st.session_state.display_df_cache.clear()
                     st.rerun()
 
 # -------------------------------------------------
@@ -1556,7 +1597,10 @@ st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['p
 
 with st.sidebar:
     st.header("System Status")
-    if st.button("🔄 Clear Cache & Reload Data", use_container_width=True, type="secondary", help="Forces a reload of all support rules from local files."): st.cache_data.clear(); st.rerun()
+    if st.button("🔄 Clear Cache & Reload Data", use_container_width=True, type="secondary", help="Forces a reload of all support rules from local files."):
+        st.cache_data.clear()
+        st.session_state.display_df_cache = {}
+        st.rerun()
     st.markdown("---")
     st.header("Display Settings")
     new_mode = "wide" if "Wide" in st.radio("Layout Mode", ["Centered", "Wide"], index=1 if st.session_state.layout_mode == "wide" else 0) else "centered"
@@ -1593,6 +1637,7 @@ if st.session_state.get('last_processed_files') != process_signature:
     st.session_state.intersection_count = 0
     st.session_state.grid_page = 0
     st.session_state.exports_cache = {}
+    st.session_state.display_df_cache = {}
     keys_to_delete = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_"))]
     for k in keys_to_delete: del st.session_state[k]
 
@@ -1624,9 +1669,8 @@ if st.session_state.get('last_processed_files') != process_signature:
                 norm_dfs = [normalize_post_qc(df) for df in all_dfs]
                 merged = pd.concat(norm_dfs, ignore_index=True)
                 merged_dedup = merged.drop_duplicates(subset=['PRODUCT_SET_SID'], keep='first')
-                with st.status("Running Post-QC checks...", expanded=True) as status:
+                with st.spinner("Running Post-QC checks..."):
                     summary_df, results = run_post_qc_checks(merged_dedup, support_files)
-                    status.update(label="Post-QC checks complete!", state="complete", expanded=False)
                 st.session_state.post_qc_summary = summary_df
                 st.session_state.post_qc_results = results
                 st.session_state.post_qc_data = merged_dedup
@@ -1659,7 +1703,11 @@ if st.session_state.get('last_processed_files') != process_signature:
                     for c in ['NAME', 'BRAND', 'COLOR', 'SELLER_NAME', 'CATEGORY_CODE', 'LIST_VARIATIONS']:
                         if c in data.columns: data[c] = data[c].astype(str).fillna('')
                     if 'COLOR_FAMILY' not in data.columns: data['COLOR_FAMILY'] = ""
-                    final_report, _ = validate_products(data, support_files, country_validator, data_has_warranty, None)
+
+                    # FIX 1: Use cached validation — won't re-run on button clicks
+                    data_hash = df_hash(data) + country_validator.code
+                    final_report, _ = cached_validate_products(data_hash, data, support_files, country_validator.code, data_has_warranty)
+
                     st.session_state.final_report = final_report
                     st.session_state.all_data_map = data
                     st.session_state.last_processed_files = process_signature
@@ -1705,21 +1753,22 @@ if uploaded_files and not st.session_state.final_report.empty and st.session_sta
 
     st.subheader(":material/flag: Flags Breakdown", anchor=False)
     if not rej_df.empty:
-        base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR', 'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
         for title in rej_df['FLAG'].unique():
             df_flagged = rej_df[rej_df['FLAG'] == title]
-            current_display_cols = base_display_cols.copy()
-            if title == "Wrong Variation":
-                if 'COUNT_VARIATIONS' in data.columns: current_display_cols.append('COUNT_VARIATIONS')
-                if 'LIST_VARIATIONS' in data.columns: current_display_cols.append('LIST_VARIATIONS')
-            df_display = pd.merge(df_flagged[['ProductSetSid']], data, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')[[c for c in current_display_cols if c in data.columns]]
-            with st.expander(f"{title} ({len(df_display)})"): render_flag_expander(title, df_display, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator)
+            with st.expander(f"{title} ({len(df_flagged)})"):
+                render_flag_expander(title, df_flagged, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator)
     else: st.success("All products passed validation — no rejections found.")
+
 
 # ==========================================
 # SECTION 2: MANUAL IMAGE REVIEW
+# --- FIX 6: Wrapped in @st.fragment to isolate reruns ---
 # ==========================================
-if not st.session_state.final_report.empty and st.session_state.file_mode != 'post_qc':
+@st.fragment
+def render_image_grid():
+    if st.session_state.final_report.empty or st.session_state.file_mode == 'post_qc':
+        return
+
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
 
@@ -1783,6 +1832,7 @@ if not st.session_state.final_report.empty and st.session_state.file_mode != 'po
             st.session_state[f"quick_rej_reason_{s}"] = flag_key
             st.session_state.pop(f"grid_chk_{s}", None)
         st.session_state.exports_cache.clear()
+        st.session_state.display_df_cache.clear()
         st.session_state.main_toasts.append((f"Batch rejected {len(flagged)} items", "✅"))
 
     def cb_prev(sids, active_reason): cb_process_batch(False, sids, active_reason); st.session_state.grid_page -= 1; st.session_state.do_scroll_top = True
@@ -1806,18 +1856,15 @@ if not st.session_state.final_report.empty and st.session_state.file_mode != 'po
         components.html("""<script>const doc = window.parent.document;const main = doc.querySelector('.main') || doc.querySelector('[data-testid="stAppViewContainer"]');if (main) { main.scrollTo({top: 0, behavior: 'smooth'}); }</script>""", height=0, width=0)
         st.session_state.do_scroll_top = False
 
+    # FIX 5: Use cached image checker — no re-download on rerun
     page_warnings = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_sid = {}
-        for _, r in page_data.iterrows():
-            url = str(r.get('MAIN_IMAGE', '')).strip()
-            sid = str(r['PRODUCT_SET_SID'])
-            if url in st.session_state.image_advisor_cache: page_warnings[sid] = st.session_state.image_advisor_cache[url]
-            else: future_to_sid[executor.submit(analyze_image_quality, url, st.session_state.image_advisor_cache)] = sid
+        future_to_sid = {
+            executor.submit(analyze_image_quality_cached, str(r.get('MAIN_IMAGE', '')).strip()): str(r['PRODUCT_SET_SID'])
+            for _, r in page_data.iterrows()
+        }
         for future in concurrent.futures.as_completed(future_to_sid):
-            sid = future_to_sid[future]
-            try: page_warnings[sid] = future.result()
-            except Exception: page_warnings[sid] = []
+            page_warnings[future_to_sid[future]] = future.result()
 
     cols_per_row = 3 if st.session_state.layout_mode == "centered" else 4
     for i in range(0, len(page_data), cols_per_row):
@@ -1833,8 +1880,6 @@ if not st.session_state.final_report.empty and st.session_state.file_mode != 'po
         if next_urls:
             js_array = json.dumps(next_urls)
             components.html(f"""<script>setTimeout(function() {{ var urls = {js_array}; urls.forEach(function(url) {{ var img = new Image(); img.src = url; }}); }}, 1500);</script>""", height=0, width=0)
-            for url in next_urls:
-                if url not in st.session_state.image_advisor_cache: st.session_state.bg_executor.submit(analyze_image_quality, url, st.session_state.image_advisor_cache)
 
     st.divider()
 
@@ -1847,12 +1892,15 @@ if not st.session_state.final_report.empty and st.session_state.file_mode != 'po
         col_desel_b.button("Deselect All", key="desel_all_bot", use_container_width=True, on_click=cb_desel_all, args=(cur_sids,))
         col_rej_b.button(f":material/block: Reject All — {grid_reason}", key="reject_active_bot", type="primary", use_container_width=True, on_click=cb_reject_all, args=(cur_sids, grid_reason))
 
+
 # ==========================================
 # SECTION 3: EXPORTS
+# --- FIX 6: Wrapped in @st.fragment to isolate reruns ---
 # ==========================================
-if not st.session_state.final_report.empty and st.session_state.file_mode != 'post_qc':
-    st.markdown("---")
-    st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>Download Reports</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
+@st.fragment
+def render_exports_section():
+    if st.session_state.final_report.empty or st.session_state.file_mode == 'post_qc':
+        return
 
     fr = st.session_state.final_report
     data = st.session_state.all_data_map
@@ -1861,6 +1909,9 @@ if not st.session_state.final_report.empty and st.session_state.file_mode != 'po
     c_code = st.session_state.selected_country[:2].upper()
     date_str = datetime.now().strftime('%Y-%m-%d')
     reasons_df = support_files.get('reasons', pd.DataFrame())
+
+    st.markdown("---")
+    st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>Download Reports</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
 
     exports_config = [
         ("Final Report",  fr,     'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
@@ -1891,3 +1942,8 @@ if not st.session_state.final_report.empty and st.session_state.file_mode != 'po
                             if st.button("Clear", key=f"clr_{title}", use_container_width=True):
                                 del st.session_state.exports_cache[export_key]
                                 st.rerun()
+
+
+# Call the fragmented sections
+render_image_grid()
+render_exports_section()
