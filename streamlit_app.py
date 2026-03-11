@@ -14,12 +14,9 @@ import os
 import concurrent.futures
 from dataclasses import dataclass
 import base64
-import time
 import hashlib
 import requests
 from PIL import Image
-from streamlit_javascript import st_javascript
-
 
 try:
     from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
@@ -215,25 +212,6 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-def get_default_country():
-    try:
-        lang = st.context.headers.get("Accept-Language", "")
-        if "KE" in lang: return "Kenya"
-        if "UG" in lang: return "Uganda"
-        if "NG" in lang: return "Nigeria"
-        if "GH" in lang: return "Ghana"
-        if "MA" in lang: return "Morocco"
-    except: pass
-    return "Kenya"
-
-if 'selected_country' not in st.session_state: st.session_state.selected_country = get_default_country()
-
-if st.session_state.main_toasts:
-    for msg in st.session_state.main_toasts:
-        if isinstance(msg, tuple): st.toast(msg[0], icon=msg[1])
-        else: st.toast(msg)
-    st.session_state.main_toasts.clear()
-
 # -------------------------------------------------
 # UTILITIES & EXTRACTION
 # -------------------------------------------------
@@ -319,8 +297,21 @@ def extract_product_attributes(name: str, explicit_color: Optional[str] = None, 
     attrs.base_name = base_name.strip()
     return attrs
 
+def get_default_country():
+    try:
+        lang = st.context.headers.get("Accept-Language", "")
+        if "KE" in lang: return "Kenya"
+        if "UG" in lang: return "Uganda"
+        if "NG" in lang: return "Nigeria"
+        if "GH" in lang: return "Ghana"
+        if "MA" in lang: return "Morocco"
+    except: pass
+    return "Kenya"
+
+if 'selected_country' not in st.session_state: st.session_state.selected_country = get_default_country()
+
 # -------------------------------------------------
-# LOCAL EXCEL DATA LOADING HELPERS
+# DATA LOADING 
 # -------------------------------------------------
 def load_txt_file(filename: str) -> List[str]:
     try:
@@ -344,7 +335,6 @@ def safe_excel_read(filename: str, sheet_name, usecols=None) -> pd.DataFrame:
         df = pd.read_excel(filename, sheet_name=sheet_name, usecols=usecols, engine='openpyxl', dtype=str)
         return df.dropna(how='all')
     except Exception as e:
-        logger.error(f"Error reading tab '{sheet_name}' from {filename}: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -607,6 +597,123 @@ def load_all_support_files() -> Dict:
 @st.cache_data(ttl=3600)
 def load_support_files_lazy(): return load_all_support_files()
 
+try: 
+    support_files = load_support_files_lazy()
+except Exception as e: 
+    st.error(f"Failed to load configs: {e}")
+    st.stop()
+
+
+# -------------------------------------------------
+# UTILITIES FOR BRIDGE & DATA MUTATION
+# -------------------------------------------------
+REASON_MAP = {
+    "REJECT_POOR_IMAGE": "Poor images",
+    "REJECT_WRONG_CAT": "Wrong Category",
+    "REJECT_FAKE": "Suspected Fake product",
+    "REJECT_BRAND": "Restricted brands",
+    "REJECT_PROHIBITED": "Prohibited products",
+    "REJECT_COLOR": "Missing COLOR",
+    "REJECT_WRONG_BRAND": "Generic branded products with genuine brands",
+    "OTHER_CUSTOM": "Other Reason (Custom)"
+}
+
+def apply_rejection(sids: list, reason_code: str, comment: str, flag_name: str):
+    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(sids), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', reason_code, comment, flag_name]
+    st.session_state.exports_cache.clear()
+    st.session_state.display_df_cache.clear()
+
+def restore_single_item(sid):
+    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
+    st.session_state.pop(f"quick_rej_{sid}", None)
+    st.session_state.pop(f"quick_rej_reason_{sid}", None)
+    st.session_state.exports_cache.clear()
+    st.session_state.display_df_cache.clear()
+    st.session_state.main_toasts.append("Restored item to previous state!")
+
+def _process_card_bridge_action(action_str: str, support_files: dict) -> bool:
+    if not action_str or not isinstance(action_str, str):
+        return False
+    action_str = action_str.strip()
+    try:
+        colon = action_str.index(":")
+        action  = action_str[:colon]
+        payload = action_str[colon + 1:]
+    except ValueError:
+        return False
+
+    try:
+        if action == "NAV_PREV":
+            st.session_state.grid_page = max(0, st.session_state.grid_page - 1)
+            st.session_state.do_scroll_top = True
+            return True
+
+        if action == "NAV_NEXT":
+            st.session_state.grid_page += 1
+            st.session_state.do_scroll_top = True
+            return True
+
+        if action == "BATCH_COMMIT":
+            try:
+                pending: dict = json.loads(payload)
+            except json.JSONDecodeError:
+                return False
+            if not pending:
+                return False
+
+            reason_groups: dict[str, list] = {}
+            for sid, reason_key in pending.items():
+                reason_groups.setdefault(reason_key, []).append(sid)
+
+            total = 0
+            for reason_key, sids in reason_groups.items():
+                flag_name = REASON_MAP.get(reason_key, "Other Reason (Custom)")
+                code, cmt  = support_files["flags_mapping"].get(
+                    flag_name, ("1000007 - Other Reason", "Manual rejection")
+                )
+                apply_rejection(sids, code, cmt, flag_name)
+                for s in sids:
+                    st.session_state[f"quick_rej_{s}"] = True
+                    st.session_state[f"quick_rej_reason_{s}"] = flag_name
+                total += len(sids)
+
+            st.session_state.main_toasts.append((f"Rejected {total} product(s)", "✅"))
+            st.session_state.exports_cache.clear()
+            st.session_state.display_df_cache.clear()
+            return True
+
+        if action == "RESTORE":
+            restore_single_item(payload.strip())
+            return True
+
+    except Exception as e:
+        logger.error(f"Bridge action error: {e}")
+    return False
+
+# ==============================================================================
+# TOP-LEVEL QUERY PARAMETER HANDLER
+# This completely bypasses the st.fragment issues by intercepting URL updates
+# at the very beginning of the Streamlit script execution.
+# ==============================================================================
+raw_grid_action = st.query_params.get("grid_action")
+if raw_grid_action:
+    # We strip the timestamp appended by JS (format: ACTION|__TS__|1234567)
+    actual_action = raw_grid_action.split("|__TS__|")[0]
+    
+    # Clear the query param immediately so it doesn't loop
+    del st.query_params["grid_action"]
+    
+    changed = _process_card_bridge_action(actual_action, support_files)
+    if changed:
+        st.session_state.final_report = st.session_state.final_report.copy()
+        
+    st.rerun()  # Forces a full page rerun instantly, updating all expanders!
+# ==============================================================================
+
+
+# -------------------------------------------------
+# DATA PREPROCESSING AND VALIDATION LOGIC 
+# -------------------------------------------------
 @st.cache_data(ttl=3600)
 def compile_regex_patterns(words: List[str]) -> re.Pattern:
     if not words: return None
@@ -633,9 +740,6 @@ class CountryValidator:
         if not df.empty and 'Status' not in df.columns: df['Status'] = 'Approved'
         return df
 
-# -------------------------------------------------
-# DATA PREPROCESSING
-# -------------------------------------------------
 def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip()
@@ -684,9 +788,6 @@ def propagate_metadata(df: pd.DataFrame) -> pd.DataFrame:
         df[col] = df.groupby('PRODUCT_SET_SID')[col].transform(lambda x: x.ffill().bfill())
     return df
 
-# -------------------------------------------------
-# VALIDATION CHECKS
-# -------------------------------------------------
 def check_miscellaneous_category(data: pd.DataFrame) -> pd.DataFrame:
     if 'CATEGORY' not in data.columns: return pd.DataFrame(columns=data.columns)
     flagged = data[data['CATEGORY'].astype(str).str.contains("miscellaneous", case=False, na=False)].copy()
@@ -1038,9 +1139,6 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-# -------------------------------------------------
-# MASTER VALIDATION RUNNER
-# -------------------------------------------------
 def validate_products(data: pd.DataFrame, support_files: Dict, country_validator: CountryValidator, data_has_warranty_cols: bool, common_sids: Optional[set] = None, skip_validators: Optional[List[str]] = None):
     data['PRODUCT_SET_SID'] = data['PRODUCT_SET_SID'].astype(str).str.strip()
     flags_mapping = support_files['flags_mapping']
@@ -1215,79 +1313,19 @@ def prepare_full_data_merged(data_df, final_report_df):
         return merged
     except Exception: return pd.DataFrame()
 
-# -------------------------------------------------
-# UTILITIES FOR BRIDGE & DATA MUTATION
-# -------------------------------------------------
-def apply_rejection(sids: list, reason_code: str, comment: str, flag_name: str):
-    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(sids), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', reason_code, comment, flag_name]
-    st.session_state.exports_cache.clear()
-    st.session_state.display_df_cache.clear()
-
-def restore_single_item(sid):
-    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
-    st.session_state.pop(f"quick_rej_{sid}", None)
-    st.session_state.pop(f"quick_rej_reason_{sid}", None)
-    st.session_state.exports_cache.clear()
-    st.session_state.display_df_cache.clear()
-    st.session_state.main_toasts.append("Restored item to previous state!")
-
-REASON_MAP = {
-    "REJECT_POOR_IMAGE": "Poor images",
-    "REJECT_WRONG_CAT": "Wrong Category",
-    "REJECT_FAKE": "Suspected Fake product",
-    "REJECT_BRAND": "Restricted brands",
-    "REJECT_PROHIBITED": "Prohibited products",
-    "REJECT_COLOR": "Missing COLOR",
-    "REJECT_WRONG_BRAND": "Generic branded products with genuine brands",
-    "OTHER_CUSTOM": "Other Reason (Custom)"
-}
-
-# ── FIXED: _process_card_bridge_action ───────────────────────────────────────
-# Key fix: st.rerun(scope="app") is called by the caller (render_image_grid),
-# not here. This function only mutates state and returns True/False.
-# -------------------------------------------------
-# PROCESS GRID ACTIONS (called from Python-side controls)
-# -------------------------------------------------
-def _process_grid_selections(raw_json: str, support_files: dict) -> int:
-    """Parse {sid: reason_key} JSON from localStorage and apply rejections. Returns count."""
-    if not raw_json or not isinstance(raw_json, str) or raw_json in ("0", "null", ""):
-        return 0
-    try:
-        pending = json.loads(raw_json)
-        if not isinstance(pending, dict) or not pending:
-            return 0
-        reason_groups: dict[str, list] = {}
-        for sid, reason_key in pending.items():
-            reason_groups.setdefault(reason_key, []).append(sid)
-        total = 0
-        for reason_key, sids in reason_groups.items():
-            flag_name = REASON_MAP.get(reason_key, "Other Reason (Custom)")
-            code, cmt = support_files["flags_mapping"].get(
-                flag_name, ("1000007 - Other Reason", "Manual rejection")
-            )
-            apply_rejection(sids, code, cmt, flag_name)
-            for s in sids:
-                st.session_state[f"quick_rej_{s}"] = True
-                st.session_state[f"quick_rej_reason_{s}"] = flag_name
-            total += len(sids)
-        return total
-    except Exception as e:
-        logger.error(f"Grid selections parse error: {e}")
-        return 0
 
 # -------------------------------------------------
 # HTML GRID BUILDER
-# No bridge needed — card-level actions write to localStorage.
-# Python reads localStorage via st_javascript on each rerun.
-# All nav/batch controls are native Streamlit widgets (100% reliable).
 # -------------------------------------------------
 def build_fast_grid_html(
-    page_data: pd.DataFrame,
+    page_data: "pd.DataFrame",
     flags_mapping: dict,
     country: str,
     page_warnings: dict,
     rejected_state: dict,
     cols_per_row: int,
+    current_page: int,
+    total_pages: int,
 ) -> str:
     O, G, R, DG = (
         JUMIA_COLORS["primary_orange"],
@@ -1295,14 +1333,22 @@ def build_fast_grid_html(
         JUMIA_COLORS["jumia_red"],
         JUMIA_COLORS["dark_gray"],
     )
-    O, G, R, DG = (
-        JUMIA_COLORS["primary_orange"],
-        JUMIA_COLORS["success_green"],
-        JUMIA_COLORS["jumia_red"],
-        JUMIA_COLORS["dark_gray"],
+    batch_options = [
+        ("Poor Image Quality",  "REJECT_POOR_IMAGE"),
+        ("Wrong Category",      "REJECT_WRONG_CAT"),
+        ("Suspected Fake",      "REJECT_FAKE"),
+        ("Restricted Brand",    "REJECT_BRAND"),
+        ("Wrong Brand",         "REJECT_WRONG_BRAND"),
+        ("Prohibited Product",  "REJECT_PROHIBITED"),
+    ]
+    batch_opts_html = "".join(
+        f'<option value="{v}">{l}</option>' for l, v in batch_options
     )
 
     committed_json = json.dumps(rejected_state)
+    all_sids_json  = json.dumps(
+        page_data["PRODUCT_SET_SID"].astype(str).tolist()
+    )
 
     cards_data = []
     for _, row in page_data.iterrows():
@@ -1321,113 +1367,171 @@ def build_fast_grid_html(
         })
     cards_json = json.dumps(cards_data)
 
+    prev_disabled = "disabled" if current_page <= 0            else ""
+    next_disabled = "disabled" if current_page >= total_pages - 1 else ""
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
-  body{{background:#f5f5f5;padding:8px;}}
-  .info-bar{{display:flex;align-items:center;gap:12px;padding:8px 12px;background:#fff;
-             border:1px solid #e0e0e0;border-radius:8px;margin-bottom:12px;
-             font-size:12px;flex-wrap:wrap;color:#555;}}
-  .sel-count{{font-weight:700;color:{O};}}
+  body{{background:#f5f5f5;padding:10px;}}
+  .toolbar{{display:flex;justify-content:space-between;align-items:center;
+            padding:10px 14px;background:#fff;border:1px solid #e0e0e0;
+            border-radius:8px;margin-bottom:14px;position:sticky;top:0;
+            z-index:200;gap:10px;flex-wrap:wrap;}}
+  .toolbar button{{padding:6px 13px;border:1px solid #ccc;border-radius:4px;
+                   background:#fff;cursor:pointer;font-size:12px;font-weight:600;}}
+  .toolbar button:disabled{{opacity:.4;cursor:default;}}
+  .toolbar button.danger{{background:{R};color:#fff;border-color:{R};}}
+  .toolbar button.nav{{background:{DG};color:#fff;border-color:{DG};}}
+  .toolbar select{{padding:6px 8px;border:1px solid #ccc;border-radius:4px;
+                   font-size:12px;outline:none;}}
+  .page-info{{font-size:13px;font-weight:700;color:{DG};white-space:nowrap;}}
+  .sel-count{{font-size:13px;font-weight:700;color:{O};}}
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
-  .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;
-         transition:border-color .15s,box-shadow .15s;}}
-  .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);background:rgba(76,175,80,.04);}}
-  .card.committed-rej{{border-color:#bbb;opacity:.5;}}
-  .card-img-wrap{{position:relative;cursor:pointer;}}
+  .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;
+         position:relative;transition:border-color .15s,box-shadow .15s;cursor:pointer;}}
+  .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);
+                  background:rgba(76,175,80,.04);}}
+  .card.pending-rej{{border-color:{R};opacity:.55;
+                     box-shadow:0 0 0 3px rgba(231,60,23,.15);}}
+  .card.committed-rej{{border-color:#aaa;opacity:.45;}}
+  .card-img-wrap{{position:relative;}}
   .card-img{{width:100%;aspect-ratio:1;object-fit:contain;border-radius:6px;display:block;}}
-  .card.committed-rej .card-img{{filter:grayscale(80%);}}
-  .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;
-         background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;
-         color:transparent;font-size:13px;font-weight:900;transition:all .15s;pointer-events:none;}}
+  .card.pending-rej .card-img,.card.committed-rej .card-img{{filter:grayscale(80%);}}
+  .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;
+         border-radius:50%;background:rgba(0,0,0,.18);display:flex;
+         align-items:center;justify-content:center;color:transparent;
+         font-size:13px;font-weight:900;transition:all .15s;pointer-events:none;}}
   .card.selected .tick{{background:{G};color:#fff;}}
-  .warn-wrap{{position:absolute;top:6px;right:6px;display:flex;flex-direction:column;gap:3px;
-              z-index:5;pointer-events:none;}}
-  .warn-badge{{background:rgba(255,193,7,.95);color:#313133;font-size:9px;font-weight:800;
-               padding:3px 7px;border-radius:10px;}}
-  .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.88);
-                border-radius:6px;flex-direction:column;align-items:center;justify-content:center;
-                z-index:20;gap:5px;padding:8px;text-align:center;}}
-  .card.committed-rej .rej-overlay{{display:flex;}}
-  .rej-badge{{background:{R};color:#fff;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;}}
-  .rej-label{{font-size:10px;color:{R};font-weight:600;max-width:120px;}}
+  .warn-wrap{{position:absolute;top:6px;right:6px;display:flex;flex-direction:column;
+              gap:3px;z-index:5;pointer-events:none;}}
+  .warn-badge{{background:rgba(255,193,7,.95);color:#313133;font-size:9px;
+               font-weight:800;padding:3px 7px;border-radius:10px;
+               box-shadow:0 1px 3px rgba(0,0,0,.2);}}
+  .overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.88);
+            border-radius:6px;flex-direction:column;align-items:center;
+            justify-content:center;z-index:20;gap:6px;padding:8px;text-align:center;}}
+  .card.pending-rej .overlay,.card.committed-rej .overlay{{display:flex;}}
+  .rej-badge{{background:{R};color:#fff;padding:3px 10px;border-radius:10px;
+              font-size:11px;font-weight:700;}}
+  .rej-label{{font-size:10px;font-weight:600;color:{R};max-width:120px;}}
+  .undo-btn{{margin-top:4px;padding:5px 12px;background:{DG};color:#fff;border:none;
+             border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;}}
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;}}
   .acts{{display:flex;gap:4px;margin-top:8px;}}
-  .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;
-            font-weight:700;color:#fff;background:{O};}}
-  .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;
-             cursor:pointer;background:#fff;}}
+  .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;
+            cursor:pointer;font-weight:700;color:#fff;}}
+  .act-poor{{background:{O};}}
+  .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;
+             outline:none;cursor:pointer;background:#fff;}}
+
+  /* toast notification */
+  #toast{{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+          background:{DG};color:#fff;padding:10px 22px;border-radius:20px;
+          font-size:13px;font-weight:700;opacity:0;transition:opacity .3s;
+          pointer-events:none;z-index:9999;}}
+  #toast.show{{opacity:1;}}
 </style>
 </head>
 <body>
-<div class="info-bar">
-  <span>Click image to <b>select</b> &nbsp;|&nbsp; Use <b>Batch Reject</b> above the grid to reject selected</span>
-  <span class="sel-count" id="sel-count-bar">0 selected</span>
+
+<div id="toast"></div>
+
+<div class="toolbar">
+  <div style="display:flex;align-items:center;gap:8px;">
+    <button class="nav" id="btn-prev" {prev_disabled} onclick="navAction('NAV_PREV')">&#8592; Prev</button>
+    <span class="page-info">Page {current_page + 1} / {total_pages}</span>
+    <button class="nav" id="btn-next" {next_disabled} onclick="navAction('NAV_NEXT')">Next &#8594;</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <button onclick="selectAll()">Select All</button>
+    <button onclick="deselectAll()">Deselect All</button>
+    <span class="sel-count"><span id="sel-count">0</span> selected</span>
+    <select id="batch-reason">{batch_opts_html}</select>
+    <button class="danger" onclick="doBatchReject()">&#10007; Batch Reject</button>
+    <button style="background:{G};color:#fff;border-color:{G};" onclick="commitPending()">&#10003; Commit</button>
+  </div>
 </div>
+
 <div class="grid" id="card-grid"></div>
+
 <script>
 const CARDS     = {cards_json};
 const COMMITTED = {committed_json};
-const LS_KEY    = '_grid_pending';
+const ALL_SIDS  = {all_sids_json};
 
-let selectedSids = new Set();  /* stores "sid|reasonKey" strings */
+let selectedSids      = new Set();
+let pendingRejections = {{}};
 
-/* Restore pending state from localStorage (persists across Streamlit reruns) */
-(function() {{
+/* ── Top-Level Query Param Bridge ────────────────────────────────────── */
+function sendBridge(action) {{
   try {{
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {{
-      const obj = JSON.parse(raw);
-      Object.keys(obj).forEach(sid => {{
-        if (!(sid in COMMITTED)) selectedSids.add(sid + '|' + obj[sid]);
-      }});
-    }}
-  }} catch(e) {{}}
-}})();
+    // Append a timestamp so Streamlit recognizes every click as a new URL change
+    const ts = Date.now();
+    const actionPayload = action + "|__TS__|" + ts;
 
-function saveToLS() {{
-  const obj = {{}};
-  selectedSids.forEach(entry => {{
-    const pipe = entry.indexOf('|');
-    const sid    = entry.slice(0, pipe);
-    const reason = entry.slice(pipe + 1);
-    obj[sid] = reason;
-  }});
-  try {{ localStorage.setItem(LS_KEY, JSON.stringify(obj)); }} catch(e) {{}}
-  document.getElementById('sel-count-bar').textContent = selectedSids.size + ' selected';
+    // Use pushState to modify parent URL parameters silently
+    const parentUrl = new URL(window.parent.location.href);
+    parentUrl.searchParams.set("grid_action", actionPayload);
+    window.parent.history.pushState({{}}, "", parentUrl);
+    
+    // Dispatch popstate event so Streamlit detects the URL update immediately
+    window.parent.dispatchEvent(new Event("popstate"));
+  }} catch (err) {{
+    console.error("Bridge script error (sandbox policy?):", err);
+    alert("Interaction blocked by browser security. Please refresh.");
+  }}
+}}
+/* ────────────────────────────────────────────────────────────────────── */
+
+function showToast(msg) {{
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
 }}
 
+/* ── card rendering ────────────────────────────────────────────────────── */
 function renderCard(card) {{
   const {{sid, img, name, brand, cat, seller, warnings}} = card;
   const isCommitted = sid in COMMITTED;
-  const selEntry = [...selectedSids].find(e => e.startsWith(sid + '|'));
-  const isSelected = !!selEntry && !isCommitted;
+  const isPending   = sid in pendingRejections;
+  const isSelected  = selectedSids.has(sid);
 
   let cls = 'card';
-  if (isCommitted) cls += ' committed-rej';
-  else if (isSelected) cls += ' selected';
+  if      (isCommitted) cls += ' committed-rej';
+  else if (isPending)   cls += ' pending-rej';
+  else if (isSelected)  cls += ' selected';
 
-  const shortName = name.length > 38 ? name.slice(0,38)+'…' : name;
-  const warnHtml  = warnings.map(w => `<span class="warn-badge">${{w}}</span>`).join('');
-  const rejLabel  = isCommitted ? COMMITTED[sid].replace(/_/g,' ') : '';
+  const shortName  = name.length > 38 ? name.slice(0, 38) + '…' : name;
+  const warnHtml   = warnings.map(w => `<span class="warn-badge">${{w}}</span>`).join('');
+  const overlayLbl = isPending
+    ? pendingRejections[sid].replace(/_/g, ' ')
+    : (isCommitted ? COMMITTED[sid] : '');
 
-  const rejOverlay = isCommitted ? `
-    <div class="rej-overlay">
+  const overlayHtml = (isPending || isCommitted) ? `
+    <div class="overlay">
       <div class="rej-badge">REJECTED</div>
-      <div class="rej-label">${{rejLabel}}</div>
+      <div class="rej-label">${{overlayLbl}}</div>
+      ${{isCommitted
+        ? `<button class="undo-btn" onclick="doRestore('${{sid}}')">Undo (saved)</button>`
+        : `<button class="undo-btn" onclick="undoPending('${{sid}}')">Undo</button>`
+      }}
     </div>` : '';
 
-  const actHtml = !isCommitted ? `
+  const actionsHtml = (!isPending && !isCommitted) ? `
     <div class="acts">
-      <button class="act-btn" onclick="quickReject(event,'${{sid}}','REJECT_POOR_IMAGE')">Poor Img</button>
-      <select class="act-more" onchange="if(this.value){{quickReject(event,'${{sid}}',this.value);this.value=''}}">
+      <button class="act-btn act-poor"
+              onclick="rejectCard(event,'${{sid}}','REJECT_POOR_IMAGE')">Poor Img</button>
+      <select class="act-more"
+              onchange="if(this.value){{rejectCard(event,'${{sid}}',this.value);this.value=''}}">
         <option value="">More…</option>
         <option value="REJECT_WRONG_CAT">Wrong Category</option>
         <option value="REJECT_FAKE">Fake Product</option>
@@ -1438,72 +1542,138 @@ function renderCard(card) {{
       </select>
     </div>` : '';
 
-  return `<div class="${{cls}}" id="card-${{sid}}">
-    <div class="card-img-wrap" onclick="toggleSelect('${{sid}}')" >
+  return `
+  <div class="${{cls}}" id="card-${{sid}}" data-sid="${{sid}}">
+    <div class="card-img-wrap" onclick="toggleSelect('${{sid}}')">
       <div class="warn-wrap">${{warnHtml}}</div>
       <img class="card-img" src="${{img}}" loading="lazy"
            onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
-      ${{rejOverlay}}<div class="tick">✓</div>
+      <div class="tick">✓</div>
     </div>
+    ${{overlayHtml}}
     <div class="meta">
       <div class="nm" title="${{name}}">${{shortName}}</div>
       <div class="br">${{brand}}</div>
       <div class="ct">${{cat}}</div>
       <div class="sl">${{seller}}</div>
-    </div>${{actHtml}}</div>`;
+    </div>
+    ${{actionsHtml}}
+  </div>`;
 }}
 
 function renderAll() {{
   document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join('');
-  document.getElementById('sel-count-bar').textContent = selectedSids.size + ' selected';
 }}
 
+/* ── interactions ──────────────────────────────────────────────────────── */
 function toggleSelect(sid) {{
-  if (sid in COMMITTED) return;
-  const ex = [...selectedSids].find(e => e.startsWith(sid+'|'));
-  if (ex) {{ selectedSids.delete(ex); }}
-  else {{ selectedSids.add(sid+'|SELECTED'); }}
-  const el = document.getElementById('card-'+sid);
-  if (el) {{
-    const card = CARDS.find(c=>c.sid===sid);
-    if (card) {{ const t=document.createElement('div'); t.innerHTML=renderCard(card); el.replaceWith(t.firstElementChild); }}
-  }}
-  saveToLS();
+  if (sid in pendingRejections || sid in COMMITTED) return;
+  if (selectedSids.has(sid)) selectedSids.delete(sid);
+  else selectedSids.add(sid);
+  refreshCard(sid);
+  document.getElementById('sel-count').textContent = selectedSids.size;
 }}
 
-function quickReject(evt, sid, reasonKey) {{
+function rejectCard(evt, sid, reasonKey) {{
   evt.stopPropagation();
-  const ex = [...selectedSids].find(e => e.startsWith(sid+'|'));
-  if (ex) selectedSids.delete(ex);
-  selectedSids.add(sid+'|'+reasonKey);
-  const el = document.getElementById('card-'+sid);
-  if (el) {{
-    const card = CARDS.find(c=>c.sid===sid);
-    if (card) {{ const t=document.createElement('div'); t.innerHTML=renderCard(card); el.replaceWith(t.firstElementChild); }}
-  }}
-  saveToLS();
+  pendingRejections[sid] = reasonKey;
+  selectedSids.delete(sid);
+  refreshCard(sid);
+  document.getElementById('sel-count').textContent = selectedSids.size;
 }}
 
-/* Called by Python-injected buttons (selectAll / deselectAll via re-render) */
-window._gridSelectAll = function() {{
-  CARDS.forEach(c => {{
-    if (!(c.sid in COMMITTED)) {{
-      const ex = [...selectedSids].find(e=>e.startsWith(c.sid+'|'));
-      if (!ex) selectedSids.add(c.sid+'|SELECTED');
-    }}
+function undoPending(sid) {{
+  delete pendingRejections[sid];
+  refreshCard(sid);
+}}
+
+function doRestore(sid) {{
+  sendBridge('RESTORE:' + sid);
+}}
+
+function refreshCard(sid) {{
+  const card = CARDS.find(c => c.sid === sid);
+  if (!card) return;
+  const el = document.getElementById('card-' + sid);
+  if (!el) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderCard(card);
+  el.replaceWith(tmp.firstElementChild);
+}}
+
+function selectAll() {{
+  ALL_SIDS.forEach(sid => {{
+    if (!(sid in pendingRejections) && !(sid in COMMITTED)) selectedSids.add(sid);
   }});
-  renderAll(); saveToLS();
-}};
-window._gridDeselect = function() {{
-  selectedSids.clear(); renderAll(); saveToLS();
-}};
+  renderAll();
+  document.getElementById('sel-count').textContent = selectedSids.size;
+}}
+
+function deselectAll() {{
+  selectedSids.clear();
+  renderAll();
+  document.getElementById('sel-count').textContent = 0;
+}}
+
+/* Batch reject: mark pending then immediately commit */
+function doBatchReject() {{
+  const reasonKey = document.getElementById('batch-reason').value;
+  if (selectedSids.size === 0) {{
+    alert('Select at least one product first.');
+    return;
+  }}
+  selectedSids.forEach(sid => {{ pendingRejections[sid] = reasonKey; }});
+  selectedSids.clear();
+  document.getElementById('sel-count').textContent = 0;
+  renderAll();
+  commitPending();
+}}
+
+function commitPending() {{
+  if (Object.keys(pendingRejections).length === 0) {{
+    showToast('Nothing pending to commit.');
+    return;
+  }}
+  const payload = JSON.stringify(pendingRejections);
+  showToast('Saving ' + Object.keys(pendingRejections).length + ' rejection(s)…');
+  pendingRejections = {{}};
+  sendBridge('BATCH_COMMIT:' + payload);
+}}
+
+/* Navigate pages – ask user if there are pending uncommitted rejections */
+function navAction(direction) {{
+  const pendingCount = Object.keys(pendingRejections).length;
+  if (pendingCount > 0) {{
+    const ok = confirm(
+      pendingCount + ' rejection(s) are uncommitted.\\n\\n' +
+      'Click OK to SAVE them and navigate.\\n' +
+      'Click Cancel to go back and review.'
+    );
+    if (!ok) return;          // user chose to stay
+    const payload = JSON.stringify(pendingRejections);
+    pendingRejections = {{}};
+    // commit first, then navigate – small delay so Python processes in order
+    sendBridge('BATCH_COMMIT:' + payload);
+    setTimeout(() => sendBridge(direction + ':1'), 200);
+  }} else if (selectedSids.size > 0) {{
+    const ok = confirm(
+      selectedSids.size + ' product(s) are selected but NOT rejected yet.\\n\\n' +
+      'Click OK to navigate anyway (selection will be lost).\\n' +
+      'Click Cancel to go back and choose a rejection reason.'
+    );
+    if (!ok) return;
+    selectedSids.clear();
+    sendBridge(direction + ':1');
+  }} else {{
+    sendBridge(direction + ':1');
+  }}
+}}
 
 renderAll();
 </script>
 </body>
 </html>"""
     return html
-
 
 # -------------------------------------------------
 # UI COMPONENTS (Metrics & Expanders)
@@ -1632,11 +1802,8 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.rerun()
 
 # ==========================================
-# APP INITIALIZATION
+# APP INITIALIZATION UI
 # ==========================================
-try: support_files = load_support_files_lazy()
-except Exception as e: st.error(f"Failed to load configs: {e}"); st.stop()
-
 def get_image_base64(path):
     if os.path.exists(path):
         try:
@@ -1746,7 +1913,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                 is_valid, errors = validate_input_schema(data_prop)
                 if is_valid:
                     data_filtered, det_names = filter_by_country(data_prop, country_validator)
-                    if data_filtered.empty:
+                    if data_filtered.empty: 
                         st.error(f"No {country_validator.country} products found. Detected countries: {', '.join(det_names) if det_names else 'None'}", icon=":material/error:")
                         st.stop()
                     actual_counts = data_filtered.groupby('PRODUCT_SET_SID')['PRODUCT_SET_SID'].transform('count')
@@ -1816,10 +1983,9 @@ if uploaded_files and not st.session_state.final_report.empty and st.session_sta
     else: st.success("All products passed validation — no rejections found.")
 
 
-# ==========================================
-# SECTION 2: MANUAL IMAGE REVIEW  ── FIXED
-# ==========================================
-@st.fragment
+# ─────────────────────────────────────────────────────────────────────────────
+# IMAGE GRID (Fragment)
+# ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
 def render_image_grid():
     if st.session_state.final_report.empty or st.session_state.file_mode == "post_qc":
@@ -1827,30 +1993,6 @@ def render_image_grid():
 
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
-
-    # ── Read pending selections from localStorage via st_javascript ─────────
-    # localStorage is shared across all iframes on the same origin (allow-same-origin).
-    # st_javascript re-executes on each render when key changes.
-    # It reads what the grid HTML wrote, returns it to Python, then clears it.
-    # Using int(time.time()) as key forces re-execution every ~1 second.
-    # ─────────────────────────────────────────────────────────────────────────
-    ls_data = st_javascript(
-        "return localStorage.getItem('_grid_pending') || null;",
-        key=f"ls_read_{int(time.time())}",
-    )
-
-    if ls_data and isinstance(ls_data, str) and ls_data not in ("0", "null"):
-        count = _process_grid_selections(ls_data, support_files)
-        if count > 0:
-            # Clear localStorage so we don't reprocess
-            st_javascript("localStorage.removeItem('_grid_pending');",
-                          key=f"ls_clear_{int(time.time())}")
-            st.session_state.main_toasts.append((f"Rejected {count} product(s)", "✅"))
-            st.session_state.exports_cache.clear()
-            st.session_state.display_df_cache.clear()
-            st.session_state.final_report = st.session_state.final_report.copy()
-            st.rerun(scope="app")   # full rerun so expanders update
-        return
 
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
@@ -1863,13 +2005,13 @@ def render_image_grid():
     mask = (fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))
     valid_grid_df = fr[mask]
 
-    # ── Search & filter ───────────────────────────────────────────────────────
     c1, c2, c3 = st.columns([1.5, 1.5, 2])
     with c1: search_n  = st.text_input("Search by Name", placeholder="Product name…")
     with c2: search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
     with c3:
         st.session_state.grid_items_per_page = st.select_slider(
-            "Items per page", options=[20, 50, 100, 200],
+            "Items per page",
+            options=[20, 50, 100, 200],
             value=st.session_state.grid_items_per_page,
         )
 
@@ -1879,10 +2021,17 @@ def render_image_grid():
         data[available_cols],
         left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
     )
+
     if search_n:
-        review_data = review_data[review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)]
+        review_data = review_data[
+            review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)
+        ]
     if search_sc:
-        mc = review_data["CATEGORY"].astype(str).str.contains(search_sc, case=False, na=False) if "CATEGORY" in review_data.columns else pd.Series(False, index=review_data.index)
+        mc = (
+            review_data["CATEGORY"].astype(str).str.contains(search_sc, case=False, na=False)
+            if "CATEGORY" in review_data.columns
+            else pd.Series(False, index=review_data.index)
+        )
         ms = review_data["SELLER_NAME"].astype(str).str.contains(search_sc, case=False, na=False)
         review_data = review_data[mc | ms]
 
@@ -1891,81 +2040,23 @@ def render_image_grid():
     if st.session_state.grid_page >= total_pages:
         st.session_state.grid_page = 0
 
-    # ── Native Streamlit controls (100% reliable) ─────────────────────────────
-    batch_reason_options = [
-        ("Poor Image Quality",  "REJECT_POOR_IMAGE"),
-        ("Wrong Category",      "REJECT_WRONG_CAT"),
-        ("Suspected Fake",      "REJECT_FAKE"),
-        ("Restricted Brand",    "REJECT_BRAND"),
-        ("Wrong Brand",         "REJECT_WRONG_BRAND"),
-        ("Prohibited Product",  "REJECT_PROHIBITED"),
-    ]
-    ctrl_cols = st.columns([1, 1, 1, 2, 2, 2])
-    with ctrl_cols[0]:
-        if st.button("◀ Prev", use_container_width=True, disabled=st.session_state.grid_page == 0):
-            st.session_state.grid_page = max(0, st.session_state.grid_page - 1)
-            st.session_state.do_scroll_top = True
-            st.rerun(scope="fragment")
-    with ctrl_cols[1]:
-        st.markdown(f"<div style='text-align:center;padding:8px 0;font-weight:700;'>"
-                    f"Page {st.session_state.grid_page+1} / {total_pages}</div>",
-                    unsafe_allow_html=True)
-    with ctrl_cols[2]:
-        if st.button("Next ▶", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
-            st.session_state.grid_page += 1
-            st.session_state.do_scroll_top = True
-            st.rerun(scope="fragment")
-    with ctrl_cols[3]:
-        batch_labels = [l for l, _ in batch_reason_options]
-        chosen_label = st.selectbox("Batch reason", batch_labels, label_visibility="collapsed",
-                                    key="grid_batch_reason")
-    with ctrl_cols[4]:
-        if st.button("✗ Batch Reject Selected", use_container_width=True, type="primary"):
-            chosen_key = dict(batch_reason_options).get(chosen_label, "REJECT_POOR_IMAGE")
-            # Read current selections from localStorage synchronously
-            raw = st_javascript("return localStorage.getItem('_grid_pending') || null;",
-                                 key=f"ls_batch_{int(time.time())}")
-            sids_to_reject = []
-            if raw and isinstance(raw, str) and raw not in ("0","null"):
-                try:
-                    obj = json.loads(raw)
-                    sids_to_reject = list(obj.keys())
-                except: pass
-            if sids_to_reject:
-                flag_name = REASON_MAP.get(chosen_key, "Other Reason (Custom)")
-                code, cmt = support_files["flags_mapping"].get(flag_name, ("1000007 - Other Reason", "Manual rejection"))
-                apply_rejection(sids_to_reject, code, cmt, flag_name)
-                for s in sids_to_reject:
-                    st.session_state[f"quick_rej_{s}"] = True
-                    st.session_state[f"quick_rej_reason_{s}"] = flag_name
-                st_javascript("localStorage.removeItem('_grid_pending');",
-                               key=f"ls_clr2_{int(time.time())}")
-                st.session_state.main_toasts.append((f"Rejected {len(sids_to_reject)} product(s)", "✅"))
-                st.session_state.exports_cache.clear()
-                st.session_state.display_df_cache.clear()
-                st.session_state.final_report = st.session_state.final_report.copy()
-                st.rerun(scope="app")
-            else:
-                st.warning("Select products in the grid first (click their images).")
-    with ctrl_cols[5]:
-        if st.button("☐ Deselect All", use_container_width=True):
-            st_javascript("localStorage.removeItem('_grid_pending');",
-                           key=f"ls_desel_{int(time.time())}")
-            st.rerun(scope="fragment")
-
-    # ── Image quality checks ──────────────────────────────────────────────────
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start : page_start + ipp]
 
+    # Async image quality checks
     page_warnings: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         future_to_sid = {
-            ex.submit(analyze_image_quality_cached, str(r.get("MAIN_IMAGE","")).strip()): str(r["PRODUCT_SET_SID"])
+            ex.submit(
+                analyze_image_quality_cached,
+                str(r.get("MAIN_IMAGE", "")).strip()
+            ): str(r["PRODUCT_SET_SID"])
             for _, r in page_data.iterrows()
         }
         for future in concurrent.futures.as_completed(future_to_sid):
             warns = future.result()
-            if warns: page_warnings[future_to_sid[future]] = warns
+            if warns:
+                page_warnings[future_to_sid[future]] = warns
 
     rejected_state = {
         sid: st.session_state[f"quick_rej_reason_{sid}"]
@@ -1975,19 +2066,27 @@ def render_image_grid():
 
     cols_per_row = 3 if st.session_state.layout_mode == "centered" else 4
     grid_html = build_fast_grid_html(
-        page_data, support_files["flags_mapping"],
+        page_data,
+        support_files["flags_mapping"],
         st.session_state.selected_country,
-        page_warnings, rejected_state, cols_per_row,
+        page_warnings,
+        rejected_state,
+        cols_per_row,
+        st.session_state.grid_page,
+        total_pages,
     )
     components.html(grid_html, height=1300, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
         st.components.v1.html(
             "<script>window.parent.document.querySelector('.main')"
-            ".scrollTo({{top:0,behavior:'smooth'}});</script>", height=0,
+            ".scrollTo({{top:0,behavior:'smooth'}});</script>",
+            height=0,
         )
         st.session_state.do_scroll_top = False
 
+
+# ==========================================
 # SECTION 3: EXPORTS
 # ==========================================
 @st.fragment
@@ -2007,7 +2106,7 @@ def render_exports_section():
     st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>Download Reports</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
 
     exports_config = [
-        ("Final Report",  fr,     'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
+        ("Final Report",  fr,      'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
         ("Rejected Only", rej_df, 'block',        'Products that failed validation', lambda df: generate_smart_export(df, f"{c_code}_Rejected_{date_str}", 'simple', reasons_df)),
         ("Approved Only", app_df, 'check_circle', 'Products that passed validation', lambda df: generate_smart_export(df, f"{c_code}_Approved_{date_str}", 'simple', reasons_df)),
         ("Full Data",     data,   'database',     'Complete dataset with validation flags', lambda df: generate_smart_export(prepare_full_data_merged(df, fr), f"{c_code}_Full_{date_str}", 'full')),
