@@ -1424,26 +1424,46 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
             with col_msg: st.markdown(f"""<div style="background: linear-gradient(135deg, {JUMIA_COLORS['jumia_red']}, #FF6B6B); color: white; padding: 8px 12px; border-radius: 6px; font-weight: bold; font-size: 11px; text-align: center;">{reason}</div>""", unsafe_allow_html=True)
             with col_btn: st.button(":material/undo:", key=f"res_{sid}", on_click=restore_single_item, args=(sid,), use_container_width=True, help="Undo rejection")
         else:
-            col_chk, col_zm = st.columns([3, 1.5], vertical_alignment="center")
-            with col_chk: st.checkbox("Select", key=f"grid_chk_{sid}")
-            with col_zm:
-                with st.popover(":material/search:", use_container_width=True):
-                    st.image(img_url, use_container_width=True)
-                    st.caption(raw_name)
-
-            is_checked = st.session_state.get(f"grid_chk_{sid}", False)
+            # Zoom popover only — no checkbox, selection is JS-driven
+            with st.popover("🔍", use_container_width=False):
+                st.image(img_url, use_container_width=True)
+                st.caption(raw_name)
+            
             warnings_html = ""
             if advisor_warnings:
-                badges = "".join([f'<div style="background:rgba(255,193,7,0.95);color:#313133;font-size:10px;font-weight:800;padding:4px 8px;border-radius:12px;box-shadow:0 2px 4px rgba(0,0,0,0.2);display:flex;align-items:center;margin-bottom:4px;"><span class="material-symbols-outlined" style="font-size:13px;margin-right:4px;">warning</span>{w}</div>' for w in advisor_warnings])
+                badges = "".join([
+                    f'<div style="background:rgba(255,193,7,0.95);color:#313133;font-size:10px;font-weight:800;'
+                    f'padding:4px 8px;border-radius:12px;box-shadow:0 2px 4px rgba(0,0,0,0.2);'
+                    f'display:flex;align-items:center;margin-bottom:4px;">'
+                    f'<span class="material-symbols-outlined" style="font-size:13px;margin-right:4px;">warning</span>{w}</div>'
+                    for w in advisor_warnings
+                ])
                 warnings_html = f'<div style="position:absolute;top:8px;right:8px;display:flex;flex-direction:column;z-index:10;">{badges}</div>'
-
-            border_style = "3px solid #4CAF50" if is_checked else "1px solid #eee"
-            box_shadow = "0 0 0 3px rgba(76,175,80,0.2), 0 4px 16px rgba(76,175,80,0.15)" if is_checked else "none"
-            green_overlay = ("<div style='position:absolute;inset:0;background:rgba(76,175,80,0.1);border-radius:8px;pointer-events:none;z-index:2;'></div>" if is_checked else "")
-            tick_html = ("<div style='position:absolute;bottom:10px;right:10px;width:28px;height:28px;background:#4CAF50;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:10;'><span class='material-symbols-outlined' style='color:#fff;font-size:18px;line-height:1;font-weight:bold;'>check</span></div>" if is_checked else "")
-            img_div_id = f"imgclick-{sid}"
-
-            st.markdown(f'<div id="{img_div_id}" style="position:relative;cursor:pointer;border-radius:10px;border:{border_style};box-shadow:{box_shadow};transition:border 0.15s ease,box-shadow 0.15s ease;overflow:hidden;margin-bottom:8px;">{warnings_html}{green_overlay}<img src="{img_url}" loading="lazy" style="width:100%;aspect-ratio: 1 / 1;object-fit:contain;background-color:#FFFFFF;border-radius:8px;display:block;">{price_overlay_html}{tick_html}</div>', unsafe_allow_html=True)
+            
+            st.markdown(f'''
+            <div id="imgclick-{sid}" 
+                 data-sid="{sid}" 
+                 class="js-img-card" 
+                 style="position:relative;cursor:pointer;border-radius:10px;border:2px solid #eee;
+                        box-shadow:none;transition:border 0.12s ease,box-shadow 0.12s ease;
+                        overflow:hidden;margin-bottom:8px;">
+              {warnings_html}
+              <div class="js-green-overlay" 
+                   style="display:none;position:absolute;inset:0;background:rgba(76,175,80,0.12);
+                          border-radius:8px;pointer-events:none;z-index:2;"></div>
+              <img src="{img_url}" loading="lazy" 
+                   style="width:100%;aspect-ratio:1/1;object-fit:contain;
+                          background-color:#FFFFFF;border-radius:8px;display:block;">
+              {price_overlay_html}
+              <div class="js-tick" 
+                   style="display:none;position:absolute;bottom:10px;right:10px;width:28px;height:28px;
+                          background:#4CAF50;border-radius:50%;align-items:center;justify-content:center;
+                          box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:10;">
+                <span class="material-symbols-outlined" 
+                      style="color:#fff;font-size:18px;line-height:1;font-weight:bold;">check</span>
+              </div>
+            </div>
+            ''', unsafe_allow_html=True)
 
             st.markdown(f"""<div style="font-size:13px;line-height:1.4;margin:8px 0;"><span class='prod-name-tip' data-full="{raw_name_attr}">{name_text}</span>{color_badge_html}<div class='prod-meta-text' style="font-size:11px;margin-bottom:4px;">{cat_text}</div><div class='prod-brand-text' style="color:{JUMIA_COLORS['primary_orange']};font-weight:600;margin-bottom:8px;">{brand_text}</div><div class='prod-meta-text' style="font-size:10px;padding-top:8px;border-top:1px dashed #E0E0E0;">{seller_text}</div></div>""", unsafe_allow_html=True)
 
@@ -1452,11 +1472,11 @@ def render_product_card(row, flags_mapping, country: str = 'Kenya', advisor_warn
             with col_more:
                 with st.popover("✕ More", use_container_width=True):
                     st.markdown("<p style='font-size:12px;font-weight:700;margin:0 0 8px 0;'>Select rejection reason:</p>", unsafe_allow_html=True)
-                    st.button("Wrong Category",     key=f"cat_{sid}",   use_container_width=True, on_click=quick_reject_item, args=(sid, cat_code,         cat_cmt,         'Wrong Category',                                toast_name))
-                    st.button("Fake Product",       key=f"fake_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, fake_code,        fake_cmt,        'Suspected Fake product',                        toast_name))
-                    st.button("Restricted Brand",   key=f"brnd_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, brnd_code,        brnd_cmt,        'Restricted brands',                             toast_name))
-                    st.button("Prohibited Product", key=f"proh_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, proh_code,        proh_cmt,        'Prohibited products',                           toast_name))
-                    st.button("Wrong Color",        key=f"colr_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, color_code,       color_cmt,       'Missing COLOR',                                 toast_name))
+                    st.button("Wrong Category",     key=f"cat_{sid}",   use_container_width=True, on_click=quick_reject_item, args=(sid, cat_code,         cat_cmt,         'Wrong Category',                               toast_name))
+                    st.button("Fake Product",       key=f"fake_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, fake_code,        fake_cmt,        'Suspected Fake product',                       toast_name))
+                    st.button("Restricted Brand",   key=f"brnd_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, brnd_code,        brnd_cmt,        'Restricted brands',                            toast_name))
+                    st.button("Prohibited Product", key=f"proh_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, proh_code,        proh_cmt,        'Prohibited products',                          toast_name))
+                    st.button("Wrong Color",        key=f"colr_{sid}",  use_container_width=True, on_click=quick_reject_item, args=(sid, color_code,       color_cmt,       'Missing COLOR',                                toast_name))
                     st.button("Wrong Brand",        key=f"wbrnd_{sid}", use_container_width=True, on_click=quick_reject_item, args=(sid, wrong_brand_code, wrong_brand_cmt, 'Generic branded products with genuine brands',  toast_name))
                     st.divider()
                     st.markdown("<p style='font-size:11px;font-weight:700;margin:0 0 4px 0;'>Other Reason (Custom)</p>", unsafe_allow_html=True)
@@ -1772,125 +1792,458 @@ def render_image_grid():
     st.markdown("---")
     st.header(":material/pageview: Manual Image & Category Review", anchor=False)
 
-    components.html("""<script>const doc = window.parent.document;if (!doc.getElementById("global-img-click-listener")) {let scriptTag = doc.createElement("script");scriptTag.id = "global-img-click-listener";scriptTag.text = `document.addEventListener("click", function(e) {let target = e.target.closest('div[id^="imgclick-"]');if (target) {e.preventDefault();e.stopPropagation();let card = target.closest('[data-testid="stVerticalBlockBorderWrapper"]') || target.closest('[data-testid="stVerticalBlock"]');if (card) {let cb = card.querySelector('input[type="checkbox"]');if (cb) cb.click();}}});`;doc.body.appendChild(scriptTag);}</script>""", height=0, width=0)
+    # ── JS SELECTION ENGINE ──────────────────────────────────────────────────
+    # One-time injection of the selection engine into the parent document.
+    # Uses postMessage to send selected SIDs back to the Streamlit hidden input.
+    components.html("""
+    <script>
+    (function() {
+      var doc = window.parent.document;
+      if (doc.__jsSelectionReady) return;   // already installed
+      doc.__jsSelectionReady = true;
+      var SEL = doc.__jsSelected = new Set();
+      
+      // ── Toggle a single card ──────────────────────────────────────────────────
+      doc.__jsToggle = function(el) {
+        var sid = el.dataset.sid;
+        if (!sid) return;
+        var overlay = el.querySelector('.js-green-overlay');
+        var tick    = el.querySelector('.js-tick');
+        
+        if (SEL.has(sid)) {
+          SEL.delete(sid);
+          el.style.border     = '2px solid #eee';
+          el.style.boxShadow  = 'none';
+          if (overlay) overlay.style.display = 'none';
+          if (tick)    tick.style.display    = 'none';
+        } else {
+          SEL.add(sid);
+          el.style.border     = '3px solid #4CAF50';
+          el.style.boxShadow  = '0 0 0 3px rgba(76,175,80,0.2)';
+          if (overlay) overlay.style.display = 'block';
+          if (tick)    tick.style.display    = 'flex';
+        }
+        _updateCount();
+      };
+      
+      // ── Select all SIDs on current page ──────────────────────────────────────
+      doc.__jsSelectAll = function(sids) {
+        sids.forEach(function(sid) {
+          var el = doc.getElementById('imgclick-' + sid);
+          if (!el) return;
+          SEL.add(sid);
+          el.style.border    = '3px solid #4CAF50';
+          el.style.boxShadow = '0 0 0 3px rgba(76,175,80,0.2)';
+          var o = el.querySelector('.js-green-overlay');
+          var t = el.querySelector('.js-tick');
+          if (o) o.style.display = 'block';
+          if (t) t.style.display = 'flex';
+        });
+        _updateCount();
+      };
+      
+      // ── Deselect all SIDs on current page ────────────────────────────────────
+      doc.__jsDeselectAll = function(sids) {
+        sids.forEach(function(sid) {
+          SEL.delete(sid);
+          var el = doc.getElementById('imgclick-' + sid);
+          if (!el) return;
+          el.style.border    = '2px solid #eee';
+          el.style.boxShadow = 'none';
+          var o = el.querySelector('.js-green-overlay');
+          var t = el.querySelector('.js-tick');
+          if (o) o.style.display = 'none';
+          if (t) t.style.display = 'none';
+        });
+        _updateCount();
+      };
+      
+      // ── postMessage bridge → Streamlit hidden input ───────────────────────────
+      // Writes "sid1,sid2,...|ACTION_KEY" into the hidden text input, then fires
+      // React's synthetic input event so Streamlit picks up the change.
+      doc.__jsCommit = function(actionKey) {
+        var sids = Array.from(SEL);
+        if (sids.length === 0) {
+          alert('No images selected. Click an image to select it, then reject.');
+          return;
+        }
+        var payload = sids.join(',') + '|' + actionKey;
+        // Find our hidden bridge input — keyed by aria-label
+        var inp = doc.querySelector('input[aria-label="__js_bridge__"]');
+        if (!inp) { console.warn('JS bridge input not found'); return; }
+        
+        // Use React's internal setter so the onChange fires
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, payload);
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        
+        // Clear visual selection optimistically
+        SEL.clear();
+        doc.querySelectorAll('.js-img-card').forEach(function(el) {
+          el.style.border    = '2px solid #eee';
+          el.style.boxShadow = 'none';
+          var o = el.querySelector('.js-green-overlay');
+          var t = el.querySelector('.js-tick');
+          if (o) o.style.display = 'none';
+          if (t) t.style.display = 'none';
+        });
+        _updateCount();
+      };
+      
+      // ── Selection count badge ─────────────────────────────────────────────────
+      function _updateCount() {
+        var badge = doc.getElementById('js-sel-badge');
+        var badgeBot = doc.getElementById('js-sel-badge-bot');
+        if (badge) {
+          badge.textContent = SEL.size > 0 ? SEL.size + ' selected' : '';
+          badge.style.display = SEL.size > 0 ? 'inline-block' : 'none';
+        }
+        if (badgeBot) {
+          badgeBot.textContent = SEL.size > 0 ? SEL.size + ' selected' : '';
+          badgeBot.style.display = SEL.size > 0 ? 'inline-block' : 'none';
+        }
+      }
+      
+      // ── Global click delegation — catches clicks on image cards ──────────────
+      if (!doc.__jsClickDelegated) {
+        doc.__jsClickDelegated = true;
+        doc.addEventListener('click', function(e) {
+          var card = e.target.closest('.js-img-card');
+          if (card) {
+            e.stopPropagation();
+            doc.__jsToggle(card);
+          }
+        }, true);
+      }
+    })();
+    </script>
+    """, height=0, width=0)
 
+    # ── HIDDEN BRIDGE INPUT ──────────────────────────────────────────────────
+    # Invisible text input; JS writes to it, Python reads it each rerun.
+    # aria-label="__js_bridge__" lets JS find it without relying on a generated id.
+    bridge_val = st.text_input(
+        "__js_bridge__",
+        value="",
+        key="js_bridge_input",
+        label_visibility="collapsed",
+    )
+
+    # Inject the aria-label (Streamlit strips it, so we patch via JS)
+    components.html("""
+    <script>
+    (function() {
+      var doc = window.parent.document;
+      function labelBridge() {
+        // Find unlabelled text inputs and label ours by placeholder heuristic.
+        // We set a unique placeholder on our input via CSS injection instead —
+        // simpler: just find the most-recently-added text input in the fragment.
+        var inputs = doc.querySelectorAll('input[data-testid="stTextInput-Input"]');
+        
+        // The bridge input is the one we need; it has no visible label.
+        // Walk backwards — it's rendered last in this fragment.
+        for (var i = inputs.length - 1; i >= 0; i--) {
+          var inp = inputs[i];
+          // If already labelled, skip
+          if (inp.getAttribute('aria-label') === '__js_bridge__') break;
+          inp.setAttribute('aria-label', '__js_bridge__');
+          inp.style.cssText = 'position:absolute!important;opacity:0!important;pointer-events:none!important;height:0!important;width:0!important;';
+          break;
+        }
+      }
+      // Run now and after a short delay (fragment may render async)
+      labelBridge();
+      setTimeout(labelBridge, 600);
+    })();
+    </script>
+    """, height=0, width=0)
+
+    # ── PROCESS BRIDGE VALUE ─────────────────────────────────────────────────
+    def _get_batch_labels():
+        return {
+            "Poor Image Quality":  "Poor images",
+            "Wrong Category":      "Wrong Category",
+            "Suspected Fake":      "Suspected Fake product",
+            "Restricted Brand":    "Restricted brands",
+            "Wrong Brand":         "Generic branded products with genuine brands",
+            "Prohibited Product":  "Prohibited products",
+            "OTHER_CUSTOM":        "Other Reason (Custom)",
+        }
+
+    if bridge_val and "|" in bridge_val:
+        raw_sids_str, action_key = bridge_val.rsplit("|", 1)
+        js_sids = [s.strip() for s in raw_sids_str.split(",") if s.strip()]
+        if js_sids:
+            if action_key == "OTHER_CUSTOM":
+                custom_cmt = st.session_state.get("grid_custom_comment", "").strip()
+                code  = "1000007 - Other Reason"
+                cmt   = custom_cmt or "Custom rejection"
+                flag_key = "Other Reason (Custom)"
+            else:
+                flag_key = _get_batch_labels().get(action_key, action_key)
+                code, cmt = support_files['flags_mapping'].get(
+                    flag_key, ("1000007 - Other Reason", action_key))
+            
+            st.session_state.final_report.loc[
+                st.session_state.final_report['ProductSetSid'].isin(js_sids),
+                ['Status', 'Reason', 'Comment', 'FLAG']
+            ] = ['Rejected', code, cmt, flag_key]
+            
+            for s in js_sids:
+                st.session_state[f"quick_rej_{s}"] = True
+                st.session_state[f"quick_rej_reason_{s}"] = flag_key
+            
+            st.session_state.exports_cache.clear()
+            st.session_state.display_df_cache.clear()
+            st.session_state.main_toasts.append(
+                (f"Batch rejected {len(js_sids)} items as '{flag_key}'", "✅"))
+            st.session_state.js_bridge_input = ""
+            st.rerun()
+
+    # ── DATA PREP ────────────────────────────────────────────────────────────
     fr = st.session_state.final_report
-    quick_rej_sids = [k.replace("quick_rej_", "") for k in st.session_state.keys() if k.startswith("quick_rej_") and "reason" not in k]
+    quick_rej_sids = [
+        k.replace("quick_rej_", "")
+        for k in st.session_state.keys()
+        if k.startswith("quick_rej_") and "reason" not in k
+    ]
     mask = (fr['Status'] == 'Approved') | (fr['ProductSetSid'].isin(quick_rej_sids))
     valid_grid_df = fr[mask]
 
     c_rev_1, c_rev_2, c_rev_3 = st.columns([1.5, 1.5, 2])
-    with c_rev_1: search_n = st.text_input("Search by Name", placeholder="Product name...")
+    with c_rev_1: search_n  = st.text_input("Search by Name", placeholder="Product name...")
     with c_rev_2: search_sc = st.text_input("Search by Seller / Category", placeholder="Seller or Category...")
-    with c_rev_3: st.session_state.grid_items_per_page = st.select_slider("Items per page", options=[20, 50, 100, 200], value=st.session_state.grid_items_per_page)
+    with c_rev_3:
+        st.session_state.grid_items_per_page = st.select_slider(
+            "Items per page", options=[20, 50, 100, 200],
+            value=st.session_state.grid_items_per_page)
 
-    def get_batch_labels(): return {"Poor Image Quality": "Poor images", "Wrong Category": "Wrong Category", "Suspected Fake": "Suspected Fake product", "Restricted Brand": "Restricted brands", "Wrong Brand": "Generic branded products with genuine brands", "Other Reason (Custom)": "Other Reason (Custom)"}
-
+    # ── BATCH REASON SELECTOR ─────────────────────────────────────────────────
     with st.container(border=True):
-        st.markdown(f"<p style='font-weight: 700; margin: 0 0 10px 0;'>Batch Rejection Mode</p>", unsafe_allow_html=True)
-        grid_reason = st.segmented_control("Select rejection reason for batch actions:", list(get_batch_labels().keys()), default="Poor Image Quality", label_visibility="collapsed")
+        st.markdown("<p style='font-weight:700;margin:0 0 10px 0;'>Batch Rejection Mode</p>", unsafe_allow_html=True)
+        batch_options = list(_get_batch_labels().keys())
+        grid_reason = st.segmented_control(
+            "Batch reason", batch_options,
+            default="Poor Image Quality", label_visibility="collapsed")
         if not grid_reason: grid_reason = "Poor Image Quality"
 
         grid_custom_comment = ""
-        if grid_reason == "Other Reason (Custom)":
-            grid_custom_comment = st.text_area("Custom rejection comment", placeholder="Type your rejection reason here...", key="grid_custom_comment", height=80)
-            if not grid_custom_comment.strip(): st.warning("Please enter a custom comment before rejecting.", icon="⚠️")
+        if grid_reason == "OTHER_CUSTOM":
+            grid_custom_comment = st.text_area(
+                "Custom rejection comment",
+                placeholder="Type your rejection reason here...",
+                key="grid_custom_comment", height=80)
+            if not grid_custom_comment.strip():
+                st.warning("Please enter a custom comment before rejecting.", icon="⚠️")
 
-        active_label = grid_reason if grid_reason != "Other Reason (Custom)" else f"Other: {grid_custom_comment[:40]}..." if grid_custom_comment.strip() else "Other Reason (Custom) — enter comment above"
-        st.markdown(f"""<div class='batch-info-box' style='background: var(--background-color, {JUMIA_COLORS['light_gray']});'><span style='font-size: 12px; font-weight: 600;'>Active Reason:</span><span style='font-size: 13px; font-weight: 700; margin-left: 8px;'>{active_label}</span></div>""", unsafe_allow_html=True)
+        active_label = (
+            grid_reason if grid_reason != "OTHER_CUSTOM"
+            else (f"Other: {grid_custom_comment[:40]}..." if grid_custom_comment.strip()
+                  else "Other Reason — enter comment above"))
+        st.markdown(
+            f"<div class='batch-info-box' style='background:var(--background-color,{JUMIA_COLORS['light_gray']});'>"
+            f"<span style='font-size:12px;font-weight:600;'>Active Reason:</span>"
+            f"<span style='font-size:13px;font-weight:700;margin-left:8px;'>{active_label}</span>"
+            f"</div>",
+            unsafe_allow_html=True)
 
-    review_data = pd.merge(valid_grid_df[['ProductSetSid']], st.session_state.all_data_map, left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')
+    # ── FILTER & PAGINATE ─────────────────────────────────────────────────────
+    review_data = pd.merge(
+        valid_grid_df[['ProductSetSid']],
+        st.session_state.all_data_map,
+        left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left')
 
-    if search_n: review_data = review_data[review_data['NAME'].astype(str).str.contains(search_n, case=False, na=False)]
+    if search_n:
+        review_data = review_data[review_data['NAME'].astype(str).str.contains(search_n, case=False, na=False)]
     if search_sc:
-        mc = review_data['CATEGORY'].astype(str).str.contains(search_sc, case=False, na=False) if 'CATEGORY' in review_data.columns else False
+        mc = (review_data['CATEGORY'].astype(str).str.contains(search_sc, case=False, na=False)
+              if 'CATEGORY' in review_data.columns else False)
         ms = review_data['SELLER_NAME'].astype(str).str.contains(search_sc, case=False, na=False)
         review_data = review_data[mc | ms]
 
     items_per_page = st.session_state.grid_items_per_page
-    total_pages = max(1, (len(review_data) + items_per_page - 1) // items_per_page)
-    if st.session_state.grid_page >= total_pages: st.session_state.grid_page = 0
+    total_pages    = max(1, (len(review_data) + items_per_page - 1) // items_per_page)
+    if st.session_state.grid_page >= total_pages:
+        st.session_state.grid_page = 0
 
-    page_data = review_data.iloc[st.session_state.grid_page * items_per_page : (st.session_state.grid_page + 1) * items_per_page]
-    cur_sids = page_data['PRODUCT_SET_SID'].tolist()
+    page_data = review_data.iloc[
+        st.session_state.grid_page * items_per_page :
+        (st.session_state.grid_page + 1) * items_per_page]
+    
+    cur_sids   = page_data['PRODUCT_SET_SID'].tolist()
+    sids_json  = json.dumps(cur_sids)
 
-    def cb_process_batch(show_warning, sids, active_reason):
-        flagged = [s for s in sids if st.session_state.get(f"grid_chk_{s}")]
-        if not flagged:
-            if show_warning: st.session_state.main_toasts.append(("No items selected.", "⚠️"))
-            return
-        if active_reason == "Other Reason (Custom)":
-            custom_cmt = st.session_state.get("grid_custom_comment", "").strip()
-            if not custom_cmt: st.session_state.main_toasts.append(("Please enter a custom comment first.", "⚠️")); return
-            code, cmt, flag_key = "1000007 - Other Reason", custom_cmt, "Other Reason (Custom)"
-        else:
-            flag_key = get_batch_labels()[active_reason]
-            code, cmt = support_files['flags_mapping'].get(flag_key, ("1000007 - Other Reason", "Manual rejection"))
-        st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(flagged), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', code, cmt, flag_key]
-        for s in flagged:
-            st.session_state[f"quick_rej_{s}"] = True
-            st.session_state[f"quick_rej_reason_{s}"] = flag_key
-            st.session_state.pop(f"grid_chk_{s}", None)
-        st.session_state.exports_cache.clear()
-        st.session_state.display_df_cache.clear()
-        st.session_state.main_toasts.append((f"Batch rejected {len(flagged)} items", "✅"))
+    # ── INJECT CURRENT PAGE SIDs + STICKY NAV JS HANDLERS ────────────────────
+    components.html(f"""
+    <script>
+    (function() {{
+      var doc = window.parent.document;
+      // Store current page SIDs so nav buttons can call selectAll/deselectAll
+      doc.__curPageSids = {sids_json};
+    }})();
+    </script>
+    """, height=0, width=0)
 
-    def cb_prev(sids, active_reason): cb_process_batch(False, sids, active_reason); st.session_state.grid_page -= 1; st.session_state.do_scroll_top = True
-    def cb_next(sids, active_reason): cb_process_batch(False, sids, active_reason); st.session_state.grid_page += 1; st.session_state.do_scroll_top = True
-    def cb_sel_all(sids):
-        for s in sids: st.session_state[f"grid_chk_{s}"] = True
-    def cb_desel_all(sids):
-        for s in sids: st.session_state.pop(f"grid_chk_{s}", None)
-    def cb_reject_all(sids, active_reason): cb_process_batch(True, sids, active_reason)
+    # Callbacks that navigate and deselect stale page SIDs
+    def cb_prev():
+        # Clear quick_rej checks before page change
+        for s in cur_sids: st.session_state.pop(f"grid_chk_{s}", None)
+        st.session_state.grid_page -= 1
+        st.session_state.do_scroll_top = True
 
+    def cb_next():
+        for s in cur_sids: st.session_state.pop(f"grid_chk_{s}", None)
+        st.session_state.grid_page += 1
+        st.session_state.do_scroll_top = True
+
+    # ── STICKY HEADER ─────────────────────────────────────────────────────────
     with st_yled.sticky_header(background_color="#FFFFFF", padding="15px 10px", key="sticky-nav-top"):
-        col_pg1, col_pg2, col_pg3, col_sel, col_desel, col_rej, col_spacer = st.columns([0.8, 1.2, 0.8, 0.6, 0.6, 1.5, 1.5])
-        col_pg1.button(":material/arrow_back: Prev", key="pt", disabled=(st.session_state.grid_page == 0), use_container_width=True, on_click=cb_prev, args=(cur_sids, grid_reason))
-        col_pg2.markdown(f"<p style='text-align: center; margin: 0; padding: 10px 0; font-weight: 600;'>Page {st.session_state.grid_page + 1} of {total_pages}</p>", unsafe_allow_html=True)
-        col_pg3.button("Next :material/arrow_forward:", key="nt", disabled=(st.session_state.grid_page >= total_pages - 1), use_container_width=True, on_click=cb_next, args=(cur_sids, grid_reason))
-        col_sel.button("Select All", key="sel_all_top", use_container_width=True, on_click=cb_sel_all, args=(cur_sids,))
-        col_desel.button("Deselect All", key="desel_all_top", use_container_width=True, on_click=cb_desel_all, args=(cur_sids,))
-        col_rej.button(f":material/block: Reject All — {grid_reason}", key="reject_active_top", type="primary", use_container_width=True, on_click=cb_reject_all, args=(cur_sids, grid_reason))
+        col_pg1, col_pg2, col_pg3, col_sel, col_desel, col_rej, col_badge = st.columns(
+            [0.8, 1.2, 0.8, 0.7, 0.9, 1.8, 1.2])
+        
+        col_pg1.button(
+            ":material/arrow_back: Prev", key="pt",
+            disabled=(st.session_state.grid_page == 0),
+            use_container_width=True, on_click=cb_prev)
+            
+        col_pg2.markdown(
+            f"<p style='text-align:center;margin:0;padding:10px 0;font-weight:600;'>"
+            f"Page {st.session_state.grid_page + 1} of {total_pages}</p>",
+            unsafe_allow_html=True)
+            
+        col_pg3.button(
+            "Next :material/arrow_forward:", key="nt",
+            disabled=(st.session_state.grid_page >= total_pages - 1),
+            use_container_width=True, on_click=cb_next)
 
+        # These buttons call pure JS — zero Python rerun
+        col_sel.markdown(
+            f"<button onclick=\"window.parent.document.__jsSelectAll && "
+            f"window.parent.document.__jsSelectAll({sids_json})\" "
+            f"style='width:100%;padding:8px 4px;border-radius:4px;border:2px solid {JUMIA_COLORS['primary_orange']};"
+            f"background:white;color:{JUMIA_COLORS['primary_orange']};font-weight:600;cursor:pointer;font-size:13px;'>"
+            f"Select All</button>",
+            unsafe_allow_html=True)
+            
+        col_desel.markdown(
+            f"<button onclick=\"window.parent.document.__jsDeselectAll && "
+            f"window.parent.document.__jsDeselectAll({sids_json})\" "
+            f"style='width:100%;padding:8px 4px;border-radius:4px;border:2px solid {JUMIA_COLORS['border_gray']};"
+            f"background:white;color:{JUMIA_COLORS['medium_gray']};font-weight:600;cursor:pointer;font-size:13px;'>"
+            f"Deselect All</button>",
+            unsafe_allow_html=True)
+
+        action_key = "OTHER_CUSTOM" if grid_reason == "OTHER_CUSTOM" else grid_reason
+        col_rej.markdown(
+            f"<button onclick=\"window.parent.document.__jsCommit && "
+            f"window.parent.document.__jsCommit('{action_key}')\" "
+            f"style='width:100%;padding:8px 4px;border-radius:4px;border:none;"
+            f"background:{JUMIA_COLORS['primary_orange']};color:white;font-weight:700;cursor:pointer;font-size:13px;'>"
+            f"🚫 Reject Selected</button>",
+            unsafe_allow_html=True)
+
+        # Live selection count badge (updated by JS)
+        col_badge.markdown(
+            "<span id='js-sel-badge' "
+            "style='display:none;background:#4CAF50;color:white;padding:6px 14px;"
+            "border-radius:20px;font-weight:700;font-size:13px;'></span>",
+            unsafe_allow_html=True)
+
+    # ── SCROLL TO TOP ─────────────────────────────────────────────────────────
     if st.session_state.get('do_scroll_top', False):
-        components.html("""<script>const doc = window.parent.document;const main = doc.querySelector('.main') || doc.querySelector('[data-testid="stAppViewContainer"]');if (main) { main.scrollTo({top: 0, behavior: 'smooth'}); }</script>""", height=0, width=0)
+        components.html("""<script>var doc = window.parent.document;var main = doc.querySelector('.main') || doc.querySelector('[data-testid="stAppViewContainer"]');if (main) main.scrollTo({top:0, behavior:'smooth'});</script>""", height=0, width=0)
         st.session_state.do_scroll_top = False
 
-    # FIX 5: Use cached image checker — no re-download on rerun
+    # ── IMAGE QUALITY CHECKS (cached) ─────────────────────────────────────────
     page_warnings = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         future_to_sid = {
-            executor.submit(analyze_image_quality_cached, str(r.get('MAIN_IMAGE', '')).strip()): str(r['PRODUCT_SET_SID'])
+            executor.submit(
+                analyze_image_quality_cached,
+                str(r.get('MAIN_IMAGE', '')).strip()): str(r['PRODUCT_SET_SID'])
             for _, r in page_data.iterrows()
         }
         for future in concurrent.futures.as_completed(future_to_sid):
             page_warnings[future_to_sid[future]] = future.result()
 
+    # ── RENDER CARDS ──────────────────────────────────────────────────────────
     cols_per_row = 3 if st.session_state.layout_mode == "centered" else 4
     for i in range(0, len(page_data), cols_per_row):
         cols = st.columns(cols_per_row)
         for j, (_, row) in enumerate(page_data.iloc[i:i+cols_per_row].iterrows()):
             with cols[j]:
                 sid_for_row = str(row['PRODUCT_SET_SID'])
-                render_product_card(row, support_files['flags_mapping'], st.session_state.get('selected_country', 'Kenya'), page_warnings.get(sid_for_row, []))
+                render_product_card(
+                    row, support_files['flags_mapping'],
+                    st.session_state.get('selected_country', 'Kenya'),
+                    page_warnings.get(sid_for_row, []))
 
+    # ── PREFETCH NEXT PAGE IMAGES ─────────────────────────────────────────────
     if st.session_state.grid_page < total_pages - 1:
-        next_page_data = review_data.iloc[(st.session_state.grid_page + 1) * items_per_page : (st.session_state.grid_page + 2) * items_per_page]
-        next_urls = [str(u).strip() for u in next_page_data['MAIN_IMAGE'].values if str(u).startswith('http')]
+        next_page_data = review_data.iloc[
+            (st.session_state.grid_page + 1) * items_per_page :
+            (st.session_state.grid_page + 2) * items_per_page]
+        next_urls = [
+            str(u).strip() for u in next_page_data['MAIN_IMAGE'].values
+            if str(u).startswith('http')]
         if next_urls:
             js_array = json.dumps(next_urls)
-            components.html(f"""<script>setTimeout(function() {{ var urls = {js_array}; urls.forEach(function(url) {{ var img = new Image(); img.src = url; }}); }}, 1500);</script>""", height=0, width=0)
+            components.html(
+                f"<script>setTimeout(function(){{ var urls={js_array}; "
+                f"urls.forEach(function(u){{ new Image().src=u; }}); }}, 1500);</script>",
+                height=0, width=0)
 
     st.divider()
 
+    # ── BOTTOM NAV (mirrors top) ───────────────────────────────────────────────
     with st.container():
-        col_pg1_b, col_pg2_b, col_pg3_b, col_sel_b, col_desel_b, col_rej_b, col_spacer_b = st.columns([0.8, 1.2, 0.8, 0.6, 0.6, 1.5, 1.5])
-        col_pg1_b.button(":material/arrow_back: Prev", key="pb", disabled=(st.session_state.grid_page == 0), use_container_width=True, on_click=cb_prev, args=(cur_sids, grid_reason))
-        col_pg2_b.markdown(f"<p style='text-align: center; margin: 0; padding: 10px 0; font-weight: 600;'>Page {st.session_state.grid_page + 1} of {total_pages}</p>", unsafe_allow_html=True)
-        col_pg3_b.button("Next :material/arrow_forward:", key="nb", disabled=(st.session_state.grid_page >= total_pages - 1), use_container_width=True, on_click=cb_next, args=(cur_sids, grid_reason))
-        col_sel_b.button("Select All", key="sel_all_bot", use_container_width=True, on_click=cb_sel_all, args=(cur_sids,))
-        col_desel_b.button("Deselect All", key="desel_all_bot", use_container_width=True, on_click=cb_desel_all, args=(cur_sids,))
-        col_rej_b.button(f":material/block: Reject All — {grid_reason}", key="reject_active_bot", type="primary", use_container_width=True, on_click=cb_reject_all, args=(cur_sids, grid_reason))
+        col_pg1_b, col_pg2_b, col_pg3_b, col_sel_b, col_desel_b, col_rej_b, col_badge_b = st.columns(
+            [0.8, 1.2, 0.8, 0.7, 0.9, 1.8, 1.2])
+        
+        col_pg1_b.button(
+            ":material/arrow_back: Prev", key="pb",
+            disabled=(st.session_state.grid_page == 0),
+            use_container_width=True, on_click=cb_prev)
+            
+        col_pg2_b.markdown(
+            f"<p style='text-align:center;margin:0;padding:10px 0;font-weight:600;'>"
+            f"Page {st.session_state.grid_page + 1} of {total_pages}</p>",
+            unsafe_allow_html=True)
+            
+        col_pg3_b.button(
+            "Next :material/arrow_forward:", key="nb",
+            disabled=(st.session_state.grid_page >= total_pages - 1),
+            use_container_width=True, on_click=cb_next)
+
+        col_sel_b.markdown(
+            f"<button onclick=\"window.parent.document.__jsSelectAll && "
+            f"window.parent.document.__jsSelectAll({sids_json})\" "
+            f"style='width:100%;padding:8px 4px;border-radius:4px;border:2px solid {JUMIA_COLORS['primary_orange']};"
+            f"background:white;color:{JUMIA_COLORS['primary_orange']};font-weight:600;cursor:pointer;font-size:13px;'>"
+            f"Select All</button>",
+            unsafe_allow_html=True)
+            
+        col_desel_b.markdown(
+            f"<button onclick=\"window.parent.document.__jsDeselectAll && "
+            f"window.parent.document.__jsDeselectAll({sids_json})\" "
+            f"style='width:100%;padding:8px 4px;border-radius:4px;border:2px solid {JUMIA_COLORS['border_gray']};"
+            f"background:white;color:{JUMIA_COLORS['medium_gray']};font-weight:600;cursor:pointer;font-size:13px;'>"
+            f"Deselect All</button>",
+            unsafe_allow_html=True)
+
+        col_rej_b.markdown(
+            f"<button onclick=\"window.parent.document.__jsCommit && "
+            f"window.parent.document.__jsCommit('{action_key}')\" "
+            f"style='width:100%;padding:8px 4px;border-radius:4px;border:none;"
+            f"background:{JUMIA_COLORS['primary_orange']};color:white;font-weight:700;cursor:pointer;font-size:13px;'>"
+            f"🚫 Reject Selected</button>",
+            unsafe_allow_html=True)
+
+        col_badge_b.markdown(
+            "<span id='js-sel-badge-bot' "
+            "style='display:none;background:#4CAF50;color:white;padding:6px 14px;"
+            "border-radius:20px;font-weight:700;font-size:13px;'></span>",
+            unsafe_allow_html=True)
 
 
 # ==========================================
