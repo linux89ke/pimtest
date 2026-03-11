@@ -1981,7 +1981,12 @@ def render_image_grid():
         changed = _process_card_bridge_action(action_bridge, support_files)
         st.session_state["card_action_bridge"] = ""
         if changed:
-            st.rerun(scope="fragment")
+            # Fast refresh for just changing pages
+            if action_bridge.startswith("NAV_"):
+                st.rerun(scope="fragment")
+            # Full page refresh to update the metrics and validation flags above
+            else:
+                st.rerun()
         return
 
     fr = st.session_state.final_report
