@@ -95,6 +95,7 @@ def format_local_price(usd_price, country: str) -> str:
 
 SPLIT_LIMIT = 9998
 
+# --- IMAGE COLUMNS EXPANDED FIX ---
 NEW_FILE_MAPPING = {
     'cod_productset_sid': 'PRODUCT_SET_SID',
     "2qz3wx4ec5rv6b7hnj8kl;'[]": 'PRODUCT_SET_SID',
@@ -114,6 +115,14 @@ NEW_FILE_MAPPING = {
     'COLOUR FAMILY': 'COLOR_FAMILY',
     'list_seller_skus': 'SELLER_SKU',
     'image1': 'MAIN_IMAGE',
+    'image_1': 'MAIN_IMAGE',
+    'main_image': 'MAIN_IMAGE',
+    'main image': 'MAIN_IMAGE',
+    'image': 'MAIN_IMAGE',
+    'img': 'MAIN_IMAGE',
+    'img_url': 'MAIN_IMAGE',
+    'image_url': 'MAIN_IMAGE',
+    'photo': 'MAIN_IMAGE',
     'dsc_status': 'LISTING_STATUS',
     'dsc_shop_email': 'SELLER_EMAIL',
     'product_warranty': 'PRODUCT_WARRANTY',
@@ -656,6 +665,11 @@ def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=renamed)
     for col in ['ACTIVE_STATUS_COUNTRY', 'CATEGORY_CODE', 'BRAND', 'TAX_CLASS', 'NAME', 'SELLER_NAME']:
         if col in df.columns: df[col] = df[col].astype(str)
+        
+    # --- ENSURE MAIN_IMAGE PERSISTS ---
+    if 'MAIN_IMAGE' not in df.columns:
+        df['MAIN_IMAGE'] = ''
+        
     return df
 
 def validate_input_schema(df: pd.DataFrame) -> Tuple[bool, List[str]]:
@@ -1251,36 +1265,6 @@ REASON_MAP = {
 }
 
 # -------------------------------------------------
-# PROCESS GRID ACTIONS
-# -------------------------------------------------
-def _process_grid_selections(raw_json: str, support_files: dict) -> int:
-    """Parse {sid: reason_key} JSON and apply rejections. Returns count."""
-    if not raw_json or not isinstance(raw_json, str) or raw_json in ("0", "null", ""):
-        return 0
-    try:
-        pending = json.loads(raw_json)
-        if not isinstance(pending, dict) or not pending:
-            return 0
-        reason_groups: dict[str, list] = {}
-        for sid, reason_key in pending.items():
-            reason_groups.setdefault(reason_key, []).append(sid)
-        total = 0
-        for reason_key, sids in reason_groups.items():
-            flag_name = REASON_MAP.get(reason_key, "Other Reason (Custom)")
-            code, cmt = support_files["flags_mapping"].get(
-                flag_name, ("1000007 - Other Reason", "Manual rejection")
-            )
-            apply_rejection(sids, code, cmt, flag_name)
-            for s in sids:
-                st.session_state[f"quick_rej_{s}"] = True
-                st.session_state[f"quick_rej_reason_{s}"] = flag_name
-            total += len(sids)
-        return total
-    except Exception as e:
-        logger.error(f"Grid selections parse error: {e}")
-        return 0
-
-# -------------------------------------------------
 # HTML GRID BUILDER
 # -------------------------------------------------
 def build_fast_grid_html(
@@ -1306,8 +1290,14 @@ def build_fast_grid_html(
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
+        
+        # --- FIX 1: HTTP TO HTTPS UPGRADE TO PREVENT CLOUD BLOCKING ---
+        if img_url.startswith("http://"):
+            img_url = img_url.replace("http://", "https://")
+            
         if not img_url.startswith("http"):
             img_url = "https://via.placeholder.com/150?text=No+Image"
+            
         cards_data.append({
             "sid":      sid,
             "img":      img_url,
@@ -1412,11 +1402,13 @@ def build_fast_grid_html(
 <div class="grid" id="card-grid"></div>
 
 <script>
-const CARDS     = {cards_json};
-const COMMITTED = {committed_json};   // already-rejected sids → reason label
+// --- FIX 2: var PREVENTS CHROME RE-DECLARATION CRASHES ---
+var CARDS     = {cards_json};
+var COMMITTED = {committed_json};
 
 // Selection lives ONLY in JS — no async bridge needed
-let selected = {{}};
+window._gridSelected = window._gridSelected || {{}};
+var selected = window._gridSelected;
 
 // ── postMessage helper ────────────────────────────────────────────────────────
 function sendMsg(type, payload) {{
@@ -1436,13 +1428,19 @@ function sendMsg(type, payload) {{
     Object.getOwnPropertyDescriptor(
       par.HTMLInputElement.prototype, 'value'
     ).set.call(bridge, msg);
+    
     // React onChange fires on 'input' event
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    // Streamlit only submits on Enter — this is the part that was missing
-    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
-      bubbles: true, cancelable: true,
-      key: 'Enter', code: 'Enter', keyCode: 13, which: 13
-    }}));
+    
+    // --- FIX 3: ADD 80ms DELAY SO REACT REGISTERS THE KEYSTROKE ---
+    setTimeout(function() {{
+        bridge.dispatchEvent(new par.FocusEvent('blur', {{bubbles: true}}));
+        bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
+          bubbles: true, cancelable: true,
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13
+        }}));
+    }}, 80);
+    
   }} catch(ex) {{
     console.error('jtbridge sendMsg error:', ex);
   }}
@@ -1546,13 +1544,17 @@ function doBatchReject() {{
     COMMITTED[sid]  = reasonKey;
     delete selected[sid];
   }});
+  
+  // --- FIX 4: SEND MSG CALL INSIDE BATCH REJECT ---
   sendMsg('reject', payload);
+  
   renderAll();   // re-render all cards to show committed state
   updateSelCount();
 }}
 
 function doDeselAll() {{
-  selected = {{}};
+  // Keep the reference alive, just delete keys
+  for (const k in selected) delete selected[k];
   renderAll();
   updateSelCount();
 }}
@@ -1876,6 +1878,7 @@ if _bridge_val:
                 st.session_state.display_df_cache.clear()
                 st.session_state.main_toasts.append((f"Rejected {_total} product(s)", "✅"))
                 st.session_state.main_bridge_counter += 1
+                st.rerun()
     except Exception as _e:
         logger.error(f"Bridge parse error: {_e}")
 
@@ -1951,6 +1954,9 @@ def render_image_grid():
             value=st.session_state.grid_items_per_page,
         )
 
+    if 'MAIN_IMAGE' not in data.columns:
+        data['MAIN_IMAGE'] = ''
+
     available_cols = [c for c in GRID_COLS if c in data.columns]
     review_data = pd.merge(
         valid_grid_df[["ProductSetSid"]],
@@ -1973,7 +1979,6 @@ def render_image_grid():
     if st.session_state.grid_page >= total_pages:
         st.session_state.grid_page = 0
 
-    # ── Pagination controls only (batch controls are now inside the iframe) ───
     pg_cols = st.columns([1, 2, 1])
     with pg_cols[0]:
         if st.button("◀ Prev", use_container_width=True,
@@ -1995,7 +2000,6 @@ def render_image_grid():
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
 
-    # ── Image quality checks ──────────────────────────────────────────────────
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start : page_start + ipp]
 
@@ -2027,6 +2031,8 @@ def render_image_grid():
         rejected_state,
         cols_per_row,
     )
+    
+    # Render using the original iframe structure
     components.html(grid_html, height=1400, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
