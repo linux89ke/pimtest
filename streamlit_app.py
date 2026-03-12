@@ -1439,32 +1439,44 @@ const COMMITTED = {committed_json};   // already-rejected sids → reason label
 let selected = {{}};
 
 // ── postMessage helper ────────────────────────────────────────────────────────
+// ── postMessage helper ────────────────────────────────────────────────────────
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
     var doc = par.document;
     var inputs = doc.querySelectorAll('input[type="text"]');
     var bridge = null;
+    
     for (var i = 0; i < inputs.length; i++) {{
       if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
         bridge = inputs[i]; break;
       }}
     }}
     if (!bridge) {{ console.warn('jtbridge not found'); return; }}
+    
     var msg = JSON.stringify({{action: type, payload: payload}});
-    // Must use parent's own prototype — the grid iframe has a different one
+    
+    // Step 1: set value using parent's own prototype
     Object.getOwnPropertyDescriptor(
       par.HTMLInputElement.prototype, 'value'
     ).set.call(bridge, msg);
-    // React onChange fires on 'input' event
+    
+    // Step 2: tell React the value changed
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    // Streamlit only submits on Enter — this is the part that was missing
-    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
-      bubbles: true, cancelable: true,
-      key: 'Enter', code: 'Enter', keyCode: 13, which: 13
-    }}));
+    
+    // Step 3: Wait for React to process, THEN submit!
+    // We add an 80ms delay so React's virtual DOM catches up before we trigger Streamlit
+    setTimeout(function() {{
+      bridge.dispatchEvent(new par.FocusEvent('blur', {{bubbles: true}}));
+      bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
+        bubbles: true, cancelable: true,
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13
+      }}));
+    }}, 80);
+    
   }} catch(ex) {{
     console.error('jtbridge sendMsg error:', ex);
+    alert('Bridge Error: Check browser console (F12). If on Cloud, CORS might be blocking window.parent');
   }}
 }}
 
