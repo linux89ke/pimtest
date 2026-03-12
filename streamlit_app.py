@@ -1,334 +1,358 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 import streamlit.components.v1 as components
-import st_yled
-from io import BytesIO
-from datetime import datetime
-import re
-import logging
-from typing import Dict, List, Tuple, Optional, Set
-import traceback
 import json
-import zipfile
-import os
-import concurrent.futures
-from dataclasses import dataclass
-import base64
-import time
-import hashlib
-import requests
-from PIL import Image
-
-# Placeholder for postqc module (implement if you have it)
-try:
-    from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
-except ImportError:
-    def detect_file_type(df): return 'pre_qc'
-    def normalize_post_qc(df): return df
-    def run_post_qc_checks(df, files): return pd.DataFrame(), {}
-    def render_post_qc_section(files): st.info("Post-QC placeholder")
+import random
 
 # ────────────────────────────────────────────────
-# JUMIA THEME COLORS & GLOBAL CONSTANTS
+#   Batch Rejection Grid Test – Fully Fixed Version
+#   (March 2025 style – safe against fast clicking)
 # ────────────────────────────────────────────────
 
-JUMIA_COLORS = {
-    'primary_orange': '#F68B1E',
-    'secondary_orange': '#FF9933',
-    'jumia_red': '#E73C17',
-    'dark_gray': '#313133',
-    'medium_gray': '#5A5A5C',
-    'light_gray': '#F5F5F5',
-    'border_gray': '#E0E0E0',
-    'success_green': '#4CAF50',
-    'warning_yellow': '#FFC107',
-    'white': '#FFFFFF',
-    'black': '#000000'
-}
+st.set_page_config(page_title="Batch Reject Grid – Fixed", layout="wide")
 
-PRODUCTSETS_COLS = ["ProductSetSid", "ParentSKU", "Status", "Reason", "Comment", "FLAG", "SellerName"]
-REJECTION_REASONS_COLS = ['CODE - REJECTION_REASON', 'COMMENT']
-FULL_DATA_COLS = [
-    "PRODUCT_SET_SID", "ACTIVE_STATUS_COUNTRY", "NAME", "BRAND", "CATEGORY", "CATEGORY_CODE",
-    "COLOR", "COLOR_FAMILY", "MAIN_IMAGE", "VARIATION", "PARENTSKU", "SELLER_NAME", "SELLER_SKU",
-    "GLOBAL_PRICE", "GLOBAL_SALE_PRICE", "TAX_CLASS", "FLAG", "LISTING_STATUS",
-    "PRODUCT_WARRANTY", "WARRANTY_DURATION", "WARRANTY_ADDRESS", "WARRANTY_TYPE", "COUNT_VARIATIONS",
-    "LIST_VARIATIONS"
-]
-GRID_COLS = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'SELLER_NAME', 'MAIN_IMAGE', 'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'COLOR']
+# ── Test data ────────────────────────────────────────────────────────────────
 
-FX_RATE = 128.0
-COUNTRY_CURRENCY = {
-    "Kenya": {"code": "KES", "symbol": "KSh", "pair": "USD/KES"},
-    "Uganda": {"code": "UGX", "symbol": "USh", "pair": "USD/UGX"},
-    "Nigeria": {"code": "NGN", "symbol": "₦", "pair": "USD/NGN"},
-    "Ghana": {"code": "GHS", "symbol": "GH₵", "pair": "USD/GHS"},
-    "Morocco": {"code": "MAD", "symbol": "MAD", "pair": "USD/MAD"},
-}
+@st.cache_data
+def generate_test_data(n=180):
+    sids = [f"PSID_{i:05d}" for i in range(1, n+1)]
 
-SPLIT_LIMIT = 9998
+    brand_pool  = ["Samsung", "Apple", "Xiaomi", "Tecno", "Generic", "Huawei", "Oppo", "Vivo", "Nokia", "Infinix"]
+    cat_pool    = ["Phones", "Laptops", "Fashion", "Home", "Beauty", "Accessories", "Electronics"]
+    seller_pool = ["ShopZ", "MegaDeals", "TrendyHub", "TechWorld", "FashionNova", "GadgetPro", "HomeEssentials"]
 
-NEW_FILE_MAPPING = {
-    'cod_productset_sid': 'PRODUCT_SET_SID',
-    "2qz3wx4ec5rv6b7hnj8kl;'[]": 'PRODUCT_SET_SID',
-    'dsc_name': 'NAME',
-    'dsc_brand_name': 'BRAND',
-    'cod_category_code': 'CATEGORY_CODE',
-    'dsc_category_name': 'CATEGORY',
-    'dsc_shop_seller_name': 'SELLER_NAME',
-    'dsc_shop_active_country': 'ACTIVE_STATUS_COUNTRY',
-    'cod_parent_sku': 'PARENTSKU',
-    'color': 'COLOR',
-    'colour': 'COLOR',
-    'color_family': 'COLOR_FAMILY',
-    'colour_family': 'COLOR_FAMILY',
-    'colour family': 'COLOR_FAMILY',
-    'color family': 'COLOR_FAMILY',
-    'COLOUR FAMILY': 'COLOR_FAMILY',
-    'list_seller_skus': 'SELLER_SKU',
-    'image1': 'MAIN_IMAGE',
-    'dsc_status': 'LISTING_STATUS',
-    'dsc_shop_email': 'SELLER_EMAIL',
-    'product_warranty': 'PRODUCT_WARRANTY',
-    'warranty_duration': 'WARRANTY_DURATION',
-    'warranty_address': 'WARRANTY_ADDRESS',
-    'warranty_type': 'WARRANTY_TYPE',
-    'count_variations': 'COUNT_VARIATIONS',
-    'count variations': 'COUNT_VARIATIONS',
-    'number of variations': 'COUNT_VARIATIONS',
-    'list_variations': 'LIST_VARIATIONS',
-    'list variations': 'LIST_VARIATIONS'
-}
+    brands  = [random.choice(brand_pool)  for _ in range(n)]
+    cats    = [random.choice(cat_pool)    for _ in range(n)]
+    sellers = [random.choice(seller_pool) for _ in range(n)]
 
-logger = logging.getLogger(__name__)
+    df = pd.DataFrame({
+        "PRODUCT_SET_SID": sids,
+        "NAME":           [f"Product Amazing Thing {i}" for i in range(1, n+1)],
+        "BRAND":          brands,
+        "CATEGORY":       cats,
+        "SELLER_NAME":    sellers,
+        "MAIN_IMAGE":     [f"https://picsum.photos/seed/{i}/300/300" for i in range(1, n+1)],
+        "GLOBAL_PRICE":   [round(49.99 + i * 4.5, 2) for i in range(n)],
+    })
+    return df
 
-# ────────────────────────────────────────────────
-# SESSION STATE INITIALIZATION
-# ────────────────────────────────────────────────
+data = generate_test_data(180)
 
-for key, default in {
-    'layout_mode': "wide",
-    'final_report': pd.DataFrame(),
-    'all_data_map': pd.DataFrame(),
-    'post_qc_summary': pd.DataFrame(),
-    'post_qc_results': {},
-    'post_qc_data': pd.DataFrame(),
-    'file_mode': None,
-    'intersection_sids': set(),
-    'intersection_count': 0,
-    'grid_page': 0,
-    'grid_items_per_page': 50,
-    'main_toasts': [],
-    'exports_cache': {},
-    'do_scroll_top': False,
-    'display_df_cache': {},
-    'committed': {},
-    'pending': {},
-    'grid_bridge': "",
-    'grid_msg_counter': 0,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
+# ── Session state ────────────────────────────────────────────────────────────
 
-try:
-    st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
-except:
-    pass
+if 'committed' not in st.session_state:
+    st.session_state.committed = {}     # sid → reason (final)
+if 'pending' not in st.session_state:
+    st.session_state.pending = {}       # sid → reason (waiting confirm)
+if 'grid_page' not in st.session_state:
+    st.session_state.grid_page = 0
+if 'ipp' not in st.session_state:
+    st.session_state.ipp = 24
+if 'bridge' not in st.session_state:
+    st.session_state.bridge = ""
 
-st_yled.init()
+# ── Grid HTML + JS ───────────────────────────────────────────────────────────
 
-# Your original global CSS (shortened – paste full version if needed)
-st.markdown(f"""<style>/* your full CSS here */</style>""", unsafe_allow_html=True)
+def build_grid_html(page_df, committed, pending):
 
-# ────────────────────────────────────────────────
-# LOADING HELPERS (all restored)
-# ────────────────────────────────────────────────
+    cards = []
+    for _, r in page_df.iterrows():
+        sid = str(r["PRODUCT_SET_SID"])
+        cards.append({
+            "sid": sid,
+            "img": r["MAIN_IMAGE"],
+            "name": r["NAME"][:58] + "…" if len(r["NAME"]) > 58 else r["NAME"],
+            "brand": r["BRAND"],
+            "cat": r["CATEGORY"],
+            "seller": r["SELLER_NAME"],
+        })
 
-def load_txt_file(filename: str) -> List[str]:
+    cards_json    = json.dumps(cards)
+    committed_json = json.dumps(committed)
+    pending_json   = json.dumps(pending)
+
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * {{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,sans-serif;}}
+  body {{background:#f9fafb;padding:16px;}}
+  .toolbar {{
+    position:sticky;top:0;z-index:10;
+    background:white;padding:12px 20px;border-radius:10px;
+    box-shadow:0 2px 10px rgba(0,0,0,0.08);margin-bottom:20px;
+    display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;
+  }}
+  .stats {{font-weight:600;color:#c2410c;}}
+  .grid {{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;}}
+  .card {{
+    border:2px solid #e5e7eb;border-radius:12px;overflow:hidden;background:white;
+    transition:all .18s;position:relative;
+  }}
+  .card.selected   {{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.15);}}
+  .card.committed  {{opacity:.54;filter:grayscale(.5);border-color:#9ca3af;}}
+  .card.pending    {{border-color:#ea580c;box-shadow:0 0 0 3px rgba(234,88,12,.2);}}
+  .img-wrap {{position:relative;cursor:pointer;height:260px;background:#f3f4f6;}}
+  img {{width:100%;height:100%;object-fit:contain;}}
+  .tick {{
+    position:absolute;bottom:10px;right:10px;width:32px;height:32px;
+    background:rgba(0,0,0,.45);border-radius:50%;color:white;font-weight:bold;
+    display:flex;align-items:center;justify-content:center;pointer-events:none;font-size:18px;
+  }}
+  .card.selected .tick {{background:#16a34a;}}
+  .meta {{padding:12px;font-size:13.5px;line-height:1.4;}}
+  .name {{font-weight:600;max-height:44px;overflow:hidden;}}
+  .brand {{color:#c2410c;font-weight:700;margin:4px 0 3px;}}
+  .cat,.seller {{color:#4b5563;font-size:12.5px;}}
+  .status {{
+    position:absolute;top:10px;right:10px;padding:5px 12px;
+    border-radius:999px;font-size:11px;font-weight:700;color:white;
+  }}
+  .status-pending  {{background:#ea580c;}}
+  .status-rejected {{background:#dc2626;}}
+  .actions {{padding:0 12px 14px;display:flex;gap:10px;}}
+  button,select {{padding:7px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:13px;}}
+  .quick-btn {{background:#c2410c;color:white;flex:1;}}
+  .more      {{background:#e5e7eb;color:#1f2937;}}
+  #batch-btn       {{background:#c2410c;color:white;}}
+  #confirm-batch   {{background:#dc2626;color:white;font-weight:bold;padding:9px 18px;}}
+  #confirm-batch:disabled {{opacity:.5;cursor:not-allowed;background:#9ca3af;}}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div>
+    <span class="stats" id="sel">0 selected</span>
+    <span style="margin-left:20px;color:#6b7280;">Page {st.session_state.grid_page + 1}</span>
+  </div>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+    <select id="reason">
+      <option value="POOR_IMAGE">Poor Image</option>
+      <option value="WRONG_CAT">Wrong Category</option>
+      <option value="FAKE">Suspected Fake</option>
+      <option value="PROHIBITED">Prohibited</option>
+      <option value="BRAND">Restricted Brand</option>
+    </select>
+    <button id="batch-btn">Batch → Pending</button>
+    <span id="pending-count" style="font-weight:600;color:#ea580c;">Pending: 0</span>
+    <button id="confirm-batch" disabled>CONFIRM REJECT</button>
+    <button onclick="deselectAll()">Deselect All</button>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const CARDS     = {cards_json};
+const COMMITTED = {committed_json};
+const PENDING   = {pending_json};
+
+let selected = {{}};
+let pending  = {{...PENDING}};
+
+function $(id){{return document.getElementById(id);}}
+
+function updateUI(){{
+  $('sel').textContent = Object.keys(selected).length + " selected";
+  $('pending-count').textContent = "Pending: " + Object.keys(pending).length;
+  $('confirm-batch').disabled = Object.keys(pending).length === 0;
+}}
+
+function render(){{
+  const html = CARDS.map(c => {{
+    const sid = c.sid;
+    let cls = 'card';
+    let statusHtml = '';
+    if (sid in COMMITTED) {{
+      cls += ' committed';
+      statusHtml = `<div class="status status-rejected">REJECTED</div>`;
+    }} else if (sid in pending) {{
+      cls += ' pending';
+      statusHtml = `<div class="status status-pending">PENDING</div>`;
+    }} else if (sid in selected) {{
+      cls += ' selected';
+    }}
+    return `
+      <div class="${{cls}}" id="c${{sid}}">
+        ${{statusHtml}}
+        <div class="img-wrap" onclick="toggle('${{sid}}')">
+          <img src="${{c.img}}" loading="lazy" onerror="this.src='https://via.placeholder.com/260?text=×'">
+          <div class="tick">✓</div>
+        </div>
+        <div class="meta">
+          <div class="name">${{c.name}}</div>
+          <div class="brand">${{c.brand}}</div>
+          <div class="cat">${{c.cat}}</div>
+          <div class="seller">${{c.seller}}</div>
+        </div>
+        <div class="actions">
+          <button class="quick-btn" onclick="event.stopPropagation();quickReject('${{sid}}','POOR_IMAGE')">Poor Img</button>
+          <select class="more" onchange="if(this.value){{event.stopPropagation();quickReject('${{sid}}',this.value);this.value='';}}">
+            <option value="">More…</option>
+            <option value="WRONG_CAT">Wrong Cat</option>
+            <option value="FAKE">Fake</option>
+            <option value="PROHIBITED">Prohibited</option>
+            <option value="BRAND">Brand</option>
+          </select>
+        </div>
+      </div>`;
+  }}).join('');
+  $('grid').innerHTML = html;
+  updateUI();
+}}
+
+function toggle(sid){{
+  if (sid in COMMITTED || sid in pending) return;
+  if (sid in selected) delete selected[sid];
+  else selected[sid] = true;
+  render();
+  updateUI();
+}}
+
+function quickReject(sid, reason){{
+  if (sid in COMMITTED) return;
+  delete selected[sid];
+  pending[sid] = reason;
+  render();
+  updateUI();
+  send('pending_change', {{sid, reason}});
+}}
+
+function batchToPending(){{
+  const reason = $('reason').value;
+  if (!reason) return alert("Select a reason first");
+  Object.keys(selected).forEach(sid => {{
+    if (!(sid in COMMITTED)) pending[sid] = reason;
+  }});
+  selected = {{}};
+  render();
+  updateUI();
+}}
+
+function confirmBatch(){{
+  if (Object.keys(pending).length === 0) return;
+  send('batch_confirm', pending);
+  Object.assign(COMMITTED, pending);
+  pending = {{}};
+  render();
+  updateUI();
+}}
+
+function deselectAll(){{
+  selected = {{}};
+  render();
+}}
+
+function send(type, payload){{
+  window.parent.postMessage({{type:"grid_msg", action:type, payload}}, "*");
+}}
+
+$('batch-btn').onclick = batchToPending;
+$('confirm-batch').onclick = confirmBatch;
+
+render();
+</script>
+</body>
+</html>
+"""
+
+# ── Bridge ───────────────────────────────────────────────────────────────────
+
+components.html("""
+<script>
+window.addEventListener("message", e => {
+  if (!e.data || e.data.type !== "grid_msg") return;
+  const inputs = document.querySelectorAll('input[type="text"]');
+  let bridge = null;
+  for (const inp of inputs) {
+    if (inp.getAttribute("aria-label")?.includes("bridge")) {
+      bridge = inp; break;
+    }
+  }
+  if (!bridge) return;
+  bridge.value = JSON.stringify(e.data);
+  bridge.dispatchEvent(new Event("input", {bubbles:true}));
+});
+</script>
+""", height=0)
+
+bridge = st.text_input(
+    "bridge",
+    value=st.session_state.bridge,
+    label_visibility="collapsed",
+    key="bridge_input"
+)
+
+if bridge and bridge != st.session_state.bridge:
     try:
-        if not os.path.exists(os.path.abspath(filename)): return []
-        with open(filename, 'r', encoding='utf-8') as f: return [line.strip() for line in f if line.strip()]
-    except Exception: return []
+        msg = json.loads(bridge)
+        act = msg.get("action")
+        pay = msg.get("payload", {})
 
-@st.cache_data(ttl=3600)
-def load_excel_file(filename: str, column: Optional[str] = None):
-    try:
-        if not os.path.exists(filename): return [] if column else pd.DataFrame()
-        df = pd.read_excel(filename, engine='openpyxl', dtype=str)
-        df.columns = df.columns.str.strip()
-        if column and column in df.columns: return df[column].apply(clean_category_code).tolist()
-        return df
-    except Exception: return [] if column else pd.DataFrame()
+        if act == "pending_change":
+            st.toast(f"→ Pending: {pay.get('sid')} – {pay.get('reason')}", icon="🟠")
 
-def safe_excel_read(filename: str, sheet_name, usecols=None) -> pd.DataFrame:
-    if not os.path.exists(filename): return pd.DataFrame()
-    try:
-        df = pd.read_excel(filename, sheet_name=sheet_name, usecols=usecols, engine='openpyxl', dtype=str)
-        return df.dropna(how='all')
+        elif act == "batch_confirm":
+            count = len(pay)
+            for sid, reason in pay.items():
+                st.session_state.committed[sid] = reason
+            st.session_state.pending.clear()
+            st.toast(f"✅ Committed rejection of {count} items", icon="🟢")
+            st.rerun()
+
     except Exception as e:
-        logger.error(f"Error reading tab '{sheet_name}' from {filename}: {e}")
-        return pd.DataFrame()
+        st.error(f"Bridge parse error: {e}")
+    finally:
+        st.session_state.bridge = bridge
 
-@st.cache_data(ttl=3600)
-def load_prohibited_from_local() -> Dict[str, List[Dict]]:
-    FILE_NAME = "Prohibbited.xlsx"
-    COUNTRY_TABS = ["KE", "UG", "NG", "GH", "MA"]
-    prohibited_by_country = {}
-    for tab in COUNTRY_TABS:
-        try:
-            df = safe_excel_read(FILE_NAME, sheet_name=tab)
-            if df.empty:
-                prohibited_by_country[tab] = []
-                continue
-            df.columns = [str(c).strip().lower() for c in df.columns]
-            keyword_col = next((c for c in df.columns if 'keyword' in c or 'prohibited' in c or 'name' in c), df.columns[0])
-            category_col = next((c for c in df.columns if 'cat' in c), None)
-            country_rules = []
-            for _, row in df.iterrows():
-                keyword = str(row.get(keyword_col, '')).strip().lower()
-                if not keyword or keyword == 'nan' or keyword == 'keywords': continue
-                categories = set()
-                if category_col:
-                    cats_raw = str(row.get(category_col, '')).strip()
-                    if cats_raw and cats_raw.lower() != 'nan':
-                        split_cats = re.split(r'[,\n]+', cats_raw)
-                        categories.update([clean_category_code(c.strip()) for c in split_cats if c.strip()])
-                country_rules.append({'keyword': keyword, 'categories': categories})
-            prohibited_by_country[tab] = country_rules
-        except Exception:
-            prohibited_by_country[tab] = []
-    return prohibited_by_country
+# ── UI ───────────────────────────────────────────────────────────────────────
 
-# ... (paste all other load_xxx_from_local functions here: restricted_brands, refurb, perfume, books, jerseys, suspected_fake, flags_mapping)
+st.title("Batch Rejection Grid – Fast Click Safe")
+st.caption("Select many cards quickly → Batch → Pending → Confirm")
 
-@st.cache_data(ttl=3600)
-def load_all_support_files() -> Dict:
-    def safe_load_txt(f): return load_txt_file(f) if os.path.exists(f) else []
-    return {
-        'blacklisted_words': safe_load_txt('blacklisted.txt'),
-        'book_category_codes': safe_load_txt('Books_cat.txt'),
-        'books_data': load_books_data_from_local(),
-        'perfume_category_codes': safe_load_txt('Perfume_cat.txt'),
-        'perfume_data': load_perfume_data_from_local(),
-        'sneaker_category_codes': safe_load_txt('Sneakers_Cat.txt'),
-        'sneaker_sensitive_brands': [b.lower() for b in safe_load_txt('Sneakers_Sensitive.txt')],
-        'sensitive_words': [w.lower() for w in safe_load_txt('sensitive_words.txt')],
-        'unnecessary_words': [w.lower() for w in safe_load_txt('unnecessary.txt')],
-        'colors': [c.lower() for c in safe_load_txt('colors.txt')],
-        'color_categories': safe_load_txt('color_cats.txt'),
-        'category_fas': safe_load_txt('Fashion_cat.txt'),
-        'reasons': load_excel_file('reasons.xlsx'),
-        'flags_mapping': load_flags_mapping(),
-        'jerseys_data': load_jerseys_from_local(),
-        'warranty_category_codes': safe_load_txt('warranty.txt'),
-        'suspected_fake': load_suspected_fake_from_local(),
-        'duplicate_exempt_codes': safe_load_txt('duplicate_exempt.txt'),
-        'restricted_brands_all': load_restricted_brands_from_local(),
-        'prohibited_words_all': load_prohibited_from_local(),
-        'known_brands': safe_load_txt('brands.txt'),
-        'variation_allowed_codes': safe_load_txt('variation.txt'),
-        'weight_category_codes': safe_load_txt('weight.txt'),
-        'smartphone_category_codes': safe_load_txt('smartphones.txt'),
-        'refurb_data': load_refurb_data_from_local(),
-    }
-
-@st.cache_data(ttl=3600)
-def load_support_files_lazy(): 
-    return load_all_support_files()
-
-# ────────────────────────────────────────────────
-# UTILITIES (your original ones)
-# ────────────────────────────────────────────────
-
-def clean_category_code(code) -> str:
-    try:
-        if pd.isna(code): return ""
-        s = str(code).strip()
-        if '.' in s: s = s.split('.')[0]
-        return s
-    except: return str(code).strip()
-
-# ... paste all your other utility functions here:
-# normalize_text, create_match_key, df_hash, COLOR_PATTERNS, COLOR_VARIANT_TO_BASE,
-# ProductAttributes dataclass, extract_colors, remove_attributes, extract_product_attributes,
-# get_default_country, fetch_exchange_rate, format_local_price, etc.
-
-# ────────────────────────────────────────────────
-# CountryValidator class (your original)
-# ────────────────────────────────────────────────
-
-class CountryValidator:
-    COUNTRY_CONFIG = {
-        "Kenya": {"code": "KE", "skip_validations": []},
-        "Uganda": {"code": "UG", "skip_validations": ["Counterfeit Sneakers", "Product Warranty", "Generic BRAND Issues"]},
-        "Nigeria": {"code": "NG", "skip_validations": []},
-        "Ghana": {"code": "GH", "skip_validations": []},
-        "Morocco": {"code": "MA", "skip_validations": []}
-    }
-    def __init__(self, country: str):
-        self.country = country
-        self.config = self.COUNTRY_CONFIG.get(country, self.COUNTRY_CONFIG["Kenya"])
-        self.code = self.config["code"]
-        self.skip_validations = self.config["skip_validations"]
-    def should_skip_validation(self, validation_name: str) -> bool:
-        return validation_name in self.skip_validations
-    def ensure_status_column(self, df: pd.DataFrame) -> pd.DataFrame:
-        if not df.empty and 'Status' not in df.columns:
-            df['Status'] = 'Approved'
-        return df
-
-# ────────────────────────────────────────────────
-# PREPROCESSING & VALIDATION (your original)
-# ────────────────────────────────────────────────
-
-# ... paste standardize_input_data, validate_input_schema, filter_by_country, propagate_metadata
-
-# ... paste all check_xxx functions (check_miscellaneous_category, check_restricted_brands, etc.)
-
-# ... paste validate_products and cached_validate_products
-
-# ────────────────────────────────────────────────
-# EXPORTS & UTILITIES (your original)
-# ────────────────────────────────────────────────
-
-# ... paste to_excel_base, write_excel_single, generate_smart_export, prepare_full_data_merged
-
-# ... paste apply_rejection, restore_single_item, REASON_MAP
-
-# ────────────────────────────────────────────────
-# MAIN APP LOGIC (your original structure)
-# ────────────────────────────────────────────────
-
-try:
-    support_files = load_support_files_lazy()
-except Exception as e:
-    st.error(f"Failed to load configs: {e}")
-    st.stop()
-
-# Logo and header (your original)
-logo_base64 = ""  # add real base64 if you have the file
-logo_html = "<span>Logo</span>"  # placeholder
-st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); ...'><h1>{logo_html} Product Validation Tool</h1></div>""", unsafe_allow_html=True)
-
-# Sidebar (your original)
-with st.sidebar:
-    st.header("System Status")
-    if st.button("🔄 Clear Cache & Reload Data"):
-        st.cache_data.clear()
-        st.session_state.display_df_cache = {}
+c1, c2, c3 = st.columns([1,1,2])
+with c1: st.session_state.ipp = st.select_slider("Items/page", [12,24,36,48,72], value=st.session_state.ipp)
+with c2:
+    if st.button("Reset everything"):
+        st.session_state.committed.clear()
+        st.session_state.pending.clear()
         st.rerun()
-    # ... rest of sidebar
 
-# Upload section (your original)
-st.header(":material/upload_file: Upload Files")
-country_choice = st.segmented_control("Country", ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"], default=st.session_state.selected_country)
-if country_choice:
-    st.session_state.selected_country = country_choice
+page_start = st.session_state.grid_page * st.session_state.ipp
+page_end   = page_start + st.session_state.ipp
+page_df    = data.iloc[page_start:page_end]
 
-uploaded_files = st.file_uploader("Upload CSV or XLSX files", type=['csv', 'xlsx'], accept_multiple_files=True)
+st.caption(f"Showing {len(page_df)} items  |  committed: {len(st.session_state.committed)}  |  pending: {len(st.session_state.pending)}")
 
-# ... paste your full upload processing logic here (signature check, reset states, file reading, validation, etc.)
+components.html(
+    build_grid_html(page_df, st.session_state.committed, st.session_state.pending),
+    height=1450,
+    scrolling=True
+)
 
-# Results, grid, exports fragments (your original + improved grid)
-render_image_grid()
-render_exports_section()
+# Pagination
+pc, nc = st.columns(2)
+with pc:
+    if st.button("← Prev", disabled=st.session_state.grid_page <= 0):
+        st.session_state.grid_page = max(0, st.session_state.grid_page - 1)
+        st.rerun()
+with nc:
+    if st.button("Next →", disabled=page_end >= len(data)):
+        st.session_state.grid_page += 1
+        st.rerun()
+
+st.markdown("---")
+st.markdown("""
+### Test instructions
+
+1. Click many images **very quickly** → they should stay selected
+2. Pick a reason → **Batch → Pending**
+3. See orange **Pending** count rise
+4. Click **CONFIRM REJECT** → all pending items become rejected
+5. Fast multi-clicking should no longer lose items
+
+The batch is now collected locally in JS → only one message is sent on confirm.
+""")
