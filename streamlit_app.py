@@ -2039,8 +2039,7 @@ def render_image_grid():
     # Always increment so next rerun gets a fresh st_javascript read
     st.session_state.grid_msg_counter += 1
 
-    # If a batch command was just injected, schedule a follow-up rerun
-    # so st_javascript picks up the _jtPending that the iframe will write
+    # Batch cmd needs a follow-up rerun to read _jtPending that the iframe just wrote
     if do_batch:
         st.rerun(scope="fragment")
 
