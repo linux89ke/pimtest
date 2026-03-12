@@ -2158,7 +2158,7 @@ def render_image_grid():
         rejected_state,
         cols_per_row,
     )
-    components.html(grid_html, height=700, scrolling=True)
+    components.html(grid_html, height=2000, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
         components.html(
