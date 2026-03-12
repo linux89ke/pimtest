@@ -11,7 +11,6 @@ import traceback
 import json
 import zipfile
 import os
-import tempfile
 import concurrent.futures
 from dataclasses import dataclass
 import base64
@@ -96,7 +95,7 @@ def format_local_price(usd_price, country: str) -> str:
 
 SPLIT_LIMIT = 9998
 
-# FIX 1: Expanded NEW_FILE_MAPPING with many more image column name variants
+# --- EXPANDED IMAGE MAPPINGS ADDED HERE ---
 NEW_FILE_MAPPING = {
     'cod_productset_sid': 'PRODUCT_SET_SID',
     "2qz3wx4ec5rv6b7hnj8kl;'[]": 'PRODUCT_SET_SID',
@@ -115,29 +114,15 @@ NEW_FILE_MAPPING = {
     'color family': 'COLOR_FAMILY',
     'COLOUR FAMILY': 'COLOR_FAMILY',
     'list_seller_skus': 'SELLER_SKU',
-    # --- FIX: expanded image column variants ---
     'image1': 'MAIN_IMAGE',
     'image_1': 'MAIN_IMAGE',
-    'image 1': 'MAIN_IMAGE',
     'main_image': 'MAIN_IMAGE',
     'main image': 'MAIN_IMAGE',
-    'mainimage': 'MAIN_IMAGE',
     'image': 'MAIN_IMAGE',
     'img': 'MAIN_IMAGE',
     'img_url': 'MAIN_IMAGE',
-    'img_link': 'MAIN_IMAGE',
     'image_url': 'MAIN_IMAGE',
-    'imageurl': 'MAIN_IMAGE',
-    'image_link': 'MAIN_IMAGE',
     'photo': 'MAIN_IMAGE',
-    'photo_url': 'MAIN_IMAGE',
-    'picture': 'MAIN_IMAGE',
-    'picture_url': 'MAIN_IMAGE',
-    'product_image': 'MAIN_IMAGE',
-    'product image': 'MAIN_IMAGE',
-    'thumbnail': 'MAIN_IMAGE',
-    'thumbnail_url': 'MAIN_IMAGE',
-    # -------------------------------------------
     'dsc_status': 'LISTING_STATUS',
     'dsc_shop_email': 'SELLER_EMAIL',
     'product_warranty': 'PRODUCT_WARRANTY',
@@ -171,77 +156,21 @@ if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
 if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
+
 if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
 
+# Session state counters for dynamic keys
 if 'desel_counter' not in st.session_state: st.session_state.desel_counter = 0
-if 'batch_counter' not in st.session_state: st.session_state.batch_counter = 0
+if 'batch_counter' not in st.session_state: st.session_state.batch_counter = 0  
 if 'clear_counter' not in st.session_state: st.session_state.clear_counter = 0
 if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_flag = False
+
 if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
 
 st_yled.init()
-
-# -------------------------------------------------
-# NATIVE CLOUD BRIDGE COMPONENT
-# -------------------------------------------------
-@st.cache_resource
-def get_grid_component():
-    """Creates an official bidirectional Streamlit component to bypass Cloud CORS limits."""
-    tmp_dir = tempfile.mkdtemp()
-    index_path = os.path.join(tmp_dir, "index.html")
-    with open(index_path, "w", encoding="utf-8") as f:
-        f.write("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <script src="https://cdnjs.cloudflare.com/ajax/libs/streamlit-component-lib/1.3.0/streamlit.js"></script>
-        </head>
-        <body style="margin: 0; padding: 0; background: transparent;">
-          <div id="root"></div>
-          <script>
-            window.sendMsgToPython = function(type, payload) {
-                Streamlit.setComponentValue({action: type, payload: payload});
-            };
-
-            let lastHtml = "";
-            function onRender(event) {
-                const args = event.detail.args;
-                const root = document.getElementById("root");
-
-                // Only re-inject if Python explicitly sends brand new HTML data
-                if (args.html_content && lastHtml !== args.html_content) {
-                    lastHtml = args.html_content;
-                    root.innerHTML = args.html_content;
-
-                    // Clean up old scripts to prevent memory leaks
-                    document.querySelectorAll('.injected-script').forEach(s => s.remove());
-
-                    // Wire up the new scripts
-                    const scripts = root.querySelectorAll("script");
-                    scripts.forEach(script => {
-                        const newScript = document.createElement("script");
-                        newScript.className = "injected-script";
-                        newScript.text = script.innerHTML;
-                        document.body.appendChild(newScript);
-                    });
-                }
-
-                Streamlit.setFrameHeight(args.height || 1400);
-            }
-            Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
-            Streamlit.setComponentReady();
-          </script>
-        </body>
-        </html>
-        """)
-    return components.declare_component("bidirectional_grid", path=tmp_dir)
-
-# Initialize it once
-grid_component = get_grid_component()
 
 # --- GLOBAL CSS ---
 st.markdown(f"""
@@ -736,6 +665,11 @@ def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=renamed)
     for col in ['ACTIVE_STATUS_COUNTRY', 'CATEGORY_CODE', 'BRAND', 'TAX_CLASS', 'NAME', 'SELLER_NAME']:
         if col in df.columns: df[col] = df[col].astype(str)
+        
+    # --- FIX ADDED HERE: FORCE MAIN_IMAGE COLUMN ---
+    if 'MAIN_IMAGE' not in df.columns:
+        df['MAIN_IMAGE'] = ''
+        
     return df
 
 def validate_input_schema(df: pd.DataFrame) -> Tuple[bool, List[str]]:
@@ -1331,7 +1265,37 @@ REASON_MAP = {
 }
 
 # -------------------------------------------------
-# HTML GRID BUILDER  — FIX 2 & 3 applied here
+# PROCESS GRID ACTIONS
+# -------------------------------------------------
+def _process_grid_selections(raw_json: str, support_files: dict) -> int:
+    """Parse {sid: reason_key} JSON and apply rejections. Returns count."""
+    if not raw_json or not isinstance(raw_json, str) or raw_json in ("0", "null", ""):
+        return 0
+    try:
+        pending = json.loads(raw_json)
+        if not isinstance(pending, dict) or not pending:
+            return 0
+        reason_groups: dict[str, list] = {}
+        for sid, reason_key in pending.items():
+            reason_groups.setdefault(reason_key, []).append(sid)
+        total = 0
+        for reason_key, sids in reason_groups.items():
+            flag_name = REASON_MAP.get(reason_key, "Other Reason (Custom)")
+            code, cmt = support_files["flags_mapping"].get(
+                flag_name, ("1000007 - Other Reason", "Manual rejection")
+            )
+            apply_rejection(sids, code, cmt, flag_name)
+            for s in sids:
+                st.session_state[f"quick_rej_{s}"] = True
+                st.session_state[f"quick_rej_reason_{s}"] = flag_name
+            total += len(sids)
+        return total
+    except Exception as e:
+        logger.error(f"Grid selections parse error: {e}")
+        return 0
+
+# -------------------------------------------------
+# HTML GRID BUILDER
 # -------------------------------------------------
 def build_fast_grid_html(
     page_data,
@@ -1340,33 +1304,30 @@ def build_fast_grid_html(
     page_warnings,
     rejected_state,
     cols_per_row,
-    page_img_b64=None,
+    # kept for API compat — no longer used
+    cmd="",
+    cmd_reason="",
+    clear_selection=False,
+    saved_selected=None,
 ):
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
 
     committed_json = json.dumps(rejected_state)
-    if page_img_b64 is None:
-        page_img_b64 = {}
 
     cards_data = []
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
-
-        # Use server-proxied base64 image (bypasses CDN hotlink/referrer blocking)
-        if sid in page_img_b64:
-            img_url = page_img_b64[sid]
-        else:
-            img_url = ""
-            for img_col in ["MAIN_IMAGE", "IMAGE1", "IMAGE_1", "IMAGE", "IMG", "PHOTO", "THUMBNAIL"]:
-                val = str(row.get(img_col, "")).strip()
-                if val and val.lower() not in ("nan", "none", ""):
-                    img_url = val
-                    break
-            if not img_url.startswith("http"):
-                img_url = PLACEHOLDER_B64
-
+        img_url = str(row.get("MAIN_IMAGE", "")).strip()
+        
+        # --- FIX ADDED HERE: HTTP TO HTTPS UPGRADE ---
+        if img_url.startswith("http://"):
+            img_url = img_url.replace("http://", "https://")
+            
+        if not img_url.startswith("http"):
+            img_url = "https://via.placeholder.com/150?text=No+Image"
+            
         cards_data.append({
             "sid":      sid,
             "img":      img_url,
@@ -1378,10 +1339,13 @@ def build_fast_grid_html(
         })
     cards_json = json.dumps(cards_data)
 
-    return f"""
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
-  body{{padding:8px;}}
+  body{{background:#f5f5f5;padding:8px;}}
 
   /* ── sticky control bar ── */
   .ctrl-bar{{
@@ -1403,21 +1367,12 @@ def build_fast_grid_html(
     cursor:pointer;white-space:nowrap;
   }}
   .batch-btn:hover{{opacity:.88;}}
-  .batch-btn:disabled{{opacity:.4;cursor:not-allowed;}}
   .desel-btn{{
     padding:7px 12px;background:#fff;color:#555;
     border:1px solid #ccc;border-radius:4px;font-size:12px;
     cursor:pointer;white-space:nowrap;
   }}
   .desel-btn:hover{{background:#f5f5f5;}}
-
-  /* ── bridge status indicator ── */
-  .bridge-status{{
-    font-size:10px;padding:3px 8px;border-radius:10px;
-    font-weight:600;
-  }}
-  .bridge-ready{{background:#e8f5e9;color:#2e7d32;}}
-  .bridge-wait{{background:#fff3e0;color:#e65100;}}
 
   /* ── grid & cards ── */
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
@@ -1427,8 +1382,7 @@ def build_fast_grid_html(
                   background:rgba(76,175,80,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.5;}}
   .card-img-wrap{{position:relative;cursor:pointer;}}
-  .card-img{{width:100%;aspect-ratio:1;object-fit:contain;border-radius:6px;display:block;
-             background:#f9f9f9;}}
+  .card-img{{width:100%;aspect-ratio:1;object-fit:contain;border-radius:6px;display:block;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
   .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;
          background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;
@@ -1455,18 +1409,9 @@ def build_fast_grid_html(
             font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;
              cursor:pointer;background:#fff;}}
-
-  /* loading shimmer for images */
-  .img-loading {{
-    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-  }}
-  @keyframes shimmer {{
-    0% {{ background-position: -200% 0; }}
-    100% {{ background-position: 200% 0; }}
-  }}
 </style>
+</head>
+<body>
 
 <div class="ctrl-bar">
   <span class="sel-count" id="sel-count-bar">0 selected</span>
@@ -1479,123 +1424,107 @@ def build_fast_grid_html(
     <option value="REJECT_PROHIBITED">Prohibited Product</option>
     <option value="REJECT_COLOR">Missing Color</option>
   </select>
-  <button class="batch-btn" id="batch-btn" onclick="doBatchReject()">✗ Batch Reject Selected</button>
+  <button class="batch-btn" onclick="doBatchReject()">✗ Batch Reject Selected</button>
   <button class="desel-btn"  onclick="doDeselAll()">☐ Deselect All</button>
-  <span class="bridge-status bridge-wait" id="bridge-status">⏳ connecting…</span>
   <span style="font-size:11px;color:#999;">Click image to select</span>
 </div>
 
 <div class="grid" id="card-grid"></div>
 
 <script>
-var CARDS     = {cards_json};
-var COMMITTED = {committed_json};
+const CARDS     = {cards_json};
+const COMMITTED = {committed_json};   // already-rejected sids → reason label
 
-window._gridSelected = window._gridSelected || {{}};
-var selected = window._gridSelected;
+// Selection lives ONLY in JS — no async bridge needed
+let selected = {{}};
 
-// ── FIX 3: Bridge-ready guard with retry ─────────────────────────────────────
-var _bridgeReady = false;
-var _pendingMsgs = [];
-
-function checkBridgeReady() {{
-  if (window.sendMsgToPython) {{
-    _bridgeReady = true;
-    var el = document.getElementById('bridge-status');
-    if (el) {{ el.textContent = '✓ ready'; el.className = 'bridge-status bridge-ready'; }}
-    var btn = document.getElementById('batch-btn');
-    if (btn) btn.disabled = false;
-    // flush any queued messages
-    _pendingMsgs.forEach(function(m) {{ window.sendMsgToPython(m.type, m.payload); }});
-    _pendingMsgs = [];
-  }} else {{
-    setTimeout(checkBridgeReady, 200);
-  }}
-}}
-
-// Start checking immediately
-var batchBtn = document.getElementById('batch-btn');
-if (batchBtn) batchBtn.disabled = true;
-checkBridgeReady();
-
-// ── OFFICIAL STREAMLIT BRIDGE ─────────────────────────────────────────────────
+// ── postMessage helper ────────────────────────────────────────────────────────
 function sendMsg(type, payload) {{
-  if (_bridgeReady && window.sendMsgToPython) {{
-    window.sendMsgToPython(type, payload);
-  }} else {{
-    // Queue it if bridge isn't ready yet
-    _pendingMsgs.push({{type: type, payload: payload}});
-    // Keep trying to flush
-    checkBridgeReady();
+  try {{
+    var par = window.parent;
+    var doc = par.document;
+    var inputs = doc.querySelectorAll('input[type="text"]');
+    var bridge = null;
+    for (var i = 0; i < inputs.length; i++) {{
+      if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
+        bridge = inputs[i]; break;
+      }}
+    }}
+    if (!bridge) {{ console.warn('jtbridge not found'); return; }}
+    var msg = JSON.stringify({{action: type, payload: payload}});
+    // Must use parent's own prototype — the grid iframe has a different one
+    Object.getOwnPropertyDescriptor(
+      par.HTMLInputElement.prototype, 'value'
+    ).set.call(bridge, msg);
+    // React onChange fires on 'input' event
+    bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+    // Streamlit only submits on Enter — this is the part that was missing
+    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
+      bubbles: true, cancelable: true,
+      key: 'Enter', code: 'Enter', keyCode: 13, which: 13
+    }}));
+  }} catch(ex) {{
+    console.error('jtbridge sendMsg error:', ex);
   }}
 }}
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
 function updateSelCount() {{
-  var n = Object.keys(selected).length;
+  const n = Object.keys(selected).length;
   document.getElementById('sel-count-bar').textContent = n + ' selected';
-  var btn = document.getElementById('batch-btn');
-  if (btn && _bridgeReady) btn.disabled = (n === 0);
 }}
 
 // ── Card rendering ────────────────────────────────────────────────────────────
 function renderCard(card) {{
-  var sid      = card.sid;
-  var img      = card.img;
-  var name     = card.name;
-  var brand    = card.brand;
-  var cat      = card.cat;
-  var seller   = card.seller;
-  var warnings = card.warnings;
+  const {{sid, img, name, brand, cat, seller, warnings}} = card;
+  const isCommitted = sid in COMMITTED;
+  const isSelected  = !isCommitted && (sid in selected);
 
-  var isCommitted = sid in COMMITTED;
-  var isSelected  = !isCommitted && (sid in selected);
-
-  var cls = 'card';
+  let cls = 'card';
   if (isCommitted)     cls += ' committed-rej';
   else if (isSelected) cls += ' selected';
 
-  var shortName = name.length > 38 ? name.slice(0,38)+'…' : name;
-  var warnHtml  = warnings.map(function(w) {{ return '<span class="warn-badge">'+w+'</span>'; }}).join('');
-  var rejLabel  = isCommitted ? (COMMITTED[sid]||'').replace(/_/g,' ') : '';
+  const shortName = name.length > 38 ? name.slice(0,38)+'…' : name;
+  const warnHtml  = warnings.map(w => `<span class="warn-badge">${{w}}</span>`).join('');
+  const rejLabel  = isCommitted ? (COMMITTED[sid]||'').replace(/_/g,' ') : '';
 
-  var rejOverlay = isCommitted ? (
-    '<div class="rej-overlay">' +
-    '<div class="rej-badge">REJECTED</div>' +
-    '<div class="rej-label">'+rejLabel+'</div>' +
-    '</div>'
-  ) : '';
+  const rejOverlay = isCommitted ? `
+    <div class="rej-overlay">
+      <div class="rej-badge">REJECTED</div>
+      <div class="rej-label">${{rejLabel}}</div>
+    </div>` : '';
 
-  var actHtml = !isCommitted ? (
-    '<div class="acts">' +
-    '<button class="act-btn" onclick="event.stopPropagation();quickReject(\''+sid+'\',\'REJECT_POOR_IMAGE\')">Poor Img</button>' +
-    '<select class="act-more" onchange="if(this.value){{event.stopPropagation();quickReject(\''+sid+'\',this.value);this.value=\'\';}}">' +
-    '<option value="">More…</option>' +
-    '<option value="REJECT_WRONG_CAT">Wrong Category</option>' +
-    '<option value="REJECT_FAKE">Fake Product</option>' +
-    '<option value="REJECT_BRAND">Restricted Brand</option>' +
-    '<option value="REJECT_PROHIBITED">Prohibited</option>' +
-    '<option value="REJECT_COLOR">Wrong Color</option>' +
-    '<option value="REJECT_WRONG_BRAND">Wrong Brand</option>' +
-    '</select></div>'
-  ) : '';
+  const actHtml = !isCommitted ? `
+    <div class="acts">
+      <button class="act-btn"
+        onclick="event.stopPropagation();quickReject('${{sid}}','REJECT_POOR_IMAGE')">
+        Poor Img
+      </button>
+      <select class="act-more"
+        onchange="if(this.value){{event.stopPropagation();quickReject('${{sid}}',this.value);this.value=''}}">
+        <option value="">More…</option>
+        <option value="REJECT_WRONG_CAT">Wrong Category</option>
+        <option value="REJECT_FAKE">Fake Product</option>
+        <option value="REJECT_BRAND">Restricted Brand</option>
+        <option value="REJECT_PROHIBITED">Prohibited</option>
+        <option value="REJECT_COLOR">Wrong Color</option>
+        <option value="REJECT_WRONG_BRAND">Wrong Brand</option>
+      </select>
+    </div>` : '';
 
-  // FIX 2: Use onload/onerror to handle image loading states
-  return '<div class="'+cls+'" id="card-'+sid+'">' +
-    '<div class="card-img-wrap" onclick="toggleSelect(\''+sid+'\')">' +
-    '<div class="warn-wrap">'+warnHtml+'</div>' +
-    '<img class="card-img img-loading" src="'+img+'" loading="lazy" ' +
-    'onload="this.classList.remove(\'img-loading\')" ' +
-    'onerror="this.classList.remove(\'img-loading\');this.src=\'https://via.placeholder.com/150?text=No+Image\'">' +
-    rejOverlay +
-    '<div class="tick">✓</div>' +
-    '</div>' +
-    '<div class="meta">' +
-    '<div class="nm" title="'+name+'">'+shortName+'</div>' +
-    '<div class="br">'+brand+'</div>' +
-    '<div class="ct">'+cat+'</div>' +
-    '<div class="sl">'+seller+'</div>' +
-    '</div>'+actHtml+'</div>';
+  return `<div class="${{cls}}" id="card-${{sid}}">
+    <div class="card-img-wrap" onclick="toggleSelect('${{sid}}')">
+      <div class="warn-wrap">${{warnHtml}}</div>
+      <img class="card-img" src="${{img}}" loading="lazy"
+           onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
+      ${{rejOverlay}}<div class="tick">✓</div>
+    </div>
+    <div class="meta">
+      <div class="nm" title="${{name}}">${{shortName}}</div>
+      <div class="br">${{brand}}</div>
+      <div class="ct">${{cat}}</div>
+      <div class="sl">${{seller}}</div>
+    </div>${{actHtml}}</div>`;
 }}
 
 function renderAll() {{
@@ -1604,11 +1533,10 @@ function renderAll() {{
 }}
 
 function replaceCard(sid) {{
-  var el = document.getElementById('card-'+sid);
+  const el = document.getElementById('card-'+sid);
   if (!el) return;
-  var card = null;
-  for (var i = 0; i < CARDS.length; i++) {{ if (CARDS[i].sid === sid) {{ card = CARDS[i]; break; }} }}
-  if (card) {{ var t=document.createElement('div'); t.innerHTML=renderCard(card); el.replaceWith(t.firstElementChild); }}
+  const card = CARDS.find(c => c.sid === sid);
+  if (card) {{ const t=document.createElement('div'); t.innerHTML=renderCard(card); el.replaceWith(t.firstElementChild); }}
 }}
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -1623,105 +1551,54 @@ function toggleSelect(sid) {{
 function quickReject(sid, reasonKey) {{
   delete selected[sid];
   COMMITTED[sid] = reasonKey;
-  // FIX 3: use safe sendMsg which queues if bridge not ready
   sendMsg('reject', {{[sid]: reasonKey}});
   replaceCard(sid);
   updateSelCount();
 }}
 
 function doBatchReject() {{
-  var toReject = Object.keys(selected);
+  const toReject = Object.keys(selected);
   if (toReject.length === 0) {{ alert('No products selected.'); return; }}
-
-  // FIX 3: guard against bridge not being ready
-  if (!_bridgeReady || !window.sendMsgToPython) {{
-    alert('Bridge is still connecting, please try again in a moment.');
-    return;
-  }}
-
-  var reasonKey = document.getElementById('batch-reason').value;
-  var payload   = {{}};
-  toReject.forEach(function(sid) {{
+  const reasonKey = document.getElementById('batch-reason').value;
+  const payload   = {{}};
+  toReject.forEach(sid => {{
     payload[sid]    = reasonKey;
     COMMITTED[sid]  = reasonKey;
     delete selected[sid];
   }});
   sendMsg('reject', payload);
-  renderAll();
+  renderAll();   // re-render all cards to show committed state
   updateSelCount();
 }}
 
 function doDeselAll() {{
-  Object.keys(selected).forEach(function(k) {{ delete selected[k]; }});
+  selected = {{}};
   renderAll();
   updateSelCount();
 }}
 
 renderAll();
-</script>"""
+</script>
+</body>
+</html>"""
 
 # -------------------------------------------------
 # UI COMPONENTS
 # -------------------------------------------------
-
-PLACEHOLDER_B64 = "data:image/svg+xml;base64," + base64.b64encode(b"""
-<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150' viewBox='0 0 150 150'>
-  <rect width='150' height='150' fill='#f0f0f0'/>
-  <text x='75' y='70' text-anchor='middle' font-family='sans-serif' font-size='11' fill='#999'>No Image</text>
-  <text x='75' y='88' text-anchor='middle' font-family='sans-serif' font-size='9' fill='#bbb'>Upload issue</text>
-</svg>""".strip()).decode()
-
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_image_as_b64(url: str) -> tuple:
-    """
-    Fetches an image URL server-side (bypasses browser CORS) and returns
-    (data_uri_string, warnings_list).
-    Falls back to placeholder on any error.
-    """
-    if not url or not str(url).startswith("http"):
-        return PLACEHOLDER_B64, []
-
+def analyze_image_quality_cached(url: str) -> List[str]:
+    if not url or not str(url).startswith("http"): return []
     warnings = []
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; ProductQC/1.0)",
-            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-        }
-        resp = requests.get(url, timeout=4, headers=headers, stream=True)
-        if resp.status_code != 200:
-            return PLACEHOLDER_B64, []
-
-        raw_bytes = resp.content
-        if not raw_bytes:
-            return PLACEHOLDER_B64, []
-
-        # Detect mime type from content-type header, fall back to jpeg
-        ct = resp.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
-        if ct not in ("image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"):
-            ct = "image/jpeg"
-
-        # Quality analysis via PIL
-        try:
-            from io import BytesIO as _BIO
-            img = Image.open(_BIO(raw_bytes))
+        resp = requests.get(url, timeout=2, stream=True)
+        if resp.status_code == 200:
+            img = Image.open(resp.raw)
             w, h = img.size
-            if w < 300 or h < 300: warnings.append("Low Res")
+            if w < 300 or h < 300: warnings.append("Low Resolution")
             ratio = h / w if w > 0 else 1
-            if ratio > 1.5: warnings.append("Tall/Screenshot")
+            if ratio > 1.5: warnings.append("Tall (Screenshot?)")
             elif ratio < 0.6: warnings.append("Wide Aspect")
-        except Exception:
-            pass
-
-        data_uri = f"data:{ct};base64," + base64.b64encode(raw_bytes).decode()
-        return data_uri, warnings
-
-    except Exception:
-        return PLACEHOLDER_B64, []
-
-
-# Keep old name as alias so nothing else breaks
-def analyze_image_quality_cached(url: str) -> List[str]:
-    _, warnings = fetch_image_as_b64(url)
+    except Exception: pass
     return warnings
 
 @st.dialog("Confirm Bulk Approval")
@@ -1893,13 +1770,15 @@ if st.session_state.get('last_processed_files') != process_signature:
     st.session_state.grid_page = 0
     st.session_state.exports_cache = {}
     st.session_state.display_df_cache = {}
-
+    
     if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
 
+    # Reset all JS-bridge counters on new file load
     st.session_state.desel_counter = 0
     st.session_state.batch_counter = 0
     st.session_state.clear_counter = 0
     st.session_state.ls_processed_flag = False
+
     st.session_state.ls_read_trigger = 0
 
     keys_to_delete = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_"))]
@@ -1970,19 +1849,6 @@ if st.session_state.get('last_processed_files') != process_signature:
                         if c in data.columns: data[c] = data[c].astype(str).fillna('')
                     if 'COLOR_FAMILY' not in data.columns: data['COLOR_FAMILY'] = ""
 
-                    # FIX 2: Ensure MAIN_IMAGE column always exists
-                    if 'MAIN_IMAGE' not in data.columns:
-                        # Try to find an image column under any alias that survived standardization
-                        img_fallback_cols = [c for c in data.columns if any(
-                            alias in c.upper() for alias in ['IMAGE', 'IMG', 'PHOTO', 'PICTURE', 'THUMBNAIL']
-                        )]
-                        if img_fallback_cols:
-                            data['MAIN_IMAGE'] = data[img_fallback_cols[0]]
-                            st.info(f"ℹ️ Image column mapped from `{img_fallback_cols[0]}` → `MAIN_IMAGE`")
-                        else:
-                            data['MAIN_IMAGE'] = ''
-                            st.warning("⚠️ No image column found in uploaded file. Image review will show placeholders.")
-
                     data_hash = df_hash(data) + country_validator.code
                     final_report, _ = cached_validate_products(data_hash, data, support_files, country_validator.code, data_has_warranty)
 
@@ -1997,6 +1863,41 @@ if st.session_state.get('last_processed_files') != process_signature:
             st.code(traceback.format_exc())
             st.session_state.last_processed_files = "error"
 
+
+_bridge_val = st.text_input(
+    "jtbridge", value="",
+    placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE",
+    key=f"main_bridge_{st.session_state.main_bridge_counter}",
+    label_visibility="collapsed",
+)
+if _bridge_val:
+    try:
+        _msg = json.loads(_bridge_val)
+        if _msg.get("action") == "reject":
+            _payload = _msg.get("payload", {})
+            if isinstance(_payload, dict) and _payload:
+                _rgroups: dict = {}
+                for _sid, _rkey in _payload.items():
+                    _rgroups.setdefault(_rkey, []).append(_sid)
+                _total = 0
+                for _rkey, _sids in _rgroups.items():
+                    _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
+                    _code, _cmt = support_files["flags_mapping"].get(
+                        _flag, ("1000007 - Other Reason", "Manual rejection"))
+                    st.session_state.final_report.loc[
+                        st.session_state.final_report["ProductSetSid"].isin(_sids),
+                        ["Status", "Reason", "Comment", "FLAG"]
+                    ] = ["Rejected", _code, _cmt, _flag]
+                    for _s in _sids:
+                        st.session_state[f"quick_rej_{_s}"]        = True
+                        st.session_state[f"quick_rej_reason_{_s}"] = _flag
+                    _total += len(_sids)
+                st.session_state.exports_cache.clear()
+                st.session_state.display_df_cache.clear()
+                st.session_state.main_toasts.append((f"Rejected {_total} product(s)", "✅"))
+                st.session_state.main_bridge_counter += 1
+    except Exception as _e:
+        logger.error(f"Bridge parse error: {_e}")
 
 # ==========================================
 # POST-QC RESULTS SECTION
@@ -2053,18 +1954,6 @@ def render_image_grid():
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
 
-    # FIX 2: Debug helper — show which image column is being used
-    img_col_used = None
-    for candidate in ["MAIN_IMAGE", "IMAGE1", "IMAGE_1", "IMAGE", "IMG", "PHOTO"]:
-        if candidate in data.columns:
-            img_col_used = candidate
-            break
-    if img_col_used is None:
-        st.warning("⚠️ No image column detected. Grid will show placeholder images. "
-                   f"Available columns: {', '.join(data.columns.tolist()[:15])}")
-    elif img_col_used != "MAIN_IMAGE":
-        st.info(f"ℹ️ Using `{img_col_used}` as image source.")
-
     committed_rej_sids = {
         k.replace("quick_rej_", "")
         for k in st.session_state.keys()
@@ -2082,14 +1971,11 @@ def render_image_grid():
             value=st.session_state.grid_items_per_page,
         )
 
-    # FIX 2: include all possible image columns so build_fast_grid_html can find them
-    image_cols = [c for c in data.columns if any(
-        alias in c.upper() for alias in ['IMAGE', 'IMG', 'PHOTO', 'PICTURE', 'THUMBNAIL']
-    )]
-    available_cols = list(dict.fromkeys(
-        [c for c in GRID_COLS if c in data.columns] + image_cols
-    ))
+    # --- FIX ADDED HERE: ENSURE MAIN_IMAGE ISN'T DROPPED ---
+    if 'MAIN_IMAGE' not in data.columns:
+        data['MAIN_IMAGE'] = ''
 
+    available_cols = [c for c in GRID_COLS if c in data.columns]
     review_data = pd.merge(
         valid_grid_df[["ProductSetSid"]],
         data[available_cols],
@@ -2111,7 +1997,7 @@ def render_image_grid():
     if st.session_state.grid_page >= total_pages:
         st.session_state.grid_page = 0
 
-    # ── Pagination controls ───────────────────────────────────────────────────
+    # ── Pagination controls only (batch controls are now inside the iframe) ───
     pg_cols = st.columns([1, 2, 1])
     with pg_cols[0]:
         if st.button("◀ Prev", use_container_width=True,
@@ -2133,36 +2019,21 @@ def render_image_grid():
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
 
-    # ── Proxy images server-side + quality checks ────────────────────────────
+    # ── Image quality checks ──────────────────────────────────────────────────
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start : page_start + ipp]
 
-    img_url_col = next(
-        (c for c in ["MAIN_IMAGE", "IMAGE1", "IMAGE_1", "IMAGE", "IMG", "PHOTO"]
-         if c in page_data.columns),
-        None
-    )
-
     page_warnings: dict = {}
-    page_img_b64: dict = {}
-
-    if img_url_col:
-        # Fetch images server-side as base64 data URIs — immune to CDN hotlink blocking
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-            future_to_sid = {
-                ex.submit(fetch_image_as_b64,
-                          str(r.get(img_url_col, "")).strip()): str(r["PRODUCT_SET_SID"])
-                for _, r in page_data.iterrows()
-            }
-            for future in concurrent.futures.as_completed(future_to_sid):
-                sid = future_to_sid[future]
-                try:
-                    data_uri, warns = future.result()
-                    page_img_b64[sid] = data_uri
-                    if warns:
-                        page_warnings[sid] = warns
-                except Exception:
-                    page_img_b64[sid] = PLACEHOLDER_B64
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        future_to_sid = {
+            ex.submit(analyze_image_quality_cached,
+                      str(r.get("MAIN_IMAGE", "")).strip()): str(r["PRODUCT_SET_SID"])
+            for _, r in page_data.iterrows()
+        }
+        for future in concurrent.futures.as_completed(future_to_sid):
+            warns = future.result()
+            if warns:
+                page_warnings[future_to_sid[future]] = warns
 
     rejected_state = {
         sid: st.session_state[f"quick_rej_reason_{sid}"]
@@ -2179,43 +2050,8 @@ def render_image_grid():
         page_warnings,
         rejected_state,
         cols_per_row,
-        page_img_b64=page_img_b64,
     )
-
-    # ── NATIVE STREAMLIT CLOUD BRIDGE COMPONENT CALL ───
-    _msg = grid_component(
-        html_content=grid_html,
-        height=1400,
-        key=f"grid_comp_{st.session_state.grid_page}_{st.session_state.main_bridge_counter}"
-    )
-
-    if _msg and isinstance(_msg, dict) and _msg.get("action") == "reject":
-        _payload = _msg.get("payload", {})
-        if _payload:
-            _rgroups = {}
-            for _sid, _rkey in _payload.items():
-                _rgroups.setdefault(_rkey, []).append(_sid)
-
-            _total = 0
-            for _rkey, _sids in _rgroups.items():
-                _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
-                _code, _cmt = support_files["flags_mapping"].get(_flag, ("1000007 - Other Reason", "Manual rejection"))
-
-                st.session_state.final_report.loc[
-                    st.session_state.final_report["ProductSetSid"].isin(_sids),
-                    ["Status", "Reason", "Comment", "FLAG"]
-                ] = ["Rejected", _code, _cmt, _flag]
-
-                for _s in _sids:
-                    st.session_state[f"quick_rej_{_s}"] = True
-                    st.session_state[f"quick_rej_reason_{_s}"] = _flag
-                _total += len(_sids)
-
-            st.session_state.exports_cache.clear()
-            st.session_state.display_df_cache.clear()
-            st.session_state.main_toasts.append((f"Rejected {_total} product(s)", "✅"))
-            st.session_state.main_bridge_counter += 1
-            st.rerun(scope="app")  # full rerun so Validation Results section updates
+    components.html(grid_html, height=1400, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
         components.html(
