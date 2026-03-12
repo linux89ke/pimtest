@@ -2039,6 +2039,11 @@ def render_image_grid():
     # Always increment so next rerun gets a fresh st_javascript read
     st.session_state.grid_msg_counter += 1
 
+    # If a batch command was just injected, schedule a follow-up rerun
+    # so st_javascript picks up the _jtPending that the iframe will write
+    if do_batch:
+        st.rerun(scope="fragment")
+
     if st.session_state.get("do_scroll_top", False):
         components.html(
             "<script>window.parent.document.querySelector('.main')"
