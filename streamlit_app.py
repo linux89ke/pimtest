@@ -1286,6 +1286,7 @@ def build_fast_grid_html(
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
         
+        # --- HTTP TO HTTPS UPGRADE ---
         if img_url.startswith("http://"):
             img_url = img_url.replace("http://", "https://")
         if not img_url.startswith("http"):
@@ -1310,12 +1311,20 @@ def build_fast_grid_html(
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
   body{{background:#f5f5f5;padding:8px;}}
 
+  /* ── UPGRADED STICKY CONTROL BAR ── */
   .ctrl-bar{{
-    position:sticky;top:0;z-index:100;
+    position: -webkit-sticky;
+    position: sticky;
+    top: 8px;
+    z-index: 9999;
     display:flex;align-items:center;gap:8px;flex-wrap:wrap;
-    padding:8px 12px;background:#fff;
-    border:1px solid #e0e0e0;border-radius:8px;margin-bottom:12px;
-    box-shadow:0 2px 6px rgba(0,0,0,.08);
+    padding:8px 12px;
+    background: rgba(255, 255, 255, 0.90);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border:1px solid rgba(224, 224, 224, 0.8);
+    border-radius:8px;margin-bottom:12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
   }}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{
@@ -1336,6 +1345,7 @@ def build_fast_grid_html(
   }}
   .desel-btn:hover{{background:#f5f5f5;}}
 
+  /* ── grid & cards ── */
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;
          position:relative;transition:border-color .15s,box-shadow .15s;}}
@@ -2158,12 +2168,13 @@ def render_image_grid():
         rejected_state,
         cols_per_row,
     )
-    components.html(grid_html, height=500, scrolling=True)
+    
+    # --- RENDER IFRAME WITH OPTIMIZED SCROLLING HEIGHT ---
+    components.html(grid_html, height=800, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
         components.html(
-            "<script>window.parent.document.querySelector('.main')"
-            ".scrollTo({top:0,behavior:'smooth'});</script>",
+            "<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>",
             height=0,
         )
         st.session_state.do_scroll_top = False
