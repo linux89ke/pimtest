@@ -11,6 +11,7 @@ import traceback
 import json
 import zipfile
 import os
+import tempfile
 import concurrent.futures
 from dataclasses import dataclass
 import base64
@@ -95,7 +96,7 @@ def format_local_price(usd_price, country: str) -> str:
 
 SPLIT_LIMIT = 9998
 
-# --- EXPANDED IMAGE MAPPINGS ADDED HERE ---
+# --- EXPANDED FILE MAPPING TO CATCH ALL IMAGE COLUMN NAMES ---
 NEW_FILE_MAPPING = {
     'cod_productset_sid': 'PRODUCT_SET_SID',
     "2qz3wx4ec5rv6b7hnj8kl;'[]": 'PRODUCT_SET_SID',
@@ -114,6 +115,7 @@ NEW_FILE_MAPPING = {
     'color family': 'COLOR_FAMILY',
     'COLOUR FAMILY': 'COLOR_FAMILY',
     'list_seller_skus': 'SELLER_SKU',
+    # Added all image variants
     'image1': 'MAIN_IMAGE',
     'image_1': 'MAIN_IMAGE',
     'main_image': 'MAIN_IMAGE',
@@ -156,21 +158,74 @@ if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
 if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
-
 if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
 
-# Session state counters for dynamic keys
 if 'desel_counter' not in st.session_state: st.session_state.desel_counter = 0
 if 'batch_counter' not in st.session_state: st.session_state.batch_counter = 0  
 if 'clear_counter' not in st.session_state: st.session_state.clear_counter = 0
 if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_flag = False
-
 if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
 
 st_yled.init()
+
+# -------------------------------------------------
+# NATIVE CLOUD BRIDGE COMPONENT
+# -------------------------------------------------
+@st.cache_resource
+def get_grid_component():
+    """Creates an official bidirectional Streamlit component to bypass Cloud CORS limits."""
+    tmp_dir = tempfile.mkdtemp()
+    index_path = os.path.join(tmp_dir, "index.html")
+    with open(index_path, "w", encoding="utf-8") as f:
+        f.write("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/streamlit-component-lib/1.3.0/streamlit.js"></script>
+        </head>
+        <body style="margin: 0; padding: 0; background: transparent;">
+          <div id="root"></div>
+          <script>
+            // Official native bridge to Python
+            window.sendMsgToPython = function(type, payload) {
+                Streamlit.setComponentValue({action: type, payload: payload});
+            };
+
+            let lastHtml = "";
+            function onRender(event) {
+                const args = event.detail.args;
+                const root = document.getElementById("root");
+                
+                // Only inject if it's new content to prevent re-triggering scripts infinitely
+                if (args.html_content && root.innerHTML !== args.html_content) {
+                    root.innerHTML = args.html_content;
+                    
+                    // Re-evaluate injected scripts to wire up the buttons
+                    const scripts = root.querySelectorAll("script");
+                    scripts.forEach(script => {
+                        const newScript = document.createElement("script");
+                        newScript.className = "injected-script";
+                        newScript.text = script.innerHTML;
+                        document.body.appendChild(newScript);
+                    });
+                }
+                
+                Streamlit.setFrameHeight(args.height || 1400);
+            }
+            Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+            Streamlit.setComponentReady();
+          </script>
+        </body>
+        </html>
+        """)
+    return components.declare_component("bidirectional_grid", path=tmp_dir)
+
+# Initialize it once
+grid_component = get_grid_component()
 
 # --- GLOBAL CSS ---
 st.markdown(f"""
@@ -666,7 +721,7 @@ def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     for col in ['ACTIVE_STATUS_COUNTRY', 'CATEGORY_CODE', 'BRAND', 'TAX_CLASS', 'NAME', 'SELLER_NAME']:
         if col in df.columns: df[col] = df[col].astype(str)
         
-    # --- FIX ADDED HERE: FORCE MAIN_IMAGE COLUMN ---
+    # --- FIX: FORCE MAIN_IMAGE COLUMN TO EXIST ---
     if 'MAIN_IMAGE' not in df.columns:
         df['MAIN_IMAGE'] = ''
         
@@ -1265,36 +1320,6 @@ REASON_MAP = {
 }
 
 # -------------------------------------------------
-# PROCESS GRID ACTIONS
-# -------------------------------------------------
-def _process_grid_selections(raw_json: str, support_files: dict) -> int:
-    """Parse {sid: reason_key} JSON and apply rejections. Returns count."""
-    if not raw_json or not isinstance(raw_json, str) or raw_json in ("0", "null", ""):
-        return 0
-    try:
-        pending = json.loads(raw_json)
-        if not isinstance(pending, dict) or not pending:
-            return 0
-        reason_groups: dict[str, list] = {}
-        for sid, reason_key in pending.items():
-            reason_groups.setdefault(reason_key, []).append(sid)
-        total = 0
-        for reason_key, sids in reason_groups.items():
-            flag_name = REASON_MAP.get(reason_key, "Other Reason (Custom)")
-            code, cmt = support_files["flags_mapping"].get(
-                flag_name, ("1000007 - Other Reason", "Manual rejection")
-            )
-            apply_rejection(sids, code, cmt, flag_name)
-            for s in sids:
-                st.session_state[f"quick_rej_{s}"] = True
-                st.session_state[f"quick_rej_reason_{s}"] = flag_name
-            total += len(sids)
-        return total
-    except Exception as e:
-        logger.error(f"Grid selections parse error: {e}")
-        return 0
-
-# -------------------------------------------------
 # HTML GRID BUILDER
 # -------------------------------------------------
 def build_fast_grid_html(
@@ -1304,11 +1329,6 @@ def build_fast_grid_html(
     page_warnings,
     rejected_state,
     cols_per_row,
-    # kept for API compat — no longer used
-    cmd="",
-    cmd_reason="",
-    clear_selection=False,
-    saved_selected=None,
 ):
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
@@ -1433,50 +1453,16 @@ def build_fast_grid_html(
 
 <script>
 const CARDS     = {cards_json};
-const COMMITTED = {committed_json};   // already-rejected sids → reason label
+const COMMITTED = {committed_json};
 
-// Selection lives ONLY in JS — no async bridge needed
 let selected = {{}};
 
-// ── postMessage helper ────────────────────────────────────────────────────────
-// ── postMessage helper ────────────────────────────────────────────────────────
+// ── OFFICIAL NATIVE COMPONENT BRIDGE ──────────────────────────────────────────
 function sendMsg(type, payload) {{
-  try {{
-    var par = window.parent;
-    var doc = par.document;
-    var inputs = doc.querySelectorAll('input[type="text"]');
-    var bridge = null;
-    
-    for (var i = 0; i < inputs.length; i++) {{
-      if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
-        bridge = inputs[i]; break;
-      }}
-    }}
-    if (!bridge) {{ console.warn('jtbridge not found'); return; }}
-    
-    var msg = JSON.stringify({{action: type, payload: payload}});
-    
-    // Step 1: set value using parent's own prototype
-    Object.getOwnPropertyDescriptor(
-      par.HTMLInputElement.prototype, 'value'
-    ).set.call(bridge, msg);
-    
-    // Step 2: tell React the value changed
-    bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    
-    // Step 3: Wait for React to process, THEN submit!
-    // We add an 80ms delay so React's virtual DOM catches up before we trigger Streamlit
-    setTimeout(function() {{
-      bridge.dispatchEvent(new par.FocusEvent('blur', {{bubbles: true}}));
-      bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
-        bubbles: true, cancelable: true,
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13
-      }}));
-    }}, 80);
-    
-  }} catch(ex) {{
-    console.error('jtbridge sendMsg error:', ex);
-    alert('Bridge Error: Check browser console (F12). If on Cloud, CORS might be blocking window.parent');
+  if (window.sendMsgToPython) {{
+      window.sendMsgToPython(type, payload);
+  }} else {{
+      console.warn('Python bridge not ready');
   }}
 }}
 
@@ -1568,18 +1554,22 @@ function quickReject(sid, reasonKey) {{
   updateSelCount();
 }}
 
+// ── BATCH REJECT LOGIC WITH NATIVE BRIDGE SENDMSG ─────────────────────────────
 function doBatchReject() {{
   const toReject = Object.keys(selected);
   if (toReject.length === 0) {{ alert('No products selected.'); return; }}
   const reasonKey = document.getElementById('batch-reason').value;
   const payload   = {{}};
+  
   toReject.forEach(sid => {{
     payload[sid]    = reasonKey;
     COMMITTED[sid]  = reasonKey;
     delete selected[sid];
   }});
+  
+  // Sends payload to python via the native bridge
   sendMsg('reject', payload);
-  renderAll();   // re-render all cards to show committed state
+  renderAll();
   updateSelCount();
 }}
 
@@ -1875,42 +1865,6 @@ if st.session_state.get('last_processed_files') != process_signature:
             st.code(traceback.format_exc())
             st.session_state.last_processed_files = "error"
 
-
-_bridge_val = st.text_input(
-    "jtbridge", value="",
-    placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE",
-    key=f"main_bridge_{st.session_state.main_bridge_counter}",
-    label_visibility="collapsed",
-)
-if _bridge_val:
-    try:
-        _msg = json.loads(_bridge_val)
-        if _msg.get("action") == "reject":
-            _payload = _msg.get("payload", {})
-            if isinstance(_payload, dict) and _payload:
-                _rgroups: dict = {}
-                for _sid, _rkey in _payload.items():
-                    _rgroups.setdefault(_rkey, []).append(_sid)
-                _total = 0
-                for _rkey, _sids in _rgroups.items():
-                    _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
-                    _code, _cmt = support_files["flags_mapping"].get(
-                        _flag, ("1000007 - Other Reason", "Manual rejection"))
-                    st.session_state.final_report.loc[
-                        st.session_state.final_report["ProductSetSid"].isin(_sids),
-                        ["Status", "Reason", "Comment", "FLAG"]
-                    ] = ["Rejected", _code, _cmt, _flag]
-                    for _s in _sids:
-                        st.session_state[f"quick_rej_{_s}"]        = True
-                        st.session_state[f"quick_rej_reason_{_s}"] = _flag
-                    _total += len(_sids)
-                st.session_state.exports_cache.clear()
-                st.session_state.display_df_cache.clear()
-                st.session_state.main_toasts.append((f"Rejected {_total} product(s)", "✅"))
-                st.session_state.main_bridge_counter += 1
-    except Exception as _e:
-        logger.error(f"Bridge parse error: {_e}")
-
 # ==========================================
 # POST-QC RESULTS SECTION
 # ==========================================
@@ -2009,7 +1963,6 @@ def render_image_grid():
     if st.session_state.grid_page >= total_pages:
         st.session_state.grid_page = 0
 
-    # ── Pagination controls only (batch controls are now inside the iframe) ───
     pg_cols = st.columns([1, 2, 1])
     with pg_cols[0]:
         if st.button("◀ Prev", use_container_width=True,
@@ -2031,7 +1984,6 @@ def render_image_grid():
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
 
-    # ── Image quality checks ──────────────────────────────────────────────────
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start : page_start + ipp]
 
@@ -2063,7 +2015,41 @@ def render_image_grid():
         rejected_state,
         cols_per_row,
     )
-    components.html(grid_html, height=1400, scrolling=True)
+    
+    # ── NATIVE STREAMLIT CLOUD BRIDGE COMPONENT CALL ───
+    _msg = grid_component(
+        html_content=grid_html, 
+        height=1400, 
+        key=f"grid_comp_{st.session_state.grid_page}_{st.session_state.main_bridge_counter}"
+    )
+
+    if _msg and isinstance(_msg, dict) and _msg.get("action") == "reject":
+        _payload = _msg.get("payload", {})
+        if _payload:
+            _rgroups = {}
+            for _sid, _rkey in _payload.items():
+                _rgroups.setdefault(_rkey, []).append(_sid)
+                
+            _total = 0
+            for _rkey, _sids in _rgroups.items():
+                _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
+                _code, _cmt = support_files["flags_mapping"].get(_flag, ("1000007 - Other Reason", "Manual rejection"))
+                
+                st.session_state.final_report.loc[
+                    st.session_state.final_report["ProductSetSid"].isin(_sids),
+                    ["Status", "Reason", "Comment", "FLAG"]
+                ] = ["Rejected", _code, _cmt, _flag]
+                
+                for _s in _sids:
+                    st.session_state[f"quick_rej_{_s}"] = True
+                    st.session_state[f"quick_rej_reason_{_s}"] = _flag
+                _total += len(_sids)
+                
+            st.session_state.exports_cache.clear()
+            st.session_state.display_df_cache.clear()
+            st.session_state.main_toasts.append((f"Rejected {_total} product(s)", "✅"))
+            st.session_state.main_bridge_counter += 1
+            st.rerun()
 
     if st.session_state.get("do_scroll_top", False):
         components.html(
