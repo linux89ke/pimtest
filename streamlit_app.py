@@ -1315,16 +1315,16 @@ def build_fast_grid_html(
   .ctrl-bar{{
     position: -webkit-sticky;
     position: sticky;
-    top: 8px;
-    z-index: 9999;
+    top: 8px; /* Sticks with an 8px margin from the absolute top */
+    z-index: 9999; /* Ensures it stays above all images */
     display:flex;align-items:center;gap:8px;flex-wrap:wrap;
     padding:8px 12px;
-    background: rgba(255, 255, 255, 0.90);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.90); /* Slightly transparent */
+    backdrop-filter: blur(10px); /* Glassy blur effect */
     -webkit-backdrop-filter: blur(10px);
     border:1px solid rgba(224, 224, 224, 0.8);
     border-radius:8px;margin-bottom:12px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15); /* Stronger shadow to pop out */
   }}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{
@@ -1485,7 +1485,10 @@ function sendMsg(type, payload) {{
     if (!bridge) {{ console.warn('jtbridge not found'); return; }}
     
     var msg = JSON.stringify({{action: type, payload: payload}});
-    bridge.focus();
+    
+    // FIX: Prevent parent window from violently jumping up to the hidden input!
+    bridge.focus({{ preventScroll: true }});
+    
     Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     
@@ -1650,6 +1653,17 @@ window.doDeselAll = function() {{
   renderAll();
   updateSelCount();
 }}
+
+// REMEMBER IFRAME SCROLL POSITION BETWEEN RELOADS
+window.addEventListener("beforeunload", function() {
+    sessionStorage.setItem("gridScrollPos", window.scrollY);
+});
+window.addEventListener("load", function() {
+    var pos = sessionStorage.getItem("gridScrollPos");
+    if (pos) {
+        setTimeout(function() { window.scrollTo(0, parseInt(pos)); }, 20);
+    }
+});
 
 renderAll();
 </script>
@@ -1937,6 +1951,7 @@ if st.session_state.get('last_processed_files') != process_signature:
             st.code(traceback.format_exc())
             st.session_state.last_processed_files = "error"
 
+# --- HIDDEN TEXT INPUT BRIDGE ---
 _bridge_val = st.text_input(
     "jtbridge", value="",
     placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE",
@@ -2096,7 +2111,7 @@ def render_image_grid():
     if st.session_state.grid_page >= total_pages:
         st.session_state.grid_page = 0
 
-    # --- ADVANCED PAGINATION ---
+    # --- ADVANCED PAGINATION WITH JUMP ---
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center")
     with pg_cols[0]:
         if st.button("◀ Prev Page", use_container_width=True, disabled=st.session_state.grid_page == 0):
@@ -2126,7 +2141,7 @@ def render_image_grid():
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start : page_start + ipp]
     
-    # Identify next page to pre-fetch images in the background
+    # Pre-fetch target for background loader
     next_page_start = (st.session_state.grid_page + 1) * ipp
     if next_page_start < len(review_data):
         next_page_data = review_data.iloc[next_page_start : next_page_start + ipp]
