@@ -1425,24 +1425,40 @@ function sendMsg(type, payload) {{
     var doc = par.document;
     var inputs = doc.querySelectorAll('input[type="text"]');
     var bridge = null;
+    
     for (var i = 0; i < inputs.length; i++) {{
       if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
         bridge = inputs[i]; break;
       }}
     }}
     if (!bridge) {{ console.warn('jtbridge not found'); return; }}
+    
     var msg = JSON.stringify({{action: type, payload: payload}});
-    // Must use parent's own prototype — the grid iframe has a different one
+    
+    // Step 1: set value using parent's own prototype — the grid iframe has a different one
     Object.getOwnPropertyDescriptor(
       par.HTMLInputElement.prototype, 'value'
     ).set.call(bridge, msg);
-    // React onChange fires on 'input' event
+    
+    // Step 2: tell React the value changed
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    // Streamlit only submits on Enter — this is the part that was missing
-    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
-      bubbles: true, cancelable: true,
-      key: 'Enter', code: 'Enter', keyCode: 13, which: 13
-    }}));
+    
+    // Step 3: Wait for React to process, THEN submit
+    // 80ms gives React enough time to batch update its state before we force the Streamlit re-run
+    setTimeout(function() {{
+      // Try blur first, as it is often more reliable for text inputs in Streamlit
+      bridge.dispatchEvent(new par.FocusEvent('blur', {{bubbles: true}}));
+      
+      // If you find `blur` still doesn't consistently trigger the backend, 
+      // you can swap it for the Enter keydown below:
+      /*
+      bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
+        bubbles: true, cancelable: true,
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13
+      }}));
+      */
+    }}, 80);
+    
   }} catch(ex) {{
     console.error('jtbridge sendMsg error:', ex);
   }}
