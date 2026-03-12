@@ -1,9 +1,4 @@
 
-
-
-Here is the complete, updated code file with the fix applied. The JavaScript bridge is now robust against label modifications, the backend supports `toast` messages via `postMessage`, and the batch rejection logic is delegated entirely to the frontend to ensure 100% synchronization.
-
-```python
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
