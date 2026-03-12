@@ -1,11 +1,3 @@
-
-
-
-Here is the complete, unbroken, and fully updated code in a single block. You can copy and paste this directly into your `app.py` file. 
-
-It includes the **invisible submit button fix** that guarantees Streamlit instantly registers the batch rejection exactly when you click the button in the JavaScript grid.
-
-```python
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -2082,4 +2074,3 @@ def render_exports_section():
 # ==========================================
 render_image_grid()
 render_exports_section()
-```
