@@ -95,7 +95,6 @@ def format_local_price(usd_price, country: str) -> str:
 
 SPLIT_LIMIT = 9998
 
-# --- IMAGE COLUMNS EXPANDED FIX ---
 NEW_FILE_MAPPING = {
     'cod_productset_sid': 'PRODUCT_SET_SID',
     "2qz3wx4ec5rv6b7hnj8kl;'[]": 'PRODUCT_SET_SID',
@@ -156,16 +155,7 @@ if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
 if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
-
 if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
-
-# Session state counters for dynamic keys
-if 'desel_counter' not in st.session_state: st.session_state.desel_counter = 0
-if 'batch_counter' not in st.session_state: st.session_state.batch_counter = 0  
-if 'clear_counter' not in st.session_state: st.session_state.clear_counter = 0
-if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_flag = False
-
-if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
@@ -666,7 +656,7 @@ def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     for col in ['ACTIVE_STATUS_COUNTRY', 'CATEGORY_CODE', 'BRAND', 'TAX_CLASS', 'NAME', 'SELLER_NAME']:
         if col in df.columns: df[col] = df[col].astype(str)
         
-    # --- ENSURE MAIN_IMAGE PERSISTS ---
+    # Force column to exist
     if 'MAIN_IMAGE' not in df.columns:
         df['MAIN_IMAGE'] = ''
         
@@ -1274,11 +1264,6 @@ def build_fast_grid_html(
     page_warnings,
     rejected_state,
     cols_per_row,
-    # kept for API compat — no longer used
-    cmd="",
-    cmd_reason="",
-    clear_selection=False,
-    saved_selected=None,
 ):
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
@@ -1291,10 +1276,9 @@ def build_fast_grid_html(
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
         
-        # --- FIX 1: HTTP TO HTTPS UPGRADE TO PREVENT CLOUD BLOCKING ---
+        # --- HTTP TO HTTPS UPGRADE ---
         if img_url.startswith("http://"):
             img_url = img_url.replace("http://", "https://")
-            
         if not img_url.startswith("http"):
             img_url = "https://via.placeholder.com/150?text=No+Image"
             
@@ -1348,32 +1332,52 @@ def build_fast_grid_html(
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;
          position:relative;transition:border-color .15s,box-shadow .15s;}}
-  .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);
-                  background:rgba(76,175,80,.04);}}
-  .card.committed-rej{{border-color:#bbb;opacity:.5;}}
+         
+  /* Selected for general batch (Green) */
+  .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2); background:rgba(76,175,80,.04);}}
+  
+  /* Selected via individual button (Red/Staged) */
+  .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2); background:rgba(231,60,23,.04);}}
+  
+  /* Already committed to Python (Grey) */
+  .card.committed-rej{{border-color:#bbb;opacity:.6;}}
+  
   .card-img-wrap{{position:relative;cursor:pointer;}}
   .card-img{{width:100%;aspect-ratio:1;object-fit:contain;border-radius:6px;display:block;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
+  
   .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;
          background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;
          color:transparent;font-size:13px;font-weight:900;pointer-events:none;}}
   .card.selected .tick{{background:{G};color:#fff;}}
+  .card.staged-rej .tick{{background:{R};color:#fff;}}
+  
   .warn-wrap{{position:absolute;top:6px;right:6px;display:flex;flex-direction:column;gap:3px;
               z-index:5;pointer-events:none;}}
   .warn-badge{{background:rgba(255,193,7,.95);color:#313133;font-size:9px;font-weight:800;
                padding:3px 7px;border-radius:10px;}}
-  .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.88);
+               
+  .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);
                 border-radius:6px;flex-direction:column;align-items:center;
                 justify-content:center;z-index:20;gap:5px;padding:8px;text-align:center;}}
   .card.committed-rej .rej-overlay{{display:flex;}}
-  .rej-badge{{background:{R};color:#fff;padding:3px 10px;border-radius:10px;
-              font-size:11px;font-weight:700;}}
+  .card.staged-rej .rej-overlay.staged{{display:flex;}}
+  
+  .rej-badge{{background:{R};color:#fff;padding:3px 10px;border-radius:10px; font-size:11px;font-weight:700;}}
+  .rej-badge.pending{{background:{O};}}
+  
   .rej-label{{font-size:10px;color:{R};font-weight:600;max-width:120px;}}
+  
+  /* UNDO BUTTON */
+  .undo-btn{{margin-top:8px; padding:6px 12px; background:#313133; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);}}
+  .undo-btn:hover{{background:#000;}}
+
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;}}
+  
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;
             font-weight:700;color:#fff;background:{O};}}
@@ -1402,22 +1406,58 @@ def build_fast_grid_html(
 <div class="grid" id="card-grid"></div>
 
 <script>
-// --- FIX 2: var PREVENTS CHROME RE-DECLARATION CRASHES ---
+function escapeHtml(unsafe) {{
+    return (unsafe || "").toString()
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+}}
+
 var CARDS     = {cards_json};
 var COMMITTED = {committed_json};
 
-// Selection lives ONLY in JS — no async bridge needed
+// KEEP STATE ALIVE ACROSS RE-RENDERS
 window._gridSelected = window._gridSelected || {{}};
+window._stagedRejections = window._stagedRejections || {{}};
 var selected = window._gridSelected;
+var staged = window._stagedRejections;
 
-// ── postMessage helper ────────────────────────────────────────────────────────
+// ── NAVIGATION / DOWNLOAD INTERCEPTOR ──
+if (window.parent) {{
+    window.parent._jtClickListener = function(e) {{
+        let btn = e.target.closest('button');
+        if (!btn) return;
+        let txt = btn.innerText;
+        if (txt.includes('Next ▶') || txt.includes('◀ Prev') || txt.includes('Generate') || txt.includes('Download')) {{
+            let selCount = Object.keys(window._gridSelected).length;
+            let stagedCount = Object.keys(window._stagedRejections).length;
+            let total = selCount + stagedCount;
+            
+            if (total > 0) {{
+                let msg = "Wait! You have " + total + " products selected but NOT rejected yet.\\n\\nClick 'Cancel' to stay on this page and hit 'Batch Reject Selected'.\\n\\nClick 'OK' to ignore them and proceed anyway.";
+                if (!confirm(msg)) {{
+                    e.preventDefault();
+                    e.stopPropagation();
+                }} else {{
+                    // User chose to proceed and lose work, clear the dicts
+                    for(let k in window._gridSelected) delete window._gridSelected[k];
+                    for(let k in window._stagedRejections) delete window._stagedRejections[k];
+                }}
+            }}
+        }}
+    }};
+    window.parent.document.removeEventListener('click', window.parent._jtClickListener, true);
+    window.parent.document.addEventListener('click', window.parent._jtClickListener, true);
+}}
+
 // ── postMessage helper ────────────────────────────────────────────────────────
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
     var inputs = par.document.querySelectorAll('input[type="text"]');
     var bridge = null;
-    
     for (var i = 0; i < inputs.length; i++) {{
       if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
         bridge = inputs[i]; break;
@@ -1426,90 +1466,89 @@ function sendMsg(type, payload) {{
     if (!bridge) {{ console.warn('jtbridge not found'); return; }}
     
     var msg = JSON.stringify({{action: type, payload: payload}});
-    
-    // FIX 1: Focus the hidden input FIRST so Streamlit registers the interaction
     bridge.focus();
-    
-    // Step 1: set value using parent's own prototype
-    Object.getOwnPropertyDescriptor(
-      par.HTMLInputElement.prototype, 'value'
-    ).set.call(bridge, msg);
-    
-    // Step 2: tell React the value changed
+    Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     
-    // FIX 2: Wait 150ms, then natively un-focus (blur) the input. 
-    // This forces Streamlit to automatically submit the form to Python!
     setTimeout(function() {{
-      bridge.blur();
-      
-      // Fallback Enter key just in case
-      bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{
-        bubbles: true, cancelable: true,
-        key: 'Enter', code: 'Enter', keyCode: 13, which: 13
-      }}));
+        bridge.blur();
+        bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles: true, cancelable: true, key: 'Enter', keyCode: 13}}));
     }}, 150);
-    
-  }} catch(ex) {{
-    console.error('jtbridge sendMsg error:', ex);
-  }}
+  }} catch(ex) {{ console.error('jtbridge sendMsg error:', ex); }}
 }}
+
 // ── UI helpers ────────────────────────────────────────────────────────────────
 function updateSelCount() {{
-  const n = Object.keys(selected).length;
-  document.getElementById('sel-count-bar').textContent = n + ' selected';
+  const n = Object.keys(selected).length + Object.keys(staged).length;
+  document.getElementById('sel-count-bar').textContent = n + ' items pending reject';
 }}
 
 // ── Card rendering ────────────────────────────────────────────────────────────
 function renderCard(card) {{
-  const {{sid, img, name, brand, cat, seller, warnings}} = card;
+  const sid = card.sid;
+  const img = escapeHtml(card.img);
   const isCommitted = sid in COMMITTED;
-  const isSelected  = !isCommitted && (sid in selected);
+  const isStaged = sid in staged;
+  const isSelected = !isCommitted && !isStaged && (sid in selected);
 
   let cls = 'card';
   if (isCommitted)     cls += ' committed-rej';
+  else if (isStaged)   cls += ' staged-rej';
   else if (isSelected) cls += ' selected';
 
-  const shortName = name.length > 38 ? name.slice(0,38)+'…' : name;
-  const warnHtml  = warnings.map(w => `<span class="warn-badge">${{w}}</span>`).join('');
-  const rejLabel  = isCommitted ? (COMMITTED[sid]||'').replace(/_/g,' ') : '';
+  const shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38))+'…' : escapeHtml(card.name);
+  const warnHtml  = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
+  
+  let overlayHtml = '';
+  let actHtml = '';
 
-  const rejOverlay = isCommitted ? `
-    <div class="rej-overlay">
-      <div class="rej-badge">REJECTED</div>
-      <div class="rej-label">${{rejLabel}}</div>
-    </div>` : '';
-
-  const actHtml = !isCommitted ? `
-    <div class="acts">
-      <button class="act-btn"
-        onclick="event.stopPropagation();quickReject('${{sid}}','REJECT_POOR_IMAGE')">
-        Poor Img
-      </button>
-      <select class="act-more"
-        onchange="if(this.value){{event.stopPropagation();quickReject('${{sid}}',this.value);this.value=''}}">
-        <option value="">More…</option>
-        <option value="REJECT_WRONG_CAT">Wrong Category</option>
-        <option value="REJECT_FAKE">Fake Product</option>
-        <option value="REJECT_BRAND">Restricted Brand</option>
-        <option value="REJECT_PROHIBITED">Prohibited</option>
-        <option value="REJECT_COLOR">Wrong Color</option>
-        <option value="REJECT_WRONG_BRAND">Wrong Brand</option>
-      </select>
-    </div>` : '';
+  if (isCommitted) {{
+      const rejLabel = escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '));
+      overlayHtml = `
+        <div class="rej-overlay">
+          <div class="rej-badge">REJECTED</div>
+          <div class="rej-label">${{rejLabel}}</div>
+          <button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{sid}}')">↺ Undo Reject</button>
+        </div>`;
+  }} else if (isStaged) {{
+      const stagedLabel = escapeHtml((staged[sid]||'').replace(/_/g,' '));
+      overlayHtml = `
+        <div class="rej-overlay staged">
+          <div class="rej-badge pending">PENDING</div>
+          <div class="rej-label">${{stagedLabel}}</div>
+          <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{sid}}')">✖ Clear Selection</button>
+        </div>`;
+  }} else {{
+      actHtml = `
+        <div class="acts">
+          <button class="act-btn"
+            onclick="event.stopPropagation();window.stageReject('${{sid}}','REJECT_POOR_IMAGE')">
+            Poor Img
+          </button>
+          <select class="act-more"
+            onchange="if(this.value){{event.stopPropagation();window.stageReject('${{sid}}',this.value);this.value=''}}">
+            <option value="">More…</option>
+            <option value="REJECT_WRONG_CAT">Wrong Category</option>
+            <option value="REJECT_FAKE">Fake Product</option>
+            <option value="REJECT_BRAND">Restricted Brand</option>
+            <option value="REJECT_PROHIBITED">Prohibited</option>
+            <option value="REJECT_COLOR">Wrong Color</option>
+            <option value="REJECT_WRONG_BRAND">Wrong Brand</option>
+          </select>
+        </div>`;
+  }}
 
   return `<div class="${{cls}}" id="card-${{sid}}">
-    <div class="card-img-wrap" onclick="toggleSelect('${{sid}}')">
+    <div class="card-img-wrap" onclick="window.toggleSelect('${{sid}}')">
       <div class="warn-wrap">${{warnHtml}}</div>
-      <img class="card-img" src="${{img}}" loading="lazy"
-           onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
-      ${{rejOverlay}}<div class="tick">✓</div>
+      <img class="card-img" src="${{img}}" loading="lazy" onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
+      ${{overlayHtml}}<div class="tick">✓</div>
     </div>
     <div class="meta">
-      <div class="nm" title="${{name}}">${{shortName}}</div>
-      <div class="br">${{brand}}</div>
-      <div class="ct">${{cat}}</div>
-      <div class="sl">${{seller}}</div>
+      <div class="nm" title="${{escapeHtml(card.name)}}">${{shortName}}</div>
+      <div class="br">${{escapeHtml(card.brand)}}</div>
+      <div class="ct">${{escapeHtml(card.cat)}}</div>
+      <div class="sl">${{escapeHtml(card.seller)}}</div>
     </div>${{actHtml}}</div>`;
 }}
 
@@ -1526,43 +1565,68 @@ function replaceCard(sid) {{
 }}
 
 // ── Actions ───────────────────────────────────────────────────────────────────
-function toggleSelect(sid) {{
+window.toggleSelect = function(sid) {{
   if (sid in COMMITTED) return;
+  if (sid in staged) {{ delete staged[sid]; }}
+  else if (sid in selected) {{ delete selected[sid]; }}
+  else {{ selected[sid] = true; }}
+  replaceCard(sid);
+  updateSelCount();
+}}
+
+window.stageReject = function(sid, reasonKey) {{
   if (sid in selected) delete selected[sid];
-  else selected[sid] = true;
+  staged[sid] = reasonKey;
   replaceCard(sid);
   updateSelCount();
 }}
 
-function quickReject(sid, reasonKey) {{
-  delete selected[sid];
-  COMMITTED[sid] = reasonKey;
-  sendMsg('reject', {{[sid]: reasonKey}});
+window.clearStaged = function(sid) {{
+  delete staged[sid];
   replaceCard(sid);
   updateSelCount();
 }}
 
-function doBatchReject() {{
-  const toReject = Object.keys(selected);
-  if (toReject.length === 0) {{ alert('No products selected.'); return; }}
-  const reasonKey = document.getElementById('batch-reason').value;
+window.undoReject = function(sid) {{
+  sendMsg('undo', {{[sid]: true}});
+  delete COMMITTED[sid];
+  replaceCard(sid);
+  updateSelCount();
+}}
+
+window.doBatchReject = function() {{
+  const batchReason = document.getElementById('batch-reason').value;
   const payload   = {{}};
-  toReject.forEach(sid => {{
-    payload[sid]    = reasonKey;
-    COMMITTED[sid]  = reasonKey;
-    delete selected[sid];
-  }});
+  let count = 0;
   
-  // --- FIX 4: SEND MSG CALL INSIDE BATCH REJECT ---
+  // Add red staged items with their specific reason
+  for (let sid in staged) {{
+      payload[sid] = staged[sid];
+      count++;
+  }}
+  // Add green selected items with general batch reason
+  for (let sid in selected) {{
+      payload[sid] = batchReason;
+      count++;
+  }}
+  
+  if (count === 0) {{ alert('No products selected or staged for rejection.'); return; }}
+  
+  // Optimistic UI updates
+  for (let sid in payload) {{
+      COMMITTED[sid] = payload[sid];
+      delete selected[sid];
+      delete staged[sid];
+  }}
+  
   sendMsg('reject', payload);
-  
-  renderAll();   // re-render all cards to show committed state
+  renderAll();
   updateSelCount();
 }}
 
-function doDeselAll() {{
-  // Keep the reference alive, just delete keys
-  for (const k in selected) delete selected[k];
+window.doDeselAll = function() {{
+  for(let k in selected) delete selected[k];
+  for(let k in staged) delete staged[k];
   renderAll();
   updateSelCount();
 }}
@@ -1763,7 +1827,6 @@ if st.session_state.get('last_processed_files') != process_signature:
     
     if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
 
-    # Reset all JS-bridge counters on new file load
     st.session_state.desel_counter = 0
     st.session_state.batch_counter = 0
     st.session_state.clear_counter = 0
@@ -1887,6 +1950,19 @@ if _bridge_val:
                 st.session_state.main_toasts.append((f"Rejected {_total} product(s)", "✅"))
                 st.session_state.main_bridge_counter += 1
                 st.rerun()
+                
+        # --- NEW: UNDO ACTION CAPTURE ---
+        elif _msg.get("action") == "undo":
+            _payload = _msg.get("payload", {})
+            _total_restored = 0
+            if isinstance(_payload, dict):
+                for _sid in _payload.keys():
+                    restore_single_item(_sid)
+                    _total_restored += 1
+            if _total_restored > 0:
+                st.session_state.main_bridge_counter += 1
+                st.rerun()
+                
     except Exception as _e:
         logger.error(f"Bridge parse error: {_e}")
 
@@ -2040,7 +2116,6 @@ def render_image_grid():
         cols_per_row,
     )
     
-    # Render using the original iframe structure
     components.html(grid_html, height=1400, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
