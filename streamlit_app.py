@@ -1361,7 +1361,6 @@ def build_fast_grid_html(
         if not img_url.startswith("http"):
             img_url = "https://via.placeholder.com/150?text=No+Image"
             
-        # Get Price
         sale_p = row.get("GLOBAL_SALE_PRICE")
         reg_p = row.get("GLOBAL_PRICE")
         usd_val = sale_p if pd.notna(sale_p) and str(sale_p).strip() != "" else reg_p
@@ -1387,7 +1386,6 @@ def build_fast_grid_html(
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
   body{{background:#f5f5f5;padding:8px;}}
 
-  /* ── STICKY CONTROL BAR ── */
   .ctrl-bar{{
     position: -webkit-sticky;
     position: sticky;
@@ -1410,19 +1408,37 @@ def build_fast_grid_html(
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;white-space:nowrap;}}
   .desel-btn:hover{{background:#f5f5f5;}}
 
-  /* ── GRID & CARDS ── */
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;}}
   .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2); background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2); background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
   
-  .card-img-wrap{{position:relative;cursor:pointer; overflow:hidden; border-radius:6px;}}
-  .card-img{{width:100%;aspect-ratio:1;object-fit:contain;border-radius:6px;display:block; transition: transform 0.25s ease-in-out;}}
+  .card-img-wrap{{position:relative;cursor:pointer; overflow:hidden; border-radius:6px; background:#fff; display:flex; align-items:center; justify-content:center; height: 130px;}}
+  .card-img{{width:100%; height:130px; object-fit:contain; border-radius:6px; display:block;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
-  .card-img-wrap:hover .card-img {{ transform: scale(1.15); }}
   
-  .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;}}
+  /* LENS ZOOM BUTTON */
+  .zoom-btn {{
+      position: absolute;
+      bottom: 6px;
+      left: 6px;
+      width: 24px;
+      height: 24px;
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      z-index: 15;
+      font-size: 13px;
+      transition: transform 0.1s, background 0.1s;
+  }}
+  .zoom-btn:hover {{ transform: scale(1.15); background: #fff; }}
+  
+  .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none; z-index:10;}}
   .card.selected .tick{{background:{G};color:#fff;}}
   .card.staged-rej .tick{{background:{R};color:#fff;}}
   
@@ -1471,6 +1487,10 @@ def build_fast_grid_html(
 </div>
 
 <div class="grid" id="card-grid"></div>
+
+<div id="img-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:999999; align-items:center; justify-content:center; cursor:pointer;" onclick="this.style.display='none'">
+    <img id="img-modal-target" src="" style="max-width:90%; max-height:90%; object-fit:contain; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
+</div>
 
 <script>
 function escapeHtml(unsafe) {{
@@ -1579,6 +1599,11 @@ function updateSelCount() {{
   document.getElementById('sel-count-bar').textContent = n + ' items pending';
 }}
 
+window.zoomImg = function(url) {{
+    document.getElementById('img-modal-target').src = url;
+    document.getElementById('img-modal').style.display = 'flex';
+}}
+
 function renderCard(card) {{
   const sid = card.sid;
   const img = escapeHtml(card.img);
@@ -1594,6 +1619,7 @@ function renderCard(card) {{
   const shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38))+'…' : escapeHtml(card.name);
   const warnHtml  = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   const priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
+  const zoomHtml  = `<div class="zoom-btn" onclick="event.stopPropagation(); window.zoomImg('${{img}}')" title="Zoom Image">🔍</div>`;
   
   let overlayHtml = '';
   let actHtml = '';
@@ -1638,7 +1664,8 @@ function renderCard(card) {{
     <div class="card-img-wrap" onclick="window.toggleSelect('${{sid}}')">
       ${{priceHtml}}
       <div class="warn-wrap">${{warnHtml}}</div>
-      <img class="card-img" src="${{img}}" loading="lazy" onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
+      <img class="card-img" src="${{img}}" onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
+      ${{zoomHtml}}
       ${{overlayHtml}}<div class="tick">✓</div>
     </div>
     <div class="meta">
@@ -1704,18 +1731,18 @@ window.doBatchReject = function() {{
   const batchReason = document.getElementById('batch-reason').value;
   const payload   = {{}};
   let count = 0;
-  
+
   for (let sid in staged) {{ payload[sid] = staged[sid]; count++; }}
   for (let sid in selected) {{ payload[sid] = batchReason; count++; }}
-  
+
   if (count === 0) {{ alert('No products selected or staged for rejection.'); return; }}
-  
+
   for (let sid in payload) {{
       COMMITTED[sid] = payload[sid];
       delete selected[sid];
       delete staged[sid];
   }}
-  
+
   sendMsg('reject', payload);
   renderAll();
   updateSelCount();
@@ -1935,6 +1962,8 @@ if st.session_state.get('last_processed_files') != process_signature:
     st.session_state.clear_counter = 0
     st.session_state.ls_processed_flag = False
     st.session_state.ls_read_trigger = 0
+    st.session_state.search_active = False
+    st.session_state.pre_search_page = 0
 
     keys_to_delete = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_"))]
     for k in keys_to_delete: del st.session_state[k]
@@ -2161,6 +2190,7 @@ def render_image_grid():
         data[available_cols],
         left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
     )
+    
     if search_n:
         review_data = review_data[
             review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)
