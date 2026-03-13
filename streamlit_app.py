@@ -201,8 +201,18 @@ except: pass
 st_yled.init()
 
 # --- GLOBAL CSS ---
+# Dynamic CSS Injection for Arabic (RTL support in text areas)
+rtl_css = """
+        div[data-testid="stTextArea"] textarea, div[data-testid="stTextInput"] input {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+""" if st.session_state.ui_lang == "ar" else ""
+
 st.markdown(f"""
     <style>
+        {rtl_css}
+        
         /* ── HIDE THE BRIDGE INPUT COMPLETELY ── */
         div[data-testid="stTextInput"]:has(input[placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE"]) {{
             position: absolute !important;
@@ -592,9 +602,12 @@ def load_suspected_fake_from_local() -> pd.DataFrame:
     except Exception: pass
     return pd.DataFrame()
 
+# -------------------------------------------------
+# LOAD FLAGS MAPPING (WITH MULTI-LINGUAL SUPPORT)
+# -------------------------------------------------
 @st.cache_data(ttl=3600)
-def load_flags_mapping(filename="reason.xlsx") -> Dict[str, Tuple[str, str]]:
-    default_mapping = {
+def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
+    raw_default = {
         'Restricted brands': ('1000024 - Product does not have a license to be sold via Jumia (Not Authorized)', "Missing license for this item. Raise a claim via Vendor Center."),
         'Suspected Fake product': ('1000023 - Confirmation of counterfeit product by Jumia technical team (Not Authorized)', "Product confirmed counterfeit."),
         'Seller Not approved to sell Refurb': ('1000028 - Kindly Contact Jumia Seller Support To Confirm Possibility Of Sale Of This Product By Raising A Claim', "Contact Seller Support for Refurbished approval."),
@@ -612,12 +625,17 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, Tuple[str, str]]:
         'Generic branded products with genuine brands': ('1000007 - Other Reason', "Use the displayed brand on the product instead of Generic."),
         'Missing COLOR': ('1000005 - Kindly confirm the actual product colour', "Product color must be mentioned in title/color tab."),
         'Duplicate product': ('1000007 - Other Reason', "This product is a duplicate."),
-        'Wrong Variation': ('1000039 - Product Poorly Created. Each Variation Of This Product Should Be Created Uniquely (Not Authorized) (Not Authorized)', "Create different SKUs instead of variations (variations only for sizes)."),
+        'Wrong Variation': ('1000039 - Product Poorly Created. Each Variation Of This Product Should Be Created Uniquely (Not Authorized)', "Create different SKUs instead of variations (variations only for sizes)."),
         'Missing Weight/Volume': ('1000008 - Kindly Improve Product Name Description', "Include weight or volume (e.g., '1kg', '500ml')."),
         'Incomplete Smartphone Name': ('1000008 - Kindly Improve Product Name Description', "Include memory/storage details (e.g., '128GB')."),
         'Wrong Category': ('1000004 - Wrong Category', "Assigned to Wrong Category. Please use correct category."),
         'Poor images': ('1000042 - Kindly follow our product image upload guideline.', "Poor Image Quality")
     }
+    
+    default_mapping = {}
+    for k, v in raw_default.items():
+        default_mapping[k] = {'reason': v[0], 'en': v[1], 'fr': v[1], 'ar': v[1]}
+        
     try:
         if os.path.exists(filename):
             df = pd.read_excel(filename, engine='openpyxl', dtype=str)
@@ -627,10 +645,27 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, Tuple[str, str]]:
                 for _, row in df.iterrows():
                     flag = str(row['flag']).strip()
                     reason = str(row['reason']).strip()
-                    comment = str(row['comment']).strip()
-                    if flag and flag.lower() != 'nan': custom_mapping[flag] = (reason, comment)
-                if custom_mapping: return custom_mapping
-    except Exception: pass
+                    comment_en = str(row['comment']).strip()
+                    
+                    # Fetch French/Arabic from Excel, fallback to English if blank
+                    comment_fr = str(row['french']).strip() if 'french' in df.columns else comment_en
+                    comment_ar = str(row['arabic']).strip() if 'arabic' in df.columns else comment_en
+                    
+                    if comment_fr.lower() == 'nan' or not comment_fr: comment_fr = comment_en
+                    if comment_ar.lower() == 'nan' or not comment_ar: comment_ar = comment_en
+                    
+                    if flag and flag.lower() != 'nan':
+                        custom_mapping[flag] = {
+                            'reason': reason,
+                            'en': comment_en,
+                            'fr': comment_fr,
+                            'ar': comment_ar
+                        }
+                if custom_mapping: 
+                    return custom_mapping
+    except Exception: 
+        pass
+        
     return default_mapping
 
 @st.cache_data(ttl=3600)
@@ -1195,6 +1230,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             future_to_name = {}
             for i, (name, func, kwargs) in enumerate(validations):
+                # Honor the skip_validators list passed from the expander approval
                 if skip_validators and name in skip_validators: continue
                 if country_validator.should_skip_validation(name): continue
                 
@@ -1237,24 +1273,35 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         for fname, keys in restricted_keys.items():
             extra = data[data['match_key'].isin(keys)].copy()
             results[fname] = pd.concat([results.get(fname, pd.DataFrame()), extra]).drop_duplicates(subset=['PRODUCT_SET_SID'])
+    
+    # DETERMINE TARGET LANGUAGE FOR FINAL EXPORT COMMENT
+    target_lang = 'fr' if country_validator.country == "Morocco" else 'en'
+    
     rows = []
     processed = set()
     for name, _, _ in validations:
         if name not in results or results[name].empty or 'PRODUCT_SET_SID' not in results[name].columns: continue
         res = results[name]
-        rinfo = flags_mapping.get(name, ("1000007 - Other Reason", f"Flagged by {name}"))
+        
+        # Pull correct translation dictionary
+        rinfo = flags_mapping.get(name, {'reason': "1000007 - Other Reason", 'en': f"Flagged by {name}", 'fr': f"Flagged by {name}", 'ar': f"Flagged by {name}"})
+        base_comment = rinfo.get(target_lang, rinfo.get('en'))
+        
         res['PRODUCT_SET_SID'] = res['PRODUCT_SET_SID'].astype(str).str.strip()
         flagged = pd.merge(res[['PRODUCT_SET_SID', 'Comment_Detail']] if 'Comment_Detail' in res.columns else res[['PRODUCT_SET_SID']], data, on='PRODUCT_SET_SID', how='left')
+        
         if 'Comment_Detail' not in flagged.columns and 'Comment_Detail' in res.columns:
             if isinstance(res['Comment_Detail'], pd.DataFrame): flagged['Comment_Detail'] = res['Comment_Detail'].iloc[:, 0]
             else: flagged['Comment_Detail'] = res['Comment_Detail']
+            
         for _, r in flagged.iterrows():
             sid = str(r['PRODUCT_SET_SID']).strip()
             if sid in processed: continue
             processed.add(sid)
             det = r.get('Comment_Detail', '')
-            comment_str = f"{rinfo[1]} ({det})" if pd.notna(det) and det else rinfo[1]
-            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': rinfo[0], 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', '')})
+            comment_str = f"{base_comment} ({det})" if pd.notna(det) and det else base_comment
+            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': rinfo['reason'], 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', '')})
+            
     for _, r in data[~data['PRODUCT_SET_SID'].astype(str).str.strip().isin(processed)].iterrows():
         sid = str(r['PRODUCT_SET_SID']).strip()
         if sid not in processed:
@@ -1347,6 +1394,16 @@ def restore_single_item(sid):
     st.session_state.display_df_cache.clear()
     st.session_state.main_toasts.append("Restored item to previous state!")
 
+REASON_MAP = {
+    "REJECT_POOR_IMAGE": "Poor images",
+    "REJECT_WRONG_CAT": "Wrong Category",
+    "REJECT_FAKE": "Suspected Fake product",
+    "REJECT_BRAND": "Restricted brands",
+    "REJECT_PROHIBITED": "Prohibited products",
+    "REJECT_COLOR": "Missing COLOR",
+    "REJECT_WRONG_BRAND": "Generic branded products with genuine brands",
+    "OTHER_CUSTOM": "Other Reason (Custom)"
+}
 
 # -------------------------------------------------
 # HTML GRID BUILDER
@@ -1663,7 +1720,7 @@ function renderCard(card) {{
       const rejLabel = escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '));
       overlayHtml = `
         <div class="rej-overlay">
-          <div class="rej-badge">{_t('rejected').toUpperCase()}</div>
+          <div class="rej-badge">{_t('rejected').upper()}</div>
           <div class="rej-label">${{rejLabel}}</div>
           <button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{sid}}')">{_t('undo')}</button>
         </div>`;
@@ -1862,7 +1919,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     else: df_display = st.session_state.display_df_cache[cache_key]
 
     c1, c2 = st.columns([1, 1])
-    with c1: search_term = st.text_input("Search", placeholder="Name, Brand...", key=f"s_{title}")
+    with c1: search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", key=f"s_{title}")
     with c2: seller_filter = st.multiselect("Filter by Seller", sorted(df_display['SELLER_NAME'].astype(str).unique()), key=f"f_{title}")
 
     df_view = df_display.copy()
@@ -1930,7 +1987,12 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.rerun()
             else:
-                _rcode, _rcmt = _fm.get(chosen_reason, ('1000007 - Other Reason', chosen_reason))
+                _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
+                _rcode = _rinfo['reason']
+                
+                _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
+                _rcmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
+                
                 st.caption(f"Code: {_rcode[:40]}...")
                 if st.button("Apply", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
@@ -1992,13 +2054,11 @@ with st.sidebar:
 # ==========================================
 st.header(f":material/upload_file: {_t('upload_files')}", anchor=False)
 
-# Auto-Language Country Switching Logic
 current_country = st.session_state.get('selected_country', get_default_country())
 country_choice = st.segmented_control("Country", ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"], default=current_country)
 
 if country_choice and country_choice != current_country:
     st.session_state.selected_country = country_choice
-    # Auto-switch to French if Morocco is selected
     if country_choice == "Morocco":
         st.session_state.ui_lang = "fr"
     else:
@@ -2151,12 +2211,17 @@ if _bridge_val:
                 _total = 0
                 for _rkey, _sids in _rgroups.items():
                     _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
-                    _code, _cmt = support_files["flags_mapping"].get(
-                        _flag, ("1000007 - Other Reason", "Manual rejection"))
+                    _rinfo = support_files["flags_mapping"].get(_flag, {'reason': "1000007 - Other Reason", 'en': "Manual rejection"})
+                    
+                    _code = _rinfo['reason']
+                    _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
+                    _cmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
+                    
                     st.session_state.final_report.loc[
                         st.session_state.final_report["ProductSetSid"].isin(_sids),
                         ["Status", "Reason", "Comment", "FLAG"]
                     ] = ["Rejected", _code, _cmt, _flag]
+                    
                     for _s in _sids:
                         st.session_state[f"quick_rej_{_s}"]        = True
                         st.session_state[f"quick_rej_reason_{_s}"] = _flag
