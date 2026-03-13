@@ -21,6 +21,9 @@ import hashlib
 import requests
 from PIL import Image
 
+# IMPORT OUR NEW TRANSLATIONS FILE
+from translations import LANGUAGES, get_translation
+
 try:
     from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
 except ImportError:
@@ -162,6 +165,7 @@ logger = logging.getLogger(__name__)
 # INITIALIZATION & CONTEXT
 # -------------------------------------------------
 if 'layout_mode' not in st.session_state: st.session_state.layout_mode = "wide"
+if 'ui_lang' not in st.session_state: st.session_state.ui_lang = "en"
 if 'final_report' not in st.session_state: st.session_state.final_report = pd.DataFrame()
 if 'all_data_map' not in st.session_state: st.session_state.all_data_map = pd.DataFrame()
 if 'post_qc_summary' not in st.session_state: st.session_state.post_qc_summary = pd.DataFrame()
@@ -186,6 +190,10 @@ if 'batch_counter' not in st.session_state: st.session_state.batch_counter = 0
 if 'clear_counter' not in st.session_state: st.session_state.clear_counter = 0
 if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_flag = False
 if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
+
+# TRANSLATION HELPER FUNCTION
+def _t(key):
+    return get_translation(st.session_state.ui_lang, key)
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
 except: pass
@@ -1187,7 +1195,6 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             future_to_name = {}
             for i, (name, func, kwargs) in enumerate(validations):
-                # Honor the skip_validators list passed from the expander approval
                 if skip_validators and name in skip_validators: continue
                 if country_validator.should_skip_validation(name): continue
                 
@@ -1340,16 +1347,6 @@ def restore_single_item(sid):
     st.session_state.display_df_cache.clear()
     st.session_state.main_toasts.append("Restored item to previous state!")
 
-REASON_MAP = {
-    "REJECT_POOR_IMAGE": "Poor images",
-    "REJECT_WRONG_CAT": "Wrong Category",
-    "REJECT_FAKE": "Suspected Fake product",
-    "REJECT_BRAND": "Restricted brands",
-    "REJECT_PROHIBITED": "Prohibited products",
-    "REJECT_COLOR": "Missing COLOR",
-    "REJECT_WRONG_BRAND": "Generic branded products with genuine brands",
-    "OTHER_CUSTOM": "Other Reason (Custom)"
-}
 
 # -------------------------------------------------
 # HTML GRID BUILDER
@@ -1367,6 +1364,7 @@ def build_fast_grid_html(
     R = JUMIA_COLORS["jumia_red"]
 
     committed_json = json.dumps(rejected_state)
+    html_dir = "rtl" if st.session_state.ui_lang == "ar" else "ltr"
 
     cards_data = []
     for _, row in page_data.iterrows():
@@ -1396,7 +1394,7 @@ def build_fast_grid_html(
     cards_json = json.dumps(cards_data)
 
     return f"""<!DOCTYPE html>
-<html>
+<html dir="{html_dir}">
 <head>
 <meta charset="utf-8">
 <style>
@@ -1499,19 +1497,19 @@ def build_fast_grid_html(
 <body>
 
 <div class="ctrl-bar">
-  <span class="sel-count" id="sel-count-bar">0 selected</span>
+  <span class="sel-count" id="sel-count-bar">0 {_t("items_pending")}</span>
   <select class="reason-sel" id="batch-reason">
-    <option value="REJECT_POOR_IMAGE">Poor Image Quality</option>
-    <option value="REJECT_WRONG_CAT">Wrong Category</option>
-    <option value="REJECT_FAKE">Suspected Fake</option>
-    <option value="REJECT_BRAND">Restricted Brand</option>
-    <option value="REJECT_WRONG_BRAND">Wrong Brand</option>
-    <option value="REJECT_PROHIBITED">Prohibited Product</option>
-    <option value="REJECT_COLOR">Missing Color</option>
+    <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
+    <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
+    <option value="REJECT_FAKE">{_t("fake_prod")}</option>
+    <option value="REJECT_BRAND">{_t("restr_brand")}</option>
+    <option value="REJECT_WRONG_BRAND">{_t("wrong_brand")}</option>
+    <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
+    <option value="REJECT_COLOR">{_t("missing_color")}</option>
   </select>
-  <button class="batch-btn" onclick="doBatchReject()">✗ Batch Reject Selected</button>
-  <button class="desel-btn" onclick="window.doSelectAll()">☑ Select All</button>
-  <button class="desel-btn" onclick="doDeselAll()">☐ Deselect All</button>
+  <button class="batch-btn" onclick="doBatchReject()">{_t("batch_reject")}</button>
+  <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
+  <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
 </div>
 
 <div class="grid" id="card-grid"></div>
@@ -1582,7 +1580,7 @@ try {{
         window.parent.document.addEventListener('click', window.parent._jtClickListener, true);
     }}
 }} catch(e) {{
-    console.warn("Interceptor blocked by Streamlit Sandbox");
+    console.warn("Interceptor blocked");
 }}
 
 // ── postMessage BRIDGE ──
@@ -1620,7 +1618,7 @@ function sendMsg(type, payload) {{
 
 function updateSelCount() {{
   const n = Object.keys(selected).length + Object.keys(staged).length;
-  document.getElementById('sel-count-bar').textContent = n + ' items pending';
+  document.getElementById('sel-count-bar').textContent = n + ' {_t("items_pending")}';
 }}
 
 // ── LOCAL ZOOM LOGIC ──
@@ -1632,7 +1630,6 @@ window.toggleZoom = function(sid) {{
         img.classList.remove('locally-zoomed');
         if(img.closest('.card')) img.closest('.card').style.zIndex = '1';
     }} else {{
-        // Reset others
         document.querySelectorAll('.locally-zoomed').forEach(el => {{
             el.classList.remove('locally-zoomed');
             if (el.closest('.card')) el.closest('.card').style.zIndex = '1';
@@ -1657,7 +1654,7 @@ function renderCard(card) {{
   const shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38))+'…' : escapeHtml(card.name);
   const warnHtml  = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   const priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
-  const zoomHtml  = `<div class="zoom-btn" onclick="event.stopPropagation(); window.toggleZoom('${{sid}}')" title="Zoom Image">🔍</div>`;
+  const zoomHtml  = `<div class="zoom-btn" onclick="event.stopPropagation(); window.toggleZoom('${{sid}}')">🔍</div>`;
   
   let overlayHtml = '';
   let actHtml = '';
@@ -1666,9 +1663,9 @@ function renderCard(card) {{
       const rejLabel = escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '));
       overlayHtml = `
         <div class="rej-overlay">
-          <div class="rej-badge">REJECTED</div>
+          <div class="rej-badge">{_t('rejected').toUpperCase()}</div>
           <div class="rej-label">${{rejLabel}}</div>
-          <button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{sid}}')">↺ Undo Reject</button>
+          <button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{sid}}')">{_t('undo')}</button>
         </div>`;
   }} else if (isStaged) {{
       const stagedLabel = escapeHtml((staged[sid]||'').replace(/_/g,' '));
@@ -1676,24 +1673,24 @@ function renderCard(card) {{
         <div class="rej-overlay staged">
           <div class="rej-badge pending">PENDING</div>
           <div class="rej-label">${{stagedLabel}}</div>
-          <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{sid}}')">✖ Clear Selection</button>
+          <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{sid}}')">{_t('clear_sel')}</button>
         </div>`;
   }} else {{
       actHtml = `
         <div class="acts">
           <button class="act-btn"
             onclick="event.stopPropagation();window.stageReject('${{sid}}','REJECT_POOR_IMAGE')">
-            Poor Img
+            {_t('poor_img')}
           </button>
           <select class="act-more"
             onchange="if(this.value){{event.stopPropagation();window.stageReject('${{sid}}',this.value);this.value=''}}">
-            <option value="">More…</option>
-            <option value="REJECT_WRONG_CAT">Wrong Category</option>
-            <option value="REJECT_FAKE">Fake Product</option>
-            <option value="REJECT_BRAND">Restricted Brand</option>
-            <option value="REJECT_PROHIBITED">Prohibited</option>
-            <option value="REJECT_COLOR">Wrong Color</option>
-            <option value="REJECT_WRONG_BRAND">Wrong Brand</option>
+            <option value="">{_t('more_options')}</option>
+            <option value="REJECT_WRONG_CAT">{_t('wrong_cat')}</option>
+            <option value="REJECT_FAKE">{_t('fake_prod')}</option>
+            <option value="REJECT_BRAND">{_t('restr_brand')}</option>
+            <option value="REJECT_PROHIBITED">{_t('prohibited')}</option>
+            <option value="REJECT_COLOR">{_t('missing_color')}</option>
+            <option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option>
           </select>
         </div>`;
   }}
@@ -1737,7 +1734,6 @@ window.doSelectAll = function() {{
 }}
 
 window.toggleSelect = function(sid, e) {{
-  // Automatically shrink zoomed image if clicking the card body
   const img = document.querySelector('#card-' + sid + ' .card-img');
   if (img && img.classList.contains('locally-zoomed')) {{
       img.classList.remove('locally-zoomed');
@@ -1781,7 +1777,7 @@ window.doBatchReject = function() {{
   for (let sid in staged) {{ payload[sid] = staged[sid]; count++; }}
   for (let sid in selected) {{ payload[sid] = batchReason; count++; }}
 
-  if (count === 0) {{ alert('No products selected or staged for rejection.'); return; }}
+  if (count === 0) {{ return; }}
 
   for (let sid in payload) {{
       COMMITTED[sid] = payload[sid];
@@ -1828,7 +1824,7 @@ def analyze_image_quality_cached(url: str) -> List[str]:
 @st.dialog("Confirm Bulk Approval")
 def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator):
     st.warning(f"You are about to approve **{len(sids_to_process)}** items from `{title}`.")
-    if st.button("Confirm Approval", type="primary", use_container_width=True):
+    if st.button(_t("approve_btn"), type="primary", use_container_width=True):
         with st.spinner("Processing..."):
             data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
             new_report, _ = cached_validate_products(data_hash, subset_data, support_files, country_validator.code, data_has_warranty_cols_check, skip_validators=[title])
@@ -1877,7 +1873,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         def strip_html(text): return re.sub('<[^<]+?>', '', text) if isinstance(text, str) else text
         df_view['NAME'] = df_view['NAME'].apply(strip_html)
 
-    # --- INJECT LOCAL PRICE INTO EXPANDER GRID ---
     if 'GLOBAL_PRICE' in df_view.columns and 'GLOBAL_SALE_PRICE' in df_view.columns:
         def _get_local_p(row):
             sp = row.get('GLOBAL_SALE_PRICE')
@@ -1902,7 +1897,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     )
     raw_selected_indices = list(event.selection.rows)
     selected_indices = [i for i in raw_selected_indices if i < len(df_view)]
-    st.caption(f"{len(selected_indices)} of {len(df_view)} rows selected")
+    st.caption(f"{len(selected_indices)} / {len(df_view)} selected")
     has_selection = len(selected_indices) > 0
 
     _fm = support_files['flags_mapping']
@@ -1917,17 +1912,16 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
     btn_col1, btn_col2 = st.columns([1, 1])
     with btn_col1:
-        if st.button("✓ Approve Selected", key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
+        if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
             bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
     with btn_col2:
-        with st.popover("↓ Reject As...", use_container_width=True, disabled=not has_selection):
-            st.markdown("<p style='font-size:12px;font-weight:700;margin:0 0 8px 0;'>Select rejection reason:</p>", unsafe_allow_html=True)
+        with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection):
             chosen_reason = st.selectbox("Reason", _reason_options, key=f"rej_reason_dd_{title}", label_visibility="collapsed")
             if chosen_reason == "Other Reason (Custom)":
                 custom_comment = st.text_area("Custom comment", placeholder="Type your rejection reason here...", key=f"custom_comment_{title}", height=80)
-                if st.button("Apply Custom Rejection", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
+                if st.button("Apply", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     final_comment = custom_comment.strip() if custom_comment.strip() else "Other Reason"
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', '1000007 - Other Reason', final_comment, 'Other Reason (Custom)']
@@ -1938,7 +1932,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             else:
                 _rcode, _rcmt = _fm.get(chosen_reason, ('1000007 - Other Reason', chosen_reason))
                 st.caption(f"Code: {_rcode[:40]}...")
-                if st.button("Apply Rejection", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
+                if st.button("Apply", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
@@ -1966,36 +1960,54 @@ st.markdown(f"""<div class="back-to-top" onclick="window.parent.document.querySe
 st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.3);'><h1 style='color: white; margin: 0; font-size: 36px; display: flex; align-items: center;'>{logo_html}Product Validation Tool</h1></div>""", unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("System Status")
-    if st.button("🔄 Clear Cache & Reload Data", use_container_width=True, type="secondary", help="Forces a reload of all support rules from local files."):
+    # 1. THE LANGUAGE SWITCHER
+    lang_names = list(LANGUAGES.keys())
+    current_lang_code = st.session_state.get('ui_lang', 'en')
+    current_lang_name = next((k for k, v in LANGUAGES.items() if v == current_lang_code), "English")
+    
+    selected_lang_name = st.selectbox("🌐 Language / Langue / اللغة", lang_names, index=lang_names.index(current_lang_name))
+    new_lang_code = LANGUAGES[selected_lang_name]
+    
+    if new_lang_code != current_lang_code:
+        st.session_state.ui_lang = new_lang_code
+        st.rerun()
+
+    st.markdown("---")
+    
+    st.header(_t("system_status"))
+    if st.button(_t("clear_cache"), use_container_width=True, type="secondary"):
         st.cache_data.clear()
         st.session_state.display_df_cache = {}
-        if os.path.exists(PARQUET_CACHE_DIR):
-            shutil.rmtree(PARQUET_CACHE_DIR)
-            os.makedirs(PARQUET_CACHE_DIR, exist_ok=True)
-        if os.path.exists(FLAG_CACHE_DIR):
-            shutil.rmtree(FLAG_CACHE_DIR)
-            os.makedirs(FLAG_CACHE_DIR, exist_ok=True)
+        if os.path.exists(PARQUET_CACHE_DIR): shutil.rmtree(PARQUET_CACHE_DIR)
+        if os.path.exists(FLAG_CACHE_DIR): shutil.rmtree(FLAG_CACHE_DIR)
         st.rerun()
+        
     st.markdown("---")
-    st.header("Display Settings")
+    st.header(_t("display_settings"))
     new_mode = "wide" if "Wide" in st.radio("Layout Mode", ["Centered", "Wide"], index=1 if st.session_state.layout_mode == "wide" else 0) else "centered"
     if new_mode != st.session_state.layout_mode: st.session_state.layout_mode = new_mode; st.rerun()
 
 # ==========================================
 # SECTION 1: UPLOAD & VALIDATION
 # ==========================================
-st.header(":material/upload_file: Upload Files", anchor=False)
+st.header(f":material/upload_file: {_t('upload_files')}", anchor=False)
 
-current_country = st.session_state.get('selected_country', 'Kenya')
+# Auto-Language Country Switching Logic
+current_country = st.session_state.get('selected_country', get_default_country())
 country_choice = st.segmented_control("Country", ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"], default=current_country)
 
-if country_choice: st.session_state.selected_country = country_choice
-else: country_choice = current_country
+if country_choice and country_choice != current_country:
+    st.session_state.selected_country = country_choice
+    # Auto-switch to French if Morocco is selected
+    if country_choice == "Morocco":
+        st.session_state.ui_lang = "fr"
+    else:
+        st.session_state.ui_lang = "en"
+    st.rerun()
 
 country_validator = CountryValidator(st.session_state.selected_country)
 
-uploaded_files = st.file_uploader("Upload CSV or XLSX files", type=['csv', 'xlsx'], accept_multiple_files=True, key="daily_files")
+uploaded_files = st.file_uploader("", type=['csv', 'xlsx'], accept_multiple_files=True, key="daily_files")
 
 if uploaded_files:
     current_file_signature = sorted([f.name + str(f.size) for f in uploaded_files])
@@ -2184,24 +2196,24 @@ if uploaded_files and not st.session_state.final_report.empty and st.session_sta
     app_df = fr[fr['Status'] == 'Approved']
     rej_df = fr[fr['Status'] == 'Rejected']
 
-    st.header(":material/bar_chart: Validation Results", anchor=False)
+    st.header(f":material/bar_chart: {_t('val_results')}", anchor=False)
     with st.container(border=True):
         cols = st.columns(5 if st.session_state.layout_mode == "wide" else 3)
         is_nigeria = st.session_state.get('selected_country') == 'Nigeria'
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            ("Total Products", len(data), JUMIA_COLORS['dark_gray']),
-            ("Approved", len(app_df), JUMIA_COLORS['success_green']),
-            ("Rejected", len(rej_df), JUMIA_COLORS['jumia_red']),
-            ("Rejection Rate", f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%", JUMIA_COLORS['primary_orange']),
-            ("Multi-Country SKUs" if is_nigeria else "Common SKUs", multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
+            (_t("total_prod"), len(data), JUMIA_COLORS['dark_gray']),
+            (_t("approved"), len(app_df), JUMIA_COLORS['success_green']),
+            (_t("rejected"), len(rej_df), JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"), f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%", JUMIA_COLORS['primary_orange']),
+            (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
             with cols[i % len(cols)]:
                 st.markdown(f"""<div class="metric-card-inner" style='text-align: center; padding: 18px 12px; background: {JUMIA_COLORS['light_gray']}; border-radius: 8px; border-left: 4px solid {color};'><div class="metric-card-value" style='font-size: 28px; font-weight: 700; color: {color}; margin-bottom: 4px;'>{value}</div><div class="metric-card-label" style='font-size: 11px; color: {JUMIA_COLORS['medium_gray']}; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600;'>{label}</div></div>""", unsafe_allow_html=True)
 
-    st.subheader(":material/flag: Flags Breakdown", anchor=False)
+    st.subheader(f":material/flag: {_t('flags_breakdown')}", anchor=False)
     if not rej_df.empty:
         for title in rej_df['FLAG'].unique():
             df_flagged = rej_df[rej_df['FLAG'] == title]
@@ -2219,7 +2231,7 @@ def render_image_grid():
         return
 
     st.markdown("---")
-    st.header(":material/pageview: Manual Image & Category Review", anchor=False)
+    st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
 
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
@@ -2233,7 +2245,7 @@ def render_image_grid():
     valid_grid_df  = fr[mask]
 
     c1, c2, c3 = st.columns([1.5, 1.5, 2])
-    with c1: search_n  = st.text_input("Search by Name",            placeholder="Product name…")
+    with c1: search_n  = st.text_input("Search by Name", placeholder="Product name…")
     with c2: search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
     with c3:
         st.session_state.grid_items_per_page = st.select_slider(
@@ -2352,7 +2364,7 @@ def render_exports_section():
     reasons_df = support_files.get('reasons', pd.DataFrame())
 
     st.markdown("---")
-    st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>Download Reports</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div style='background: linear-gradient(135deg, {JUMIA_COLORS['primary_orange']}, {JUMIA_COLORS['secondary_orange']}); padding: 20px 24px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(246, 139, 30, 0.25);'><h2 style='color: white; margin: 0; font-size: 24px; font-weight: 700;'>{_t('download_reports')}</h2><p style='color: rgba(255,255,255,0.9); margin: 6px 0 0 0; font-size: 13px;'>Export validation results in Excel or ZIP format</p></div>""", unsafe_allow_html=True)
 
     exports_config = [
         ("Final Report",  fr,     'assignment',   'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_Final_{date_str}", 'simple', reasons_df)),
