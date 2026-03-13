@@ -176,6 +176,7 @@ if 'main_toasts' not in st.session_state: st.session_state.main_toasts = []
 if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
 if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
+
 if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
 
 if 'search_active' not in st.session_state: st.session_state.search_active = False
@@ -1409,40 +1410,49 @@ def build_fast_grid_html(
   .desel-btn:hover{{background:#f5f5f5;}}
 
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
-  .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;}}
+  .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s; z-index:1;}}
   .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2); background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2); background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
   
-  /* CHANGED TO 180px HERE */
-  .card-img-wrap{{position:relative;cursor:pointer; overflow:hidden; border-radius:6px; background:#fff; display:flex; align-items:center; justify-content:center; height: 180px;}}
-  .card-img{{width:100%; height:180px; object-fit:contain; border-radius:6px; display:block; transition: transform 0.25s ease-in-out;}}
+  .card-img-wrap{{position:relative;cursor:pointer; border-radius:6px; background:#fff; display:flex; align-items:center; justify-content:center; height: 180px;}}
+  .card-img{{width:100%; height:180px; object-fit:contain; border-radius:6px; display:block; transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
-  .card-img-wrap:hover .card-img {{ transform: scale(1.15); }}
   
-  .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none; z-index:10;}}
-  .card.selected .tick{{background:{G};color:#fff;}}
-  .card.staged-rej .tick{{background:{R};color:#fff;}}
-  
+  /* LOCAL ZOOM CLASSES */
+  .card-img.locally-zoomed {{
+      transform: scale(2.3);
+      box-shadow: 0 15px 50px rgba(0,0,0,0.6);
+      border: 2px solid {O};
+      background: #fff;
+      position: relative;
+      z-index: 9999;
+      border-radius: 8px;
+  }}
+
   /* LENS ZOOM BUTTON */
   .zoom-btn {{
       position: absolute;
       bottom: 6px;
       left: 6px;
-      width: 24px;
-      height: 24px;
+      width: 28px;
+      height: 28px;
       background: rgba(255, 255, 255, 0.95);
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-      z-index: 15;
-      font-size: 13px;
-      transition: transform 0.1s, background 0.1s;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      z-index: 10000;
+      font-size: 14px;
+      transition: background 0.1s, transform 0.1s;
   }}
-  .zoom-btn:hover {{ transform: scale(1.15); background: #fff; }}
+  .zoom-btn:hover {{ background: #fff; transform: scale(1.1); }}
+  
+  .tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none; z-index:10;}}
+  .card.selected .tick{{background:{G};color:#fff;}}
+  .card.staged-rej .tick{{background:{R};color:#fff;}}
   
   .warn-wrap{{position:absolute;top:6px;right:6px;display:flex;flex-direction:column;gap:3px;z-index:5;pointer-events:none;}}
   .warn-badge{{background:rgba(255,193,7,.95);color:#313133;font-size:9px;font-weight:800;padding:3px 7px;border-radius:10px;}}
@@ -1489,10 +1499,6 @@ def build_fast_grid_html(
 </div>
 
 <div class="grid" id="card-grid"></div>
-
-<div id="img-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:999999; align-items:center; justify-content:center; cursor:pointer;" onclick="this.style.display='none'">
-    <img id="img-modal-target" src="" style="max-width:90%; max-height:90%; object-fit:contain; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
-</div>
 
 <script>
 function escapeHtml(unsafe) {{
@@ -1601,9 +1607,22 @@ function updateSelCount() {{
   document.getElementById('sel-count-bar').textContent = n + ' items pending';
 }}
 
-window.zoomImg = function(url) {{
-    document.getElementById('img-modal-target').src = url;
-    document.getElementById('img-modal').style.display = 'flex';
+// ── LOCAL ZOOM LOGIC ──
+window.toggleZoom = function(sid) {{
+    const img = document.querySelector('#card-' + sid + ' .card-img');
+    if (!img) return;
+    
+    if (img.classList.contains('locally-zoomed')) {{
+        img.classList.remove('locally-zoomed');
+        if(img.closest('.card')) img.closest('.card').style.zIndex = '1';
+    }} else {{
+        document.querySelectorAll('.locally-zoomed').forEach(el => {{
+            el.classList.remove('locally-zoomed');
+            if (el.closest('.card')) el.closest('.card').style.zIndex = '1';
+        }});
+        img.classList.add('locally-zoomed');
+        img.closest('.card').style.zIndex = '999';
+    }}
 }}
 
 function renderCard(card) {{
@@ -1621,7 +1640,7 @@ function renderCard(card) {{
   const shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38))+'…' : escapeHtml(card.name);
   const warnHtml  = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   const priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
-  const zoomHtml  = `<div class="zoom-btn" onclick="event.stopPropagation(); window.zoomImg('${{img}}')" title="Zoom Image">🔍</div>`;
+  const zoomHtml  = `<div class="zoom-btn" onclick="event.stopPropagation(); window.toggleZoom('${{sid}}')" title="Zoom Image">🔍</div>`;
   
   let overlayHtml = '';
   let actHtml = '';
@@ -1663,7 +1682,7 @@ function renderCard(card) {{
   }}
 
   return `<div class="${{cls}}" id="card-${{sid}}">
-    <div class="card-img-wrap" onclick="window.toggleSelect('${{sid}}')">
+    <div class="card-img-wrap" onclick="window.toggleSelect('${{sid}}', event)">
       ${{priceHtml}}
       <div class="warn-wrap">${{warnHtml}}</div>
       <img class="card-img" src="${{img}}" onerror="this.src='https://via.placeholder.com/150?text=No+Image'">
@@ -1700,7 +1719,14 @@ window.doSelectAll = function() {{
   updateSelCount();
 }}
 
-window.toggleSelect = function(sid) {{
+window.toggleSelect = function(sid, e) {{
+  const img = document.querySelector('#card-' + sid + ' .card-img');
+  if (img && img.classList.contains('locally-zoomed')) {{
+      img.classList.remove('locally-zoomed');
+      img.closest('.card').style.zIndex = '1';
+      return; 
+  }}
+
   if (sid in COMMITTED) return;
   if (sid in staged) {{ delete staged[sid]; }}
   else if (sid in selected) {{ delete selected[sid]; }}
@@ -1761,6 +1787,7 @@ renderAll();
 </script>
 </body>
 </html>"""
+
 # -------------------------------------------------
 # UI COMPONENTS
 # -------------------------------------------------
@@ -1963,8 +1990,6 @@ if st.session_state.get('last_processed_files') != process_signature:
     st.session_state.clear_counter = 0
     st.session_state.ls_processed_flag = False
     st.session_state.ls_read_trigger = 0
-    st.session_state.search_active = False
-    st.session_state.pre_search_page = 0
 
     keys_to_delete = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_"))]
     for k in keys_to_delete: del st.session_state[k]
