@@ -158,7 +158,6 @@ if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache
 
 if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
 
-# Track search state so we can restore pages
 if 'search_active' not in st.session_state: st.session_state.search_active = False
 if 'pre_search_page' not in st.session_state: st.session_state.pre_search_page = 0
 
@@ -1286,7 +1285,6 @@ def build_fast_grid_html(
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
         
-        # --- HTTP TO HTTPS UPGRADE ---
         if img_url.startswith("http://"):
             img_url = img_url.replace("http://", "https://")
         if not img_url.startswith("http"):
@@ -1315,16 +1313,16 @@ def build_fast_grid_html(
   .ctrl-bar{{
     position: -webkit-sticky;
     position: sticky;
-    top: 8px; /* Sticks with an 8px margin from the absolute top */
-    z-index: 9999; /* Ensures it stays above all images */
+    top: 8px;
+    z-index: 9999;
     display:flex;align-items:center;gap:8px;flex-wrap:wrap;
     padding:8px 12px;
-    background: rgba(255, 255, 255, 0.90); /* Slightly transparent */
-    backdrop-filter: blur(10px); /* Glassy blur effect */
+    background: rgba(255, 255, 255, 0.90);
+    backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     border:1px solid rgba(224, 224, 224, 0.8);
     border-radius:8px;margin-bottom:12px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.15); /* Stronger shadow to pop out */
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
   }}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{
@@ -1444,7 +1442,40 @@ window._stagedRejections = window._stagedRejections || {{}};
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
-// ── NAVIGATION / DOWNLOAD INTERCEPTOR ──
+// ── 1. ANTI-JUMP SCROLL RESTORATION ENGINE ──
+function saveScroll() {{
+    try {{
+        sessionStorage.setItem("jt_iframe_scroll", window.scrollY);
+        if (window.parent && window.parent.document) {{
+            var main = window.parent.document.querySelector('.main');
+            if (main) window.parent.sessionStorage.setItem("jt_parent_scroll", main.scrollTop);
+        }}
+    }} catch(e) {{}}
+}}
+
+function restoreScroll() {{
+    try {{
+        var iScroll = sessionStorage.getItem("jt_iframe_scroll");
+        if (iScroll) {{
+            window.scrollTo(0, parseInt(iScroll));
+            sessionStorage.removeItem("jt_iframe_scroll");
+        }}
+
+        if (window.parent && window.parent.document) {{
+            var main = window.parent.document.querySelector('.main');
+            var pScroll = window.parent.sessionStorage.getItem("jt_parent_scroll");
+            if (main && pScroll) {{
+                setTimeout(() => {{ 
+                    main.scrollTo({{top: parseInt(pScroll), behavior: 'instant'}}); 
+                    window.parent.sessionStorage.removeItem("jt_parent_scroll");
+                }}, 20);
+            }}
+        }}
+    }} catch(e) {{}}
+}}
+restoreScroll();
+
+// ── 2. NAVIGATION / DOWNLOAD INTERCEPTOR ──
 if (window.parent) {{
     window.parent._jtClickListener = function(e) {{
         let btn = e.target.closest('button');
@@ -1471,7 +1502,7 @@ if (window.parent) {{
     window.parent.document.addEventListener('click', window.parent._jtClickListener, true);
 }}
 
-// ── postMessage helper ────────────────────────────────────────────────────────
+// ── 3. postMessage BRIDGE WITH ANTI-YANK ──
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
@@ -1482,18 +1513,28 @@ function sendMsg(type, payload) {{
         bridge = inputs[i]; break;
       }}
     }}
-    if (!bridge) {{ console.warn('jtbridge not found'); return; }}
+    if (!bridge) return;
     
+    // CACHE POSITIONS BEFORE DOING ANYTHING
+    saveScroll();
+    var main = par.document.querySelector('.main');
+    var currParentScroll = main ? main.scrollTop : 0;
+    var currIframeScroll = window.scrollY;
+
     var msg = JSON.stringify({{action: type, payload: payload}});
     
-    // FIX: Prevent parent window from violently jumping up to the hidden input!
+    // NEUTRALIZE BROWSER FOCUS JUMP
     bridge.focus({{ preventScroll: true }});
-    
+    // Double-enforce: instantly snap back if the browser ignored preventScroll
+    if (main) main.scrollTop = currParentScroll;
+    window.scrollTo(0, currIframeScroll);
+
     Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     
     setTimeout(function() {{
         bridge.blur();
+        if (main) main.scrollTop = currParentScroll; // Fix potential blur jump
         bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles: true, cancelable: true, key: 'Enter', keyCode: 13}}));
     }}, 150);
   }} catch(ex) {{ console.error('jtbridge sendMsg error:', ex); }}
@@ -1653,17 +1694,6 @@ window.doDeselAll = function() {{
   renderAll();
   updateSelCount();
 }}
-
-// REMEMBER IFRAME SCROLL POSITION BETWEEN RELOADS
-window.addEventListener("beforeunload", function() {
-    sessionStorage.setItem("gridScrollPos", window.scrollY);
-});
-window.addEventListener("load", function() {
-    var pos = sessionStorage.getItem("gridScrollPos");
-    if (pos) {
-        setTimeout(function() { window.scrollTo(0, parseInt(pos)); }, 20);
-    }
-});
 
 renderAll();
 </script>
@@ -1951,7 +1981,7 @@ if st.session_state.get('last_processed_files') != process_signature:
             st.code(traceback.format_exc())
             st.session_state.last_processed_files = "error"
 
-# --- HIDDEN TEXT INPUT BRIDGE ---
+
 _bridge_val = st.text_input(
     "jtbridge", value="",
     placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE",
