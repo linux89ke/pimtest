@@ -66,29 +66,39 @@ def process_dataframe(df, filename, all_data_list):
         all_data_list.append(df)
     return country, week_num
 
+# --- NEW HELPER: STYLING ---
+def highlight_weekends(row):
+    """Highlights Saturday and Sunday rows in the dataframe."""
+    if row.name in ['Saturday', 'Sunday']:
+        # Uses a semi-transparent grey that works in both Light and Dark mode
+        return ['background-color: rgba(128, 128, 128, 0.2)'] * len(row)
+    elif row.name == 'Weekly Total':
+        # Optional: Give the Weekly Total row a slight bold/highlight too
+        return ['font-weight: bold; background-color: rgba(0, 150, 255, 0.1)'] * len(row)
+    return [''] * len(row)
+
 # --- MAIN UI ---
 st.title(":material/monitoring: PIM Weekly Export Analyzer")
-st.markdown("Upload your `ProductSets` files (**CSV, Excel, or ZIP archives**) to generate a professional performance report.")
+st.markdown("Upload your `ProductSets` files (**CSV, Excel, or ZIP archives**) to generate a professional performance report. *Note: Multi-part files are automatically combined.*")
 
 # Main Uploader Area
-# CHANGED: Added "zip" to accepted file types
 uploaded_files = st.file_uploader("Select files or ZIP archives to process", type=["csv", "xlsx", "xls", "zip"], accept_multiple_files=True)
 
 # --- DATA PROCESSING ---
 master_df = pd.DataFrame()
 primary_country, primary_week = "Unknown", "N/A"
+total_files_merged = 0
 
 if uploaded_files:
     all_data = []
     
-    with st.spinner(":material/hourglass_empty: Extracting and Processing files..."):
+    with st.spinner(":material/hourglass_empty: Extracting and merging files..."):
         for file in uploaded_files:
             
             # --- HANDLE ZIP FILES ---
             if file.name.endswith('.zip'):
                 with zipfile.ZipFile(file, 'r') as z:
                     for zip_filename in z.namelist():
-                        # Ignore macOS hidden folders and non-data files
                         if zip_filename.endswith(('.csv', '.xlsx', '.xls')) and not zip_filename.startswith('__MACOSX'):
                             with z.open(zip_filename) as f:
                                 if zip_filename.endswith('.csv'):
@@ -99,8 +109,9 @@ if uploaded_files:
                                 c, w = process_dataframe(df, zip_filename.split('/')[-1], all_data)
                                 if primary_country == "Unknown":
                                     primary_country, primary_week = c, w
+                                total_files_merged += 1
             
-            # --- HANDLE REGULAR CSV/EXCEL FILES ---
+            # --- HANDLE REGULAR FILES ---
             else:
                 if file.name.endswith('.csv'):
                     df = pd.read_csv(file, low_memory=False)
@@ -110,17 +121,17 @@ if uploaded_files:
                 c, w = process_dataframe(df, file.name, all_data)
                 if primary_country == "Unknown":
                     primary_country, primary_week = c, w
+                total_files_merged += 1
         
-        # Combine everything (This merges Part 1 and Part 2 naturally based on date!)
         if all_data:
             master_df = pd.concat(all_data, ignore_index=True)
-            st.success(f":material/check_circle: Data loaded successfully for **{primary_country}** (Week {primary_week})")
+            st.success(f":material/library_add_check: Successfully merged **{total_files_merged} file(s)/part(s)** for **{primary_country}** (Week {primary_week})")
         else:
             st.error(":material/error: Could not find valid data files or YYYY-MM-DD dates in the filenames.")
 
-# --- DASHBOARD RENDERING (Unchanged from previous version) ---
+# --- DASHBOARD RENDERING ---
 if not master_df.empty:
-    status_col = get_col(master_df, ['Status', 'STATUS', 'status', 'LISTING_STATUS']) # Added LISTING_STATUS for safety based on your sample
+    status_col = get_col(master_df, ['Status', 'STATUS', 'status', 'LISTING_STATUS']) 
     seller_col = get_col(master_df, ['SellerName', 'SELLER_NAME', 'seller_name', 'Seller'])
     flag_col = get_col(master_df, ['FLAG', 'Flag', 'flag', 'Reason'])
     cat_col = get_col(master_df, ['CATEGORY', 'Category', 'category'])
@@ -166,7 +177,10 @@ if not master_df.empty:
 
             with col_table:
                 st.markdown("#### :material/calendar_today: Daily Breakdown")
-                st.dataframe(daily_summary, use_container_width=True)
+                
+                # Apply the weekend shading right here before displaying
+                styled_daily_summary = daily_summary.style.apply(highlight_weekends, axis=1)
+                st.dataframe(styled_daily_summary, use_container_width=True)
 
         # === TAB 2: REJECTION DEEP-DIVE ===
         with tab_deepdive:
@@ -245,6 +259,7 @@ if not master_df.empty:
             "Report Generated On": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             "Country / Region": primary_country,
             "Reporting Week": f"Week {primary_week}",
+            "Total Files/Parts Merged": total_files_merged,
             "Total Products Processed": weekly_total,
             "Total Approved": weekly_approved,
             "Total Rejected": weekly_rejected,
