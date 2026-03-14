@@ -7,7 +7,8 @@ Supported countries : KE · UG · NG · GH · MA
 Scraped fields      : COLOR, COUNT_VARIATIONS, PRODUCT_WARRANTY,
                       WARRANTY_DURATION, MAIN_IMAGE, PRICE, DISCOUNT,
                       RATING, REVIEW_COUNT, STOCK_STATUS,
-                      DESCRIPTION, KEY_FEATURES, WHATS_IN_BOX
+                      DESCRIPTION, KEY_FEATURES, WHATS_IN_BOX,
+                      MODEL, GTIN, WEIGHT, CATEGORY_PATH, IS_OFFICIAL_STORE
 """
 
 from __future__ import annotations
@@ -33,16 +34,30 @@ COUNTRY_URLS: dict[str, str] = {
 
 # ── All fields this module can fill ──────────────────────────────────────────
 SCRAPABLE_FIELDS: list[str] = [
-    "COLOR",
-    "COUNT_VARIATIONS",
-    "PRODUCT_WARRANTY",
-    "WARRANTY_DURATION",
-    "MAIN_IMAGE",
+    # Pricing & availability
     "PRICE",
     "DISCOUNT",
+    "STOCK_STATUS",
+    # Identity & classification
+    "MODEL",
+    "GTIN",
+    "BRAND",
+    "CATEGORY_PATH",
+    "IS_OFFICIAL_STORE",
+    # Media
+    "MAIN_IMAGE",
+    # Physical
+    "WEIGHT",
+    # Variations
+    "COLOR",
+    "COUNT_VARIATIONS",
+    # Warranty
+    "PRODUCT_WARRANTY",
+    "WARRANTY_DURATION",
+    # Ratings
     "RATING",
     "REVIEW_COUNT",
-    "STOCK_STATUS",
+    # Content
     "DESCRIPTION",
     "KEY_FEATURES",
     "WHATS_IN_BOX",
@@ -361,30 +376,216 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
                 break
 
     # ── Colors / Variations ───────────────────────────────────────────────────
+    # Strategy A: hidden inputs inside the variation list (most reliable)
     colors: list[str] = []
-    for li in soup.select("ul.-pvs.-mvs li"):
+    for li in soup.select("ul.-pvs.-mvs li, ul[class*='var'] li"):
         inp = li.select_one("input")
         if inp:
             val = inp.get("value") or inp.get("data-value", "")
             if val:
                 colors.append(val.strip())
+
+    # Strategy B: visible colour swatch labels / selectors
     if not colors:
-        for el in soup.select("[data-type='color'] span, span.color-selector"):
+        for el in soup.select(
+            "[data-type='color'] span, span.color-selector, "
+            "li[class*='color'] span, label[class*='color']"
+        ):
             txt = el.get_text(strip=True)
-            if txt:
+            if txt and len(txt) < 40:
                 colors.append(txt)
+
+    # Strategy C: variation pills / size options — count only, no names
     variation_count: int = 0
     if not colors:
-        opts = soup.select("ul.-pvs li, select option:not([value=''])")
+        opts = soup.select(
+            "ul.-pvs li, select option:not([value='']):not([disabled]), "
+            "ul[class*='var'] li, div[class*='var'] button"
+        )
         variation_count = len(opts)
+
+    # Strategy D: parse from title — e.g. "Titanium Silver" already in name
+    #   Only fire when we truly found nothing above AND the title contains a
+    #   known colour word, to avoid false positives.
+    if not colors and not variation_count:
+        title_el = soup.select_one("h1, title")
+        if title_el:
+            COLOR_WORDS = re.compile(
+                r"\b(black|white|silver|gold|blue|red|green|purple|pink|grey|gray|"
+                r"titanium|midnight|starlight|ivory|champagne|rose|copper|yellow|"
+                r"orange|violet|navy|cream|brown|coral|aqua|cyan|teal|lilac)\b",
+                re.IGNORECASE,
+            )
+            found = COLOR_WORDS.findall(title_el.get_text())
+            if found:
+                colors = list(dict.fromkeys(c.title() for c in found))
+
     if colors:
-        unique_colors = list(dict.fromkeys(colors))
+        unique_colors = list(dict.fromkeys(c for c in colors if c))
         result["COLOR"] = ", ".join(unique_colors)
         result["COUNT_VARIATIONS"] = str(len(unique_colors))
     elif variation_count:
         result["COUNT_VARIATIONS"] = str(variation_count)
 
-    # ── Warranty ──────────────────────────────────────────────────────────────
+    # ── Specifications table helper ───────────────────────────────────────────
+    # Jumia renders specs as a flat list: "Label Value" lines inside a section.
+    # Build a dict once and reuse it for MODEL, GTIN, WEIGHT, etc.
+    spec_map: dict[str, str] = {}
+    for section in soup.select("div[class*='spec'], section[class*='spec'], ul[class*='spec']"):
+        items = section.find_all("li") or section.find_all("div", recursive=False)
+        for item in items:
+            txt = item.get_text(" ", strip=True)
+            # "Label : Value" or "Label Value" patterns
+            if ":" in txt:
+                parts = txt.split(":", 1)
+            else:
+                # Try splitting on two-or-more whitespace
+                parts = re.split(r"\s{2,}", txt, 1)
+            if len(parts) == 2:
+                k = parts[0].strip().lower().replace(" ", "_")
+                v = parts[1].strip()
+                if k and v:
+                    spec_map[k] = v
+
+    # Also scrape from the plain-text "Specifications" block as a fallback —
+    # Jumia often renders specs as "Key Value\nKey Value" lines.
+    if not spec_map:
+        spec_section_m = re.search(
+            r"Specifications?\s*\n(.*?)(?:Customer Feedback|Related results|\Z)",
+            full_text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if spec_section_m:
+            for line in spec_section_m.group(1).splitlines():
+                line = line.strip()
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    k = k.strip().lower().replace(" ", "_")
+                    v = v.strip()
+                    if k and v:
+                        spec_map[k] = v
+
+    # ── MODEL ─────────────────────────────────────────────────────────────────
+    # Priority 1: JSON-LD "model" field (already in ld_data if parsed)
+    if not result.get("MODEL"):
+        model_val = ld_data.get("model", "") if ld_data else ""
+        if model_val:
+            result["MODEL"] = str(model_val).strip()
+
+    # Priority 2: Specifications table
+    if not result.get("MODEL"):
+        for key in ("model", "model_name", "model_number"):
+            if spec_map.get(key):
+                result["MODEL"] = spec_map[key]
+                break
+
+    # Priority 3: regex on full text (Jumia lists "Model: Smart 10" in specs)
+    if not result.get("MODEL"):
+        m_mod = re.search(r"\bModel\s*[:\-]\s*([^\n,]+)", full_text, re.IGNORECASE)
+        if m_mod:
+            result["MODEL"] = m_mod.group(1).strip()
+
+    # ── GTIN ──────────────────────────────────────────────────────────────────
+    # Appears as "GTIN Barcode: 04894947084454" in the Specifications section.
+    if not result.get("GTIN"):
+        # JSON-LD gtin fields
+        for gtin_key in ("gtin13", "gtin12", "gtin8", "gtin", "barcode"):
+            val = ld_data.get(gtin_key, "") if ld_data else ""
+            if val:
+                result["GTIN"] = str(val).strip()
+                break
+
+    if not result.get("GTIN"):
+        for key in ("gtin_barcode", "gtin", "barcode", "ean", "upc"):
+            if spec_map.get(key):
+                result["GTIN"] = spec_map[key]
+                break
+
+    if not result.get("GTIN"):
+        m_gtin = re.search(
+            r"GTIN\s*(?:Barcode)?\s*[:\-]\s*(\d{8,14})",
+            full_text, re.IGNORECASE,
+        )
+        if m_gtin:
+            result["GTIN"] = m_gtin.group(1).strip()
+
+    # ── WEIGHT ────────────────────────────────────────────────────────────────
+    # Jumia shows "Weight (kg): 0.187" in the spec table.
+    if not result.get("WEIGHT"):
+        for key in ("weight_(kg)", "weight_kg", "weight_(g)", "weight"):
+            if spec_map.get(key):
+                result["WEIGHT"] = spec_map[key]
+                break
+
+    if not result.get("WEIGHT"):
+        # JSON-LD weight object
+        wt = ld_data.get("weight", {}) if ld_data else {}
+        if isinstance(wt, dict) and wt.get("value"):
+            unit = wt.get("unitCode", "kg")
+            result["WEIGHT"] = f"{wt['value']} {unit}"
+        elif isinstance(wt, str) and wt:
+            result["WEIGHT"] = wt
+
+    if not result.get("WEIGHT"):
+        m_wt = re.search(
+            r"Weight\s*(?:\(kg\))?\s*[:\-]\s*([\d\.]+\s*(?:kg|g)?)",
+            full_text, re.IGNORECASE,
+        )
+        if m_wt:
+            result["WEIGHT"] = m_wt.group(1).strip()
+
+    # ── CATEGORY_PATH ─────────────────────────────────────────────────────────
+    # The breadcrumb trail is the most reliable source:
+    # Home › Phones & Tablets › Mobile Phones › Smartphones › Android Phones
+    if not result.get("CATEGORY_PATH"):
+        crumbs: list[str] = []
+
+        # CSS: Jumia breadcrumb links are inside .-bre nav or ol.breadcrumb
+        for sel in [
+            "ol.breadcrumb a", "nav[aria-label*='breadcrumb'] a",
+            "div.-bre a", "a[class*='crumb']",
+            "div[class*='breadcrumb'] a",
+        ]:
+            links = soup.select(sel)
+            if links:
+                crumbs = [a.get_text(strip=True) for a in links if a.get_text(strip=True)]
+                break
+
+        # Fallback: scan for a sequence of short links that look like categories
+        if not crumbs:
+            for nav in soup.find_all(["nav", "ol", "ul"]):
+                links = nav.find_all("a")
+                texts = [a.get_text(strip=True) for a in links if a.get_text(strip=True)]
+                # A breadcrumb has 3–7 items, each short, no duplicates
+                if 3 <= len(texts) <= 7 and len(set(texts)) == len(texts):
+                    if all(len(t) < 50 for t in texts):
+                        crumbs = texts
+                        break
+
+        if crumbs:
+            # Drop "Home" prefix and the current product name (last item if long)
+            if crumbs[0].lower() in ("home", "jumia"):
+                crumbs = crumbs[1:]
+            if crumbs and len(crumbs[-1]) > 60:
+                crumbs = crumbs[:-1]
+            if crumbs:
+                result["CATEGORY_PATH"] = " > ".join(crumbs)
+
+    # ── IS_OFFICIAL_STORE ─────────────────────────────────────────────────────
+    # Jumia marks official stores with a "JMALL" tag badge and/or an
+    # "Official Store" label near the seller info.
+    if not result.get("IS_OFFICIAL_STORE"):
+        official_signals = [
+            # Tag badge with JMALL href
+            soup.select_one("a[href*='JMALL'], a[tag*='JMALL']"),
+            # Text badge
+            soup.find(string=re.compile(r"official\s+store", re.IGNORECASE)),
+            # Image alt text
+            soup.find("img", alt=re.compile(r"official\s+store", re.IGNORECASE)),
+        ]
+        result["IS_OFFICIAL_STORE"] = "Yes" if any(official_signals) else "No"
+
+
     warranty_pattern = re.compile(
         r"(\d+[\s\-]?(?:year|month|yr|mo)[s]?\s+(?:warranty|guarantee))",
         re.IGNORECASE,
