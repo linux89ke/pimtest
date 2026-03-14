@@ -2105,7 +2105,25 @@ if st.session_state.get('last_processed_files') != process_signature:
 
                 if file_mode == 'post_qc':
                     cat_map = support_files.get('category_map', {})
-                    norm_dfs = [normalize_post_qc(df, category_map=cat_map) for df in all_dfs]
+                    try:
+                        norm_dfs = [normalize_post_qc(df, category_map=cat_map) for df in all_dfs]
+                    except TypeError:
+                        # Old postqc.py deployed — patch category codes after normalisation
+                        norm_dfs = []
+                        for df in all_dfs:
+                            ndf = normalize_post_qc(df)
+                            if cat_map and 'CATEGORY' in ndf.columns:
+                                import re as _re
+                                def _resolve(raw, cmap=cat_map):
+                                    if not raw or raw == 'nan': return ''
+                                    segs = [s.strip() for s in _re.split(r'[>/]', str(raw)) if s.strip()]
+                                    for seg in reversed(segs):
+                                        code = cmap.get(seg.lower())
+                                        if code: return code
+                                    last = segs[-1] if segs else raw
+                                    return _re.sub(r'[^a-z0-9]', '_', last.lower())
+                                ndf['CATEGORY_CODE'] = ndf['CATEGORY'].astype(str).apply(_resolve)
+                            norm_dfs.append(ndf)
                     merged = pd.concat(norm_dfs, ignore_index=True)
                     merged_dedup = merged.drop_duplicates(subset=['PRODUCT_SET_SID'], keep='first')
                     with st.spinner("Running Post-QC checks..."):
