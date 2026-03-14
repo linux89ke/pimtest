@@ -242,6 +242,14 @@ _SS_DEFAULTS = {
     "pq_val_results":     {},
     "pq_val_exports":     {},
     "pq_flags_init":      False,
+    # ── Keys required by render_flag_expander / bulk_approve_dialog ──
+    # (these functions are imported from streamlit_app.py and access
+    #  these keys directly via st.session_state.<key>)
+    "display_df_cache":   {},
+    "exports_cache":      {},
+    "final_report":       pd.DataFrame(),
+    "main_toasts":        [],
+    "flags_expanded_initialized": False,
 }
 for _k, _v in _SS_DEFAULTS.items():
     if _k not in st.session_state:
@@ -1542,6 +1550,11 @@ with tab_upload:
                 st.session_state[f"pqexp_{_top}"] = True
                 st.session_state.pq_flags_init = True
 
+            # render_flag_expander reads/writes st.session_state.final_report
+            # and st.session_state.display_df_cache internally.
+            # Sync our pq_val_report into final_report so approve/reject work.
+            st.session_state.final_report = st.session_state.pq_val_report.copy()
+
             _data_has_w = all(
                 c in _pq_data.columns
                 for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"]
@@ -1556,6 +1569,9 @@ with tab_upload:
                         _flag_title, _flag_df, _pq_data,
                         _data_has_w, _sf, _cv,
                     )
+
+            # Sync any approve/reject changes back into pq_val_report
+            st.session_state.pq_val_report = st.session_state.final_report.copy()
         else:
             st.success("✅ All products passed validation — no rejections found.")
 
