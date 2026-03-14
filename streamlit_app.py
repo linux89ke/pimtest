@@ -1934,6 +1934,7 @@ country_choice = st.segmented_control(
     ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"],
     default=current_country,
     key="country_selector",
+    bind="query-params",
 )
 
 if country_choice and country_choice != current_country:
