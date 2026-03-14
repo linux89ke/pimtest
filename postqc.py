@@ -1,4 +1,5 @@
 import re
+import sys
 import logging
 from io import BytesIO
 from datetime import datetime
@@ -230,6 +231,54 @@ def _compile_pattern(words: List[str]):
 
 
 # -------------------------------------------------
+# SAFE IMPORT FROM STREAMLIT_APP
+# Resolves the circular-import problem: streamlit_app imports postqc at
+# module load time, so a normal `from streamlit_app import …` inside
+# postqc would fail (the module is only half-initialised).
+# Instead we look it up from sys.modules AFTER it has fully loaded.
+# -------------------------------------------------
+
+def _get_preqc_symbols():
+    """
+    Return (symbols_dict, True) when streamlit_app is fully loaded,
+    or ({}, False) when it is not yet available.
+    """
+    mod = sys.modules.get('streamlit_app')
+    if mod is None:
+        return {}, False
+
+    names = [
+        'check_restricted_brands', 'check_suspected_fake_products',
+        'check_refurb_seller_approval', 'check_product_warranty',
+        'check_seller_approved_for_books', 'check_seller_approved_for_perfume',
+        'check_perfume_tester', 'check_counterfeit_sneakers',
+        'check_counterfeit_jerseys', 'check_prohibited_products',
+        'check_unnecessary_words', 'check_single_word_name',
+        'check_generic_brand_issues', 'check_fashion_brand_issues',
+        'check_brand_in_name', 'check_wrong_variation',
+        'check_generic_with_brand_in_name', 'check_missing_color',
+        'check_weight_volume_in_name', 'check_incomplete_smartphone_name',
+        'check_duplicate_products', 'check_miscellaneous_category',
+        'compile_regex_patterns', 'FX_RATE',
+    ]
+
+    symbols = {}
+    missing = []
+    for name in names:
+        val = getattr(mod, name, None)
+        if val is None:
+            missing.append(name)
+        else:
+            symbols[name] = val
+
+    if missing:
+        logger.warning(f"_get_preqc_symbols: missing from streamlit_app: {missing}")
+        return symbols, False
+
+    return symbols, True
+
+
+# -------------------------------------------------
 # CHECK RUNNER
 # -------------------------------------------------
 
@@ -251,27 +300,40 @@ def run_checks(df: pd.DataFrame, support_files: Dict) -> Tuple[pd.DataFrame, Dic
             results[name] = _empty(df)
 
     # ── SHARED PRE-QC CHECKS ────────────────────────────────────────────────
-    try:
-        from streamlit_app import (
-            check_restricted_brands, check_suspected_fake_products,
-            check_refurb_seller_approval, check_product_warranty,
-            check_seller_approved_for_books, check_seller_approved_for_perfume,
-            check_perfume_tester, check_counterfeit_sneakers,
-            check_counterfeit_jerseys, check_prohibited_products,
-            check_unnecessary_words, check_single_word_name,
-            check_generic_brand_issues, check_fashion_brand_issues,
-            check_brand_in_name, check_wrong_variation,
-            check_generic_with_brand_in_name, check_missing_color,
-            check_weight_volume_in_name, check_incomplete_smartphone_name,
-            check_duplicate_products, check_miscellaneous_category,
-            compile_regex_patterns, FX_RATE,
-        )
-        _have_preqc = True
-    except ImportError:
-        _have_preqc = False
-        logger.warning("run_checks: pre-QC validators not importable — running basic checks only")
+    # Use sys.modules lookup to avoid circular import.
+    # streamlit_app imports postqc at startup; by the time run_checks() is
+    # called interactively, streamlit_app is fully initialised in sys.modules.
+    symbols, _have_preqc = _get_preqc_symbols()
+
+    if not _have_preqc:
+        logger.warning("run_checks: pre-QC validators not available — running basic checks only")
 
     if _have_preqc:
+        check_restricted_brands          = symbols['check_restricted_brands']
+        check_suspected_fake_products    = symbols['check_suspected_fake_products']
+        check_refurb_seller_approval     = symbols['check_refurb_seller_approval']
+        check_product_warranty           = symbols['check_product_warranty']
+        check_seller_approved_for_books  = symbols['check_seller_approved_for_books']
+        check_seller_approved_for_perfume= symbols['check_seller_approved_for_perfume']
+        check_perfume_tester             = symbols['check_perfume_tester']
+        check_counterfeit_sneakers       = symbols['check_counterfeit_sneakers']
+        check_counterfeit_jerseys        = symbols['check_counterfeit_jerseys']
+        check_prohibited_products        = symbols['check_prohibited_products']
+        check_unnecessary_words          = symbols['check_unnecessary_words']
+        check_single_word_name           = symbols['check_single_word_name']
+        check_generic_brand_issues       = symbols['check_generic_brand_issues']
+        check_fashion_brand_issues       = symbols['check_fashion_brand_issues']
+        check_brand_in_name              = symbols['check_brand_in_name']
+        check_wrong_variation            = symbols['check_wrong_variation']
+        check_generic_with_brand_in_name = symbols['check_generic_with_brand_in_name']
+        check_missing_color              = symbols['check_missing_color']
+        check_weight_volume_in_name      = symbols['check_weight_volume_in_name']
+        check_incomplete_smartphone_name = symbols['check_incomplete_smartphone_name']
+        check_duplicate_products         = symbols['check_duplicate_products']
+        check_miscellaneous_category     = symbols['check_miscellaneous_category']
+        compile_regex_patterns           = symbols['compile_regex_patterns']
+        FX_RATE                          = symbols['FX_RATE']
+
         country_code = support_files.get('country_code', 'KE')
         country_name = support_files.get('country_name', 'Kenya')
 
@@ -381,8 +443,6 @@ def run_checks(df: pd.DataFrame, support_files: Dict) -> Tuple[pd.DataFrame, Dic
              {}),
         ]
 
-        # Deduplicate — "Brand Repeated in Name" and "BRAND name repeated in NAME" are same function
-        seen_funcs = set()
         for name, func, kwargs in shared_checks:
             # Skip true duplicates (same flag name already processed)
             if name in results:
@@ -408,7 +468,7 @@ def run_checks(df: pd.DataFrame, support_files: Dict) -> Tuple[pd.DataFrame, Dic
             if not flagged.empty:
                 flagged['Comment_Detail'] = "Brand repeated in name"
             results["Brand Repeated in Name"] = flagged.drop_duplicates(subset=['PRODUCT_SET_SID']) if not flagged.empty else _empty(df)
-        except Exception as e:
+        except Exception:
             results["Brand Repeated in Name"] = _empty(df)
 
         # Single word name
