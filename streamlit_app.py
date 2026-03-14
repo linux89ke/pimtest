@@ -1205,14 +1205,18 @@ def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[
     target = data[data['CATEGORY_CODE'].apply(clean_category_code).isin(set(clean_category_code(c) for c in weight_category_codes))].copy()
     if target.empty: return pd.DataFrame(columns=data.columns)
     pat = re.compile(
-        r'\b\d+(?:\.\d+)?\s*'
-        r'(?:kg|kgs|g|gm|gms|grams|mg|mcg|ml|l|ltr|liter|litres|litre|cl|oz|ounces|lb|lbs'
-        r'|tablets?|tabs?|capsules?|caps?|sachets?|count|ct|sticks?|iu'
-        r'|tea\s*bags?|teabags?|bags?'
-        r'|pieces?|pcs|pack|packs'
-        r'|dozens?|pairs?|rolls?|sheets?|wipes?|pods?|softgels?|lozenges?|gummies|gummy|units?|serves?|servings?)'
-        r'|\b\d+s\b'
-        r'|\b(?:a\s+)?dozen\b',
+        r"\b\d+(?:\.\d+)?\s*"
+        r"(?:kg|kgs|g|gm|gms|grams|mg|mcg|ml|l|ltr|liter|litres|litre|cl|oz|ounces|lb|lbs"
+        r"|tablets?|tabs?|capsules?|caps?|sachets?|count|ct|sticks?|iu"
+        r"|tea\s*bags?|teabags?|bags?"
+        r"|pieces?|pcs|pack|packs"
+        r"|dozens?|pairs?|rolls?|sheets?|wipes?|pods?|softgels?|lozenges?|gummies|gummy|units?|serves?|servings?|vegan\s+pieces?)"
+        # "30s" / "30's" / "30\u2019s" / "60'S" — straight and curly apostrophes
+        r"|\b\d+[\u0027\u2019]?s\b"
+        # standalone "dozen / a dozen"
+        r"|\b(?:a\s+)?dozen\b"
+        # reversed: "pack of 24", "box of 10", "set of 6"
+        r"|\b(?:pack|box|set|bundle|lot)\s+of\s+\d+\b",
         re.IGNORECASE
     )
     return target[~target['NAME'].apply(lambda n: bool(pat.search(str(n))))].drop_duplicates(subset=['PRODUCT_SET_SID'])
