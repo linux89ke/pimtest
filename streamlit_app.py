@@ -1958,8 +1958,18 @@ country_validator = CountryValidator(st.session_state.selected_country)
 
 uploaded_files = st.file_uploader("", type=['csv', 'xlsx'], accept_multiple_files=True, key="daily_files")
 
+# Cache file bytes into session_state immediately so they survive st.rerun()
+# (st.rerun wipes the actual file bytes from the uploader widget)
 if uploaded_files:
-    current_file_signature = sorted([f.name + str(f.size) for f in uploaded_files])
+    st.session_state.cached_uploaded_files = [
+        {"name": uf.name, "bytes": uf.read()} for uf in uploaded_files
+    ]
+
+# Always use the cached bytes for processing — falls back to empty if nothing uploaded yet
+_files_for_processing = st.session_state.get("cached_uploaded_files", [])
+
+if _files_for_processing:
+    current_file_signature = sorted([f["name"] + str(len(f["bytes"])) for f in _files_for_processing])
     process_signature = str(current_file_signature) + f"_{country_validator.code}"
 else:
     process_signature = "empty"
@@ -2005,19 +2015,20 @@ if st.session_state.get('last_processed_files') != process_signature:
                 all_dfs = []
                 file_sids_sets = []
                 detected_modes = []
-                for uf in uploaded_files:
-                    uf.seek(0)
-                    if uf.name.endswith('.xlsx'):
-                        raw_data = pd.read_excel(uf, engine='openpyxl', dtype=str)
+                for uf in _files_for_processing:
+                    from io import BytesIO as _BytesIO
+                    _buf = _BytesIO(uf["bytes"])
+                    if uf["name"].endswith('.xlsx'):
+                        raw_data = pd.read_excel(_buf, engine='openpyxl', dtype=str)
                     else:
                         try:
-                            raw_data = pd.read_csv(uf, dtype=str)
+                            raw_data = pd.read_csv(_buf, dtype=str)
                             if len(raw_data.columns) <= 1:
-                                uf.seek(0)
-                                raw_data = pd.read_csv(uf, sep=';', encoding='ISO-8859-1', dtype=str)
+                                _buf.seek(0)
+                                raw_data = pd.read_csv(_buf, sep=';', encoding='ISO-8859-1', dtype=str)
                         except Exception:
-                            uf.seek(0)
-                            raw_data = pd.read_csv(uf, sep=';', encoding='ISO-8859-1', dtype=str)
+                            _buf.seek(0)
+                            raw_data = pd.read_csv(_buf, sep=';', encoding='ISO-8859-1', dtype=str)
                     detected_modes.append(detect_file_type(raw_data))
                     all_dfs.append(raw_data)
 
