@@ -208,6 +208,18 @@ if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_fl
 if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
 if 'flags_expanded_initialized' not in st.session_state: st.session_state.flags_expanded_initialized = False
 
+# ── LANGUAGE PRE-SYNC ────────────────────────────────────────────────────────
+# The country segmented_control uses key="country_selector", so Streamlit stores
+# the widget's NEW value in st.session_state.country_selector BEFORE the widget
+# renders. Reading it here (before sidebar / CSS) means language is always correct
+# on the same pass the user clicks a country — no rerun needed.
+_pre_country = st.session_state.get("country_selector") or st.session_state.get("selected_country", "Kenya")
+if _pre_country == "Morocco":
+    st.session_state.ui_lang = "fr"
+elif st.session_state.get("ui_lang") == "fr":
+    st.session_state.ui_lang = "en"
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _t(key):
     return get_translation(st.session_state.ui_lang, key)
 
