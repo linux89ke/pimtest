@@ -24,9 +24,14 @@ from PIL import Image
 from translations import LANGUAGES, get_translation
 
 try:
-    from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section
+    from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section, load_category_map
 except ImportError:
     pass
+
+# Fallback stub so load_all_support_files never crashes if postqc isn't importable
+if 'load_category_map' not in dir():
+    def load_category_map(filename: str = "category_map.xlsx") -> dict:
+        return {}
 
 # CHANGE 12: Logger defined early so every function can use it
 logger = logging.getLogger(__name__)
@@ -738,6 +743,7 @@ def load_all_support_files() -> Dict:
         'weight_category_codes': safe_load_txt('weight.txt'),
         'smartphone_category_codes': safe_load_txt('smartphones.txt'),
         'refurb_data': load_refurb_data_from_local(),
+        'category_map': load_category_map(),
     }
 
 @st.cache_data(ttl=3600)
@@ -2098,7 +2104,8 @@ if st.session_state.get('last_processed_files') != process_signature:
                 st.session_state.file_mode = file_mode
 
                 if file_mode == 'post_qc':
-                    norm_dfs = [normalize_post_qc(df) for df in all_dfs]
+                    cat_map = support_files.get('category_map', {})
+                    norm_dfs = [normalize_post_qc(df, category_map=cat_map) for df in all_dfs]
                     merged = pd.concat(norm_dfs, ignore_index=True)
                     merged_dedup = merged.drop_duplicates(subset=['PRODUCT_SET_SID'], keep='first')
                     with st.spinner("Running Post-QC checks..."):
