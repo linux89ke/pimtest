@@ -1929,14 +1929,11 @@ st.header(f":material/upload_file: {_t('upload_files')}", anchor=False)
 
 current_country = st.session_state.get('selected_country', get_default_country())
 
-# CHANGE 3: bind="country" syncs selection with URL query param (?country=Kenya)
-# Requires Streamlit >= 1.55.0
 country_choice = st.segmented_control(
     "Country",
     ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"],
     default=current_country,
     key="country_selector",
-    bind="country",
 )
 
 if country_choice and country_choice != current_country:
