@@ -1937,8 +1937,11 @@ country_choice = st.segmented_control(
 )
 
 if country_choice and country_choice != current_country:
+    # No st.rerun() here — without a rerun, uploaded_files still holds live bytes
+    # so processing works naturally in the same script pass. st.rerun() wipes the
+    # uploader widget bytes which causes all the country-switching bugs.
     st.session_state.selected_country = country_choice
-    st.session_state.last_processed_files = None   # force reprocess
+    st.session_state.last_processed_files = None
     st.session_state.final_report = pd.DataFrame()
     st.session_state.all_data_map = pd.DataFrame()
     st.session_state.exports_cache = {}
@@ -1949,11 +1952,6 @@ if country_choice and country_choice != current_country:
     else:
         st.session_state.ui_lang = "en"
     st.toast(f"Switching to {country_choice}…", icon="🌍")
-    # st.rerun() is safe here — st.file_uploader preserves its state across reruns
-    # via Streamlit's widget state manager (key="daily_files"). The earlier bug was
-    # caused by bind="query-params" resetting the widget, not by the rerun itself.
-    st.rerun()
-
 country_validator = CountryValidator(st.session_state.selected_country)
 
 uploaded_files = st.file_uploader("", type=['csv', 'xlsx'], accept_multiple_files=True, key="daily_files")
