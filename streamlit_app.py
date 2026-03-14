@@ -28,7 +28,6 @@ try:
 except ImportError:
     pass
 
-# CHANGE 12: Logger defined early so every function can use it
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
@@ -39,7 +38,6 @@ FLAG_CACHE_DIR = "app_cache_flags"
 os.makedirs(PARQUET_CACHE_DIR, exist_ok=True)
 os.makedirs(FLAG_CACHE_DIR, exist_ok=True)
 
-# CHANGE 10: Prune old pkl files so the cache dir never grows unbounded
 def prune_cache_dir(directory: str, max_files: int = 500):
     try:
         files = sorted(Path(directory).glob("*.pkl"), key=os.path.getmtime)
@@ -209,10 +207,6 @@ if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger =
 if 'flags_expanded_initialized' not in st.session_state: st.session_state.flags_expanded_initialized = False
 
 # ── LANGUAGE PRE-SYNC ────────────────────────────────────────────────────────
-# The country segmented_control uses key="country_selector", so Streamlit stores
-# the widget's NEW value in st.session_state.country_selector BEFORE the widget
-# renders. Reading it here (before sidebar / CSS) means language is always correct
-# on the same pass the user clicks a country — no rerun needed.
 _pre_country = st.session_state.get("country_selector") or st.session_state.get("selected_country", "Kenya")
 if _pre_country == "Morocco":
     st.session_state.ui_lang = "fr"
@@ -268,7 +262,6 @@ st.markdown(f"""
         .stButton > button[kind="secondary"] {{ background-color: white !important; border: 2px solid {JUMIA_COLORS['primary_orange']} !important; color: {JUMIA_COLORS['primary_orange']} !important; }}
         .stButton > button[kind="secondary"]:hover {{ background-color: {JUMIA_COLORS['light_gray']} !important; }}
 
-        /* CHANGE 1: Style native st.metric to match the design */
         div[data-testid="stMetric"] {{
             background: {JUMIA_COLORS['light_gray']};
             border-radius: 0 0 8px 8px;
@@ -361,13 +354,11 @@ def create_match_key(row: pd.Series) -> str:
     color = normalize_text(row.get('COLOR', ''))
     return f"{brand}|{name}|{color}"
 
-# CHANGE 13: Fix weak fallback — same shape + same columns should not collide
 def df_hash(df: pd.DataFrame) -> str:
     try:
         return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
     except Exception as e:
         logger.warning(f"df_hash primary failed, using fallback: {e}")
-        # Include column names to prevent same-shape collisions
         fallback_str = str(df.shape) + str(df.columns.tolist())
         return hashlib.md5(fallback_str.encode()).hexdigest()
 
@@ -432,7 +423,6 @@ def load_txt_file(filename: str) -> List[str]:
         if not os.path.exists(os.path.abspath(filename)): return []
         with open(filename, 'r', encoding='utf-8') as f: return [line.strip() for line in f if line.strip()]
     except Exception as e:
-        # CHANGE 12: Log instead of silently swallowing
         logger.warning(f"load_txt_file({filename}): {e}")
         return []
 
@@ -1204,7 +1194,6 @@ def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_cod
     if not flagged.empty: flagged['Comment_Detail'] = "Name missing Storage/Memory spec (e.g., 64GB)"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-# CHANGE 9: Vectorized duplicate detection — replaces slow iterrows loop
 def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = None, similarity_threshold: float = 0.70, known_colors: List[str] = None, **kwargs) -> pd.DataFrame:
     if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     d = data.copy()
@@ -1217,13 +1206,11 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     d['_norm_seller'] = d['SELLER_NAME'].astype(str).str.lower().str.strip()
     d['_dedup_key']   = d['_norm_seller'] + '|' + d['_norm_brand'] + '|' + d['_norm_name']
 
-    # Vectorized: keep first occurrence per key, flag all subsequent ones
     first_seen_mask = ~d.duplicated(subset=['_dedup_key'], keep='first')
     dup_mask        = d.duplicated(subset=['_dedup_key'], keep='first')
 
     if not dup_mask.any(): return pd.DataFrame(columns=data.columns)
 
-    # Build name lookup from first occurrence for comments
     first_occurrence = d[first_seen_mask].set_index('_dedup_key')['NAME']
     rdf = d[dup_mask].copy()
     rdf['Comment_Detail'] = rdf['_dedup_key'].map(
@@ -1479,7 +1466,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
         })
     cards_json = json.dumps(cards_data)
 
-    # CHANGE 6: Safe upper() — guard against None translation value
     rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
     return f"""<!DOCTYPE html>
@@ -1751,7 +1737,6 @@ renderAll();
 # -------------------------------------------------
 # UI COMPONENTS
 # -------------------------------------------------
-# CHANGE 8: Reduced timeout from 2s to 1s to prevent page blocking on slow CDNs
 @st.cache_data(ttl=86400, show_spinner=False)
 def analyze_image_quality_cached(url: str) -> List[str]:
     if not url or not str(url).startswith("http"): return []
@@ -1786,12 +1771,18 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     new_flag = str(new_row.iloc[0]['FLAG'])
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
+            
             if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
+            
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
-            # Keep the expander open after rerun
+            
             st.session_state[f"exp_{title}"] = True
+            
+            if f"df_{title}" in st.session_state:
+                del st.session_state[f"df_{title}"]
+                
         st.rerun()
 
 def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check, support_files, country_validator):
@@ -1820,6 +1811,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     if search_term: df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
     if seller_filter: df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
     df_view = df_view.reset_index(drop=True)
+    
     if 'NAME' in df_view.columns:
         def strip_html(text): return re.sub('<[^<]+?>', '', text) if isinstance(text, str) else text
         df_view['NAME'] = df_view['NAME'].apply(strip_html)
@@ -1866,10 +1858,16 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
+            
+            if f"df_{title}" in st.session_state:
+                del st.session_state[f"df_{title}"]
+                
             bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
+            
     with btn_col2:
         with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection):
             chosen_reason = st.selectbox("Reason", _reason_options, key=f"rej_reason_dd_{title}", label_visibility="collapsed")
+            
             if chosen_reason == "Other Reason (Custom)":
                 custom_comment = st.text_area("Custom comment", placeholder="Type your rejection reason here...", key=f"custom_comment_{title}", height=80)
                 if st.button("Apply", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
@@ -1879,13 +1877,17 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected with custom reason.")
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
+                    
                     st.session_state[f"exp_{title}"] = True
+                    if f"df_{title}" in st.session_state:
+                        del st.session_state[f"df_{title}"]
                     st.rerun()
             else:
                 _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
                 _rcode = _rinfo['reason']
                 _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
                 _rcmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
+                
                 st.caption(f"Code: {_rcode[:40]}...")
                 if st.button("Apply", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
@@ -1893,7 +1895,10 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
+                    
                     st.session_state[f"exp_{title}"] = True
+                    if f"df_{title}" in st.session_state:
+                        del st.session_state[f"df_{title}"]
                     st.rerun()
 
 # ==========================================
@@ -1953,9 +1958,6 @@ country_choice = st.segmented_control(
 )
 
 if country_choice and country_choice != current_country:
-    # No st.rerun() here — without a rerun, uploaded_files still holds live bytes
-    # so processing works naturally in the same script pass. st.rerun() wipes the
-    # uploader widget bytes which causes all the country-switching bugs.
     st.session_state.selected_country = country_choice
     st.session_state.last_processed_files = None
     st.session_state.final_report = pd.DataFrame()
@@ -1972,14 +1974,11 @@ country_validator = CountryValidator(st.session_state.selected_country)
 
 uploaded_files = st.file_uploader("", type=['csv', 'xlsx'], accept_multiple_files=True, key="daily_files")
 
-# Cache file bytes into session_state immediately so they survive st.rerun()
-# (st.rerun wipes the actual file bytes from the uploader widget)
 if uploaded_files:
     st.session_state.cached_uploaded_files = [
         {"name": uf.name, "bytes": uf.read()} for uf in uploaded_files
     ]
 elif uploaded_files is not None and len(uploaded_files) == 0:
-    # User clicked X to clear — wipe the cache so results disappear too
     st.session_state.cached_uploaded_files = []
     st.session_state.final_report = pd.DataFrame()
     st.session_state.all_data_map = pd.DataFrame()
@@ -1991,7 +1990,6 @@ elif uploaded_files is not None and len(uploaded_files) == 0:
     st.session_state.display_df_cache = {}
     st.session_state.last_processed_files = "empty"
 
-# Always use the cached bytes for processing — falls back to empty if nothing uploaded yet
 _files_for_processing = st.session_state.get("cached_uploaded_files", [])
 
 if _files_for_processing:
@@ -2154,8 +2152,6 @@ if _bridge_val:
                 st.session_state.display_df_cache.clear()
                 st.session_state.main_toasts.append((f"Rejected {_total} product(s)", ":material/block:"))
                 st.session_state.main_bridge_counter += 1
-                # CHANGE 16: Reset scroll flag on bridge-triggered reruns to prevent
-                # accidental scroll-to-top after a rejection from the image grid
                 st.session_state.do_scroll_top = False
                 st.rerun()
 
@@ -2168,7 +2164,7 @@ if _bridge_val:
                     _total_restored += 1
             if _total_restored > 0:
                 st.session_state.main_bridge_counter += 1
-                st.session_state.do_scroll_top = False  # CHANGE 16
+                st.session_state.do_scroll_top = False
                 st.rerun()
 
     except Exception as _e:
@@ -2191,30 +2187,26 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
 
     st.header(f":material/bar_chart: {_t('val_results')}", anchor=False)
 
-    # CHANGE 1: Native st.metric with colored top-bar accent instead of raw HTML divs
     with st.container(border=True):
         cols = st.columns(5 if st.session_state.layout_mode == "wide" else 3)
         is_nigeria = st.session_state.get('selected_country') == 'Nigeria'
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            (_t("total_prod"),  len(data),                                                                                             JUMIA_COLORS['dark_gray']),
-            (_t("approved"),    len(app_df),                                                                                           JUMIA_COLORS['success_green']),
-            (_t("rejected"),    len(rej_df),                                                                                           JUMIA_COLORS['jumia_red']),
-            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                           JUMIA_COLORS['primary_orange']),
+            (_t("total_prod"),  len(data),                                                                                JUMIA_COLORS['dark_gray']),
+            (_t("approved"),    len(app_df),                                                                              JUMIA_COLORS['success_green']),
+            (_t("rejected"),    len(rej_df),                                                                              JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                            JUMIA_COLORS['primary_orange']),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
             with cols[i % len(cols)]:
-                # Colored top bar + native st.metric
                 st.markdown(
                     f"<div style='height:5px;background:{color};border-radius:6px 6px 0 0;'></div>",
                     unsafe_allow_html=True
                 )
                 st.metric(label=label, value=value)
 
-    # CHANGE 2: Expanders use key= for programmatic control (Streamlit 1.55.0+)
-    # Auto-open the largest flag group on first load
     st.subheader(f":material/flag: {_t('flags_breakdown')}", anchor=False)
     if not rej_df.empty:
         if not st.session_state.flags_expanded_initialized and not rej_df.empty:
@@ -2329,7 +2321,6 @@ def render_image_grid():
     )
     components.html(grid_html, height=800, scrolling=True)
 
-    # CHANGE 16: Only scroll on explicit page navigation — never on bridge-triggered reruns
     if st.session_state.get("do_scroll_top", False):
         components.html(
             "<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>",
@@ -2346,7 +2337,6 @@ def render_exports_section():
     if st.session_state.final_report.empty or st.session_state.file_mode == 'post_qc':
         return
 
-    # Read fresh from session_state every time the fragment runs
     fr      = st.session_state.final_report
     data    = st.session_state.all_data_map
     app_df  = fr[fr['Status'] == 'Approved']
@@ -2367,7 +2357,6 @@ def render_exports_section():
 
     all_cached = all(title in st.session_state.exports_cache for title, _, _, _ in exports_config)
 
-    # CHANGE 15: Success banner when all reports are ready
     if all_cached:
         st.success("All reports generated and ready to download.", icon=":material/check_circle:")
     else:
@@ -2392,7 +2381,6 @@ def render_exports_section():
                         if title not in st.session_state.exports_cache:
                             if st.button("Generate", key=f"gen_{title}", type="primary", use_container_width=True, icon=":material/download:"):
                                 with st.spinner("Generating all reports…"):
-                                    # Any single Generate click builds all four
                                     for t2, d2, _desc2, f2 in exports_config:
                                         if t2 not in st.session_state.exports_cache:
                                             res, fname, mime = f2(d2)
