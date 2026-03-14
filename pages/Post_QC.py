@@ -171,6 +171,20 @@ for _k, _v in _SS_DEFAULTS.items():
         st.session_state[_k] = _v
 
 # ------------------------------------------------------------------
+# CANONICAL FIELD LIST  (module-level so it's always in scope)
+# ------------------------------------------------------------------
+_ALL_FIELDS = [
+    "PRICE", "DISCOUNT", "STOCK_STATUS",
+    "MODEL", "GTIN", "BRAND", "CATEGORY_PATH", "IS_OFFICIAL_STORE",
+    "MAIN_IMAGE", "WEIGHT",
+    "COLOR", "COLOR_IN_TITLE", "COUNT_VARIATIONS", "SIZES_AVAILABLE",
+    "PRODUCT_WARRANTY", "WARRANTY_DURATION",
+    "RATING", "REVIEW_COUNT",
+    "DESCRIPTION", "KEY_FEATURES", "KEY_SPECS", "SPECIFICATIONS",
+    "WHATS_IN_BOX",
+]
+
+# ------------------------------------------------------------------
 # HELPERS
 # ------------------------------------------------------------------
 COUNTRY_CODES = {
@@ -527,19 +541,9 @@ with tab_sku:
                 _sbar.empty()
 
                 results_df = pd.DataFrame(rows)
-                # Canonical full column list — defined locally so new fields
-                # always appear even if the imported SCRAPABLE_FIELDS is stale.
-                _ALL_FIELDS = [
-                    "PRICE", "DISCOUNT", "STOCK_STATUS",
-                    "MODEL", "GTIN", "BRAND", "CATEGORY_PATH", "IS_OFFICIAL_STORE",
-                    "MAIN_IMAGE", "WEIGHT",
-                    "COLOR", "COLOR_IN_TITLE", "COUNT_VARIATIONS", "SIZES_AVAILABLE",
-                    "PRODUCT_WARRANTY", "WARRANTY_DURATION",
-                    "RATING", "REVIEW_COUNT",
-                    "DESCRIPTION", "KEY_FEATURES", "KEY_SPECS", "SPECIFICATIONS",
-                    "WHATS_IN_BOX",
-                ]
-                # Also include anything from the live import in case it has extras
+                # Ensure every canonical field exists as a column (empty string
+                # when not scraped). Merge with live SCRAPABLE_FIELDS in case
+                # the installed jumia_scraper has additional fields.
                 _all_cols = list(dict.fromkeys(
                     _ALL_FIELDS + (SCRAPABLE_FIELDS if _SCRAPER_OK else [])
                 ))
