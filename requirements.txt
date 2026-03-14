@@ -5,6 +5,7 @@ openpyxl
 st-gsheets-connection
 imagehash
 Pillow
+plotly
 requests
 opencv-python-headless
 google-generativeai
