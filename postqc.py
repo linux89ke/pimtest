@@ -48,10 +48,80 @@ def detect_file_type(df: pd.DataFrame) -> str:
     return 'pre_qc'
 
 # -------------------------------------------------
+# CATEGORY MAP LOADER
+# -------------------------------------------------
+
+def load_category_map(filename: str = "category_map.xlsx") -> Dict[str, str]:
+    """
+    Load the category name → code mapping file.
+    Expected columns: category_name, category_code, Category Path
+    Returns a dict keyed by lowercased category_name → category_code string.
+    Also indexes by the last segment of Category Path for fuzzy matching.
+    """
+    import os
+    if not os.path.exists(filename):
+        # try csv variant
+        csv_path = filename.replace('.xlsx', '.csv')
+        if os.path.exists(csv_path):
+            filename = csv_path
+        else:
+            logger.warning(f"load_category_map: file '{filename}' not found")
+            return {}
+    try:
+        if filename.endswith('.csv'):
+            df = pd.read_csv(filename, dtype=str)
+        else:
+            df = pd.read_excel(filename, engine='openpyxl', dtype=str)
+
+        df.columns = df.columns.str.strip()
+
+        # Flexible column detection
+        name_col = next((c for c in df.columns if 'name' in c.lower()), None)
+        code_col = next((c for c in df.columns if 'code' in c.lower()), None)
+        path_col = next((c for c in df.columns if 'path' in c.lower()), None)
+
+        if not name_col or not code_col:
+            logger.warning(f"load_category_map: couldn't find name/code columns in {df.columns.tolist()}")
+            return {}
+
+        mapping: Dict[str, str] = {}
+
+        for _, row in df.iterrows():
+            name = str(row[name_col]).strip()
+            code = str(row[code_col]).strip()
+            if not name or not code or name.lower() == 'nan' or code.lower() == 'nan':
+                continue
+            code_clean = code.split('.')[0]  # strip any decimal
+
+            # Index by exact category name (lowercased)
+            mapping[name.lower()] = code_clean
+
+            # Also index by last segment of Category Path if available
+            if path_col:
+                path = str(row[path_col]).strip()
+                if path and path.lower() != 'nan':
+                    last_segment = path.split('/')[-1].strip().lower()
+                    if last_segment and last_segment not in mapping:
+                        mapping[last_segment] = code_clean
+
+        logger.info(f"load_category_map: loaded {len(mapping)} entries from '{filename}'")
+        return mapping
+
+    except Exception as e:
+        logger.warning(f"load_category_map({filename}): {e}")
+        return {}
+
+
+# -------------------------------------------------
 # NORMALISATION
 # -------------------------------------------------
 
-def normalize_post_qc(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_post_qc(df: pd.DataFrame, category_map: Dict[str, str] = None) -> pd.DataFrame:
+    """
+    Normalise a post-QC export into the standard column schema.
+    If category_map is provided (name → code), CATEGORY_CODE will be
+    the real Jumia numeric code instead of a slugified placeholder.
+    """
     df = df.copy()
     df.columns = df.columns.str.strip()
 
@@ -76,10 +146,29 @@ def normalize_post_qc(df: pd.DataFrame) -> pd.DataFrame:
     df = df.rename(columns=col_map)
 
     if 'CATEGORY' in df.columns:
-        df['CATEGORY_CODE'] = df['CATEGORY'].astype(str).apply(
-            lambda x: re.sub(r'[^a-z0-9]', '_', x.split('>')[-1].strip().lower())
-                      if x and x != 'nan' else ''
-        )
+        cmap = category_map or {}
+
+        def resolve_code(raw: str) -> str:
+            if not raw or raw == 'nan':
+                return ''
+            # The category field may be a full path like "Automobile / Car Care / Cleaning Kits"
+            # Try progressively shorter suffixes from the right for best match
+            segments = [s.strip() for s in re.split(r'[>/]', raw) if s.strip()]
+            # Try from most-specific (last) to least-specific (first)
+            for seg in reversed(segments):
+                code = cmap.get(seg.lower())
+                if code:
+                    return code
+            # Fallback: slugify the last segment so nothing breaks
+            last = segments[-1] if segments else raw
+            return re.sub(r'[^a-z0-9]', '_', last.lower())
+
+        df['CATEGORY_CODE'] = df['CATEGORY'].astype(str).apply(resolve_code)
+
+        # Surface how many were resolved vs fell back to slug
+        resolved = df['CATEGORY_CODE'].str.match(r'^\d+$').sum()
+        total    = len(df)
+        logger.info(f"normalize_post_qc: {resolved}/{total} rows resolved to numeric category codes")
 
     if 'ACTIVE_STATUS_COUNTRY' not in df.columns:
         df['ACTIVE_STATUS_COUNTRY'] = 'UNKNOWN'
