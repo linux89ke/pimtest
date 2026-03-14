@@ -28,6 +28,11 @@ try:
 except ImportError:
     pass
 
+try:
+    import _preqc_registry as _reg
+except ImportError:
+    _reg = None
+
 # Fallback stub so load_all_support_files never crashes if postqc isn't importable
 if 'load_category_map' not in dir():
     def load_category_map(filename: str = "category_map.xlsx") -> dict:
@@ -1266,6 +1271,40 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     base_cols  = data.columns.tolist()
     extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
+
+
+# -------------------------------------------------
+# REGISTER CHECK FUNCTIONS FOR postqc.py
+# Must come after all check functions are defined.
+# postqc reads this registry to avoid circular imports.
+# -------------------------------------------------
+if _reg is not None:
+    _reg.REGISTRY.update({
+        'check_restricted_brands':           check_restricted_brands,
+        'check_suspected_fake_products':     check_suspected_fake_products,
+        'check_refurb_seller_approval':      check_refurb_seller_approval,
+        'check_product_warranty':            check_product_warranty,
+        'check_seller_approved_for_books':   check_seller_approved_for_books,
+        'check_seller_approved_for_perfume': check_seller_approved_for_perfume,
+        'check_perfume_tester':              check_perfume_tester,
+        'check_counterfeit_sneakers':        check_counterfeit_sneakers,
+        'check_counterfeit_jerseys':         check_counterfeit_jerseys,
+        'check_prohibited_products':         check_prohibited_products,
+        'check_unnecessary_words':           check_unnecessary_words,
+        'check_single_word_name':            check_single_word_name,
+        'check_generic_brand_issues':        check_generic_brand_issues,
+        'check_fashion_brand_issues':        check_fashion_brand_issues,
+        'check_brand_in_name':               check_brand_in_name,
+        'check_wrong_variation':             check_wrong_variation,
+        'check_generic_with_brand_in_name':  check_generic_with_brand_in_name,
+        'check_missing_color':               check_missing_color,
+        'check_weight_volume_in_name':       check_weight_volume_in_name,
+        'check_incomplete_smartphone_name':  check_incomplete_smartphone_name,
+        'check_duplicate_products':          check_duplicate_products,
+        'check_miscellaneous_category':      check_miscellaneous_category,
+        'compile_regex_patterns':            compile_regex_patterns,
+        'FX_RATE':                           FX_RATE,
+    })
 
 # -------------------------------------------------
 # MASTER VALIDATION RUNNER
