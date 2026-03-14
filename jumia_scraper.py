@@ -62,6 +62,8 @@ SCRAPABLE_FIELDS: list[str] = [
     # Content
     "DESCRIPTION",
     "KEY_FEATURES",
+    "KEY_SPECS",
+    "SPECIFICATIONS",
     "WHATS_IN_BOX",
 ]
 
@@ -544,15 +546,15 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
 
     # Strategy E2: split concatenated colour strings like "PinkPurple" or
     # "BlackRedBlue" — Jumia sometimes renders colour pills without separators.
+    # IMPORTANT: must run BEFORE the write block so COUNT_VARIATIONS is correct.
+    _SPLIT_COLOR_RE = re.compile(
+        r"(Black|White|Silver|Gold|Blue|Red|Green|Purple|Pink|Grey|Gray|"
+        r"Titanium|Midnight|Starlight|Ivory|Champagne|Rose|Copper|Yellow|"
+        r"Orange|Violet|Navy|Cream|Brown|Coral|Aqua|Cyan|Teal|Lilac|"
+        r"Maroon|Beige|Olive|Turquoise)"
+    )
     if colors and len(colors) == 1:
-        single = colors[0]
-        KNOWN_COLORS_RE = re.compile(
-            r"(Black|White|Silver|Gold|Blue|Red|Green|Purple|Pink|Grey|Gray|"
-            r"Titanium|Midnight|Starlight|Ivory|Champagne|Rose|Copper|Yellow|"
-            r"Orange|Violet|Navy|Cream|Brown|Coral|Aqua|Cyan|Teal|Lilac|"
-            r"Maroon|Beige|Olive|Turquoise)"
-        )
-        split_parts = KNOWN_COLORS_RE.findall(single)
+        split_parts = _SPLIT_COLOR_RE.findall(colors[0])
         if len(split_parts) >= 2:
             colors = list(dict.fromkeys(split_parts))
 
@@ -618,6 +620,11 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
                 c.title() for c in found_title_colors
             ))
             result["COLOR_IN_TITLE"] = ", ".join(unique_title_colors)
+        else:
+            # Explicitly mark as None so field is populated, not blank
+            result["COLOR_IN_TITLE"] = "None"
+    else:
+        result["COLOR_IN_TITLE"] = "None"
 
 
     # ── Specifications table helper ───────────────────────────────────────────
@@ -810,6 +817,69 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
         if m2:
             result["PRODUCT_WARRANTY"] = "Yes"
             result.setdefault("WARRANTY_DURATION", m2.group(1).strip())
+
+    # ── SPECIFICATIONS — flat key/value dump from the specs table ───────────────
+    # Captures the Specifications section as a readable "Key: Value" string.
+    # Jumia shows rows like: SKU, Size (L x W x H cm), Weight (kg), Main Material
+    if not result.get("SPECIFICATIONS"):
+        spec_lines: list[str] = []
+        # CSS: Jumia spec items inside .-sku, .-size, .-wgt etc or generic -atr
+        for section in soup.select(
+            "div[class*='spec'], section[class*='spec'], "
+            "ul[class*='spec'], div.-atr, section.-atr"
+        ):
+            for item in (section.find_all("li") or section.find_all("div", recursive=False)):
+                txt = item.get_text(" ", strip=True)
+                if ":" in txt and len(txt) < 200:
+                    spec_lines.append(txt.strip())
+        # Plain-text fallback — Jumia renders specs in "Specifications" section
+        if not spec_lines:
+            m_spec = re.search(
+                r"Specifications?\s*\n(.*?)(?:Customer Feedback|Related results|\Z)",
+                full_text, re.IGNORECASE | re.DOTALL,
+            )
+            if m_spec:
+                for line in m_spec.group(1).splitlines():
+                    line = line.strip()
+                    if line and len(line) < 200:
+                        spec_lines.append(line)
+        # Also always add known fields we already scraped
+        known = [
+            ("SKU",             result.get("MODEL") or ""),
+            ("Weight (kg)",     result.get("WEIGHT") or ""),
+            ("Main Material",   spec_map.get("main_material", "")),
+            ("Size (L x W H)", spec_map.get("size_(l_x_w_x_h_cm)", "")),
+        ]
+        for label, val in known:
+            if val and not any(label.lower() in l.lower() for l in spec_lines):
+                spec_lines.append(f"{label}: {val}")
+        if spec_lines:
+            result["SPECIFICATIONS"] = " | ".join(spec_lines)
+
+    # ── KEY_SPECS — formatted summary of the most important spec fields ─────────
+    # A compact, human-readable string combining the key attributes visible in
+    # the Specifications panel (SKU, Size, Weight, Material).
+    if not result.get("KEY_SPECS"):
+        ks_parts: list[str] = []
+        # Pull from spec_map (already built above)
+        _ks_fields = [
+            ("SKU",      "sku"),
+            ("Size",     "size_(l_x_w_x_h_cm)"),
+            ("Weight",   "weight_(kg)"),
+            ("Material", "main_material"),
+            ("GTIN",     "gtin_barcode"),
+        ]
+        for label, key in _ks_fields:
+            val = spec_map.get(key, "")
+            if val:
+                ks_parts.append(f"{label}: {val}")
+        # Also use already-scraped fields as fallback
+        if not any("SKU" in p for p in ks_parts) and result.get("MODEL"):
+            ks_parts.insert(0, f"SKU: {result['MODEL']}")
+        if not any("Weight" in p for p in ks_parts) and result.get("WEIGHT"):
+            ks_parts.append(f"Weight: {result['WEIGHT']} kg")
+        if ks_parts:
+            result["KEY_SPECS"] = " | ".join(ks_parts)
 
     # ── Description (HTML — preserves infographic <img> tags) ────────────────
     # Jumia's description section sits between the "Product details" heading
