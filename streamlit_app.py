@@ -28,6 +28,7 @@ try:
 except ImportError:
     pass
 
+# CHANGE 12: Logger defined early so every function can use it
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
@@ -38,6 +39,7 @@ FLAG_CACHE_DIR = "app_cache_flags"
 os.makedirs(PARQUET_CACHE_DIR, exist_ok=True)
 os.makedirs(FLAG_CACHE_DIR, exist_ok=True)
 
+# CHANGE 10: Prune old pkl files so the cache dir never grows unbounded
 def prune_cache_dir(directory: str, max_files: int = 500):
     try:
         files = sorted(Path(directory).glob("*.pkl"), key=os.path.getmtime)
@@ -354,6 +356,7 @@ def create_match_key(row: pd.Series) -> str:
     color = normalize_text(row.get('COLOR', ''))
     return f"{brand}|{name}|{color}"
 
+# CHANGE 13: Fix weak fallback — same shape + same columns should not collide
 def df_hash(df: pd.DataFrame) -> str:
     try:
         return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
@@ -1194,6 +1197,7 @@ def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_cod
     if not flagged.empty: flagged['Comment_Detail'] = "Name missing Storage/Memory spec (e.g., 64GB)"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
+# CHANGE 9: Vectorized duplicate detection — replaces slow iterrows loop
 def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = None, similarity_threshold: float = 0.70, known_colors: List[str] = None, **kwargs) -> pd.DataFrame:
     if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     d = data.copy()
@@ -1466,6 +1470,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
         })
     cards_json = json.dumps(cards_data)
 
+    # CHANGE 6: Safe upper() — guard against None translation value
     rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
     return f"""<!DOCTYPE html>
@@ -1737,6 +1742,7 @@ renderAll();
 # -------------------------------------------------
 # UI COMPONENTS
 # -------------------------------------------------
+# CHANGE 8: Reduced timeout from 2s to 1s to prevent page blocking on slow CDNs
 @st.cache_data(ttl=86400, show_spinner=False)
 def analyze_image_quality_cached(url: str) -> List[str]:
     if not url or not str(url).startswith("http"): return []
@@ -1753,6 +1759,12 @@ def analyze_image_quality_cached(url: str) -> List[str]:
     except Exception:
         pass
     return warnings
+
+def _clear_flag_df_selection(title: str):
+    """Helper: wipe the st.dataframe widget selection state for a given flag tab."""
+    if f"df_{title}" in st.session_state:
+        del st.session_state[f"df_{title}"]
+
 
 @st.dialog("Confirm Bulk Approval")
 def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator):
@@ -1771,18 +1783,13 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     new_flag = str(new_row.iloc[0]['FLAG'])
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
-            
             if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
-            
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
-            
+            # Keep expander open and clear selection after approval
             st.session_state[f"exp_{title}"] = True
-            
-            if f"df_{title}" in st.session_state:
-                del st.session_state[f"df_{title}"]
-                
+            _clear_flag_df_selection(title)
         st.rerun()
 
 def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check, support_files, country_validator):
@@ -1811,7 +1818,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     if search_term: df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
     if seller_filter: df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
     df_view = df_view.reset_index(drop=True)
-    
     if 'NAME' in df_view.columns:
         def strip_html(text): return re.sub('<[^<]+?>', '', text) if isinstance(text, str) else text
         df_view['NAME'] = df_view['NAME'].apply(strip_html)
@@ -1858,16 +1864,13 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
-            
-            if f"df_{title}" in st.session_state:
-                del st.session_state[f"df_{title}"]
-                
+            # Clear selection before opening the dialog so rows are deselected on return
+            _clear_flag_df_selection(title)
             bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
-            
+
     with btn_col2:
         with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection):
             chosen_reason = st.selectbox("Reason", _reason_options, key=f"rej_reason_dd_{title}", label_visibility="collapsed")
-            
             if chosen_reason == "Other Reason (Custom)":
                 custom_comment = st.text_area("Custom comment", placeholder="Type your rejection reason here...", key=f"custom_comment_{title}", height=80)
                 if st.button("Apply", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
@@ -1877,17 +1880,15 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected with custom reason.")
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
-                    
                     st.session_state[f"exp_{title}"] = True
-                    if f"df_{title}" in st.session_state:
-                        del st.session_state[f"df_{title}"]
+                    # Clear selection so table shows fresh after reject
+                    _clear_flag_df_selection(title)
                     st.rerun()
             else:
                 _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
                 _rcode = _rinfo['reason']
                 _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
                 _rcmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
-                
                 st.caption(f"Code: {_rcode[:40]}...")
                 if st.button("Apply", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
@@ -1895,10 +1896,9 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
-                    
                     st.session_state[f"exp_{title}"] = True
-                    if f"df_{title}" in st.session_state:
-                        del st.session_state[f"df_{title}"]
+                    # Clear selection so table shows fresh after reject
+                    _clear_flag_df_selection(title)
                     st.rerun()
 
 # ==========================================
@@ -2152,6 +2152,7 @@ if _bridge_val:
                 st.session_state.display_df_cache.clear()
                 st.session_state.main_toasts.append((f"Rejected {_total} product(s)", ":material/block:"))
                 st.session_state.main_bridge_counter += 1
+                # CHANGE 16: Reset scroll flag on bridge-triggered reruns
                 st.session_state.do_scroll_top = False
                 st.rerun()
 
@@ -2164,7 +2165,7 @@ if _bridge_val:
                     _total_restored += 1
             if _total_restored > 0:
                 st.session_state.main_bridge_counter += 1
-                st.session_state.do_scroll_top = False
+                st.session_state.do_scroll_top = False  # CHANGE 16
                 st.rerun()
 
     except Exception as _e:
@@ -2193,10 +2194,10 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            (_t("total_prod"),  len(data),                                                                                JUMIA_COLORS['dark_gray']),
-            (_t("approved"),    len(app_df),                                                                              JUMIA_COLORS['success_green']),
-            (_t("rejected"),    len(rej_df),                                                                              JUMIA_COLORS['jumia_red']),
-            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                            JUMIA_COLORS['primary_orange']),
+            (_t("total_prod"),  len(data),                                                                                             JUMIA_COLORS['dark_gray']),
+            (_t("approved"),    len(app_df),                                                                                           JUMIA_COLORS['success_green']),
+            (_t("rejected"),    len(rej_df),                                                                                           JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                           JUMIA_COLORS['primary_orange']),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
@@ -2321,6 +2322,7 @@ def render_image_grid():
     )
     components.html(grid_html, height=800, scrolling=True)
 
+    # CHANGE 16: Only scroll on explicit page navigation
     if st.session_state.get("do_scroll_top", False):
         components.html(
             "<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>",
@@ -2357,6 +2359,7 @@ def render_exports_section():
 
     all_cached = all(title in st.session_state.exports_cache for title, _, _, _ in exports_config)
 
+    # CHANGE 15: Success banner when all reports are ready
     if all_cached:
         st.success("All reports generated and ready to download.", icon=":material/check_circle:")
     else:
