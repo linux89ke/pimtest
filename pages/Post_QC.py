@@ -44,14 +44,17 @@ except ImportError:
     pass
 
 # Import the full validation pipeline and support helpers from the main app.
-# These live in streamlit_app.py (the app root module). We import defensively
-# so Post_QC still works if run in isolation.
+# streamlit_app.py lives in the repo root (one level above pages/).
+# The ROOT path fix at the top of this file already adds ROOT to sys.path,
+# so importlib.import_module("streamlit_app") will always find it.
+# We never use __main__ — when Streamlit runs a page, __main__ is the
+# Streamlit runner itself, not streamlit_app.py.
 try:
-    import importlib, sys as _sys
+    import importlib as _importlib
     _main_mod = (
-        _sys.modules.get("streamlit_app")
-        or _sys.modules.get("__main__")
-        or importlib.import_module("streamlit_app")
+        # Prefer already-loaded module to avoid double-execution side effects
+        sys.modules.get("streamlit_app")
+        or _importlib.import_module("streamlit_app")
     )
     validate_products      = _main_mod.validate_products
     load_all_support_files = _main_mod.load_all_support_files
@@ -230,14 +233,15 @@ def _code(name: str) -> str:
 def _load_support_files() -> dict:
     if "support_files" in st.session_state:
         return st.session_state.support_files
-    mod = sys.modules.get("streamlit_app") or sys.modules.get("__main__")
-    if mod and hasattr(mod, "load_all_support_files"):
+    # Use the already-imported load_all_support_files if available
+    if _FULL_VALIDATION_OK:
         try:
-            sf = mod.load_all_support_files()
+            sf = load_all_support_files()
             st.session_state.support_files = sf
             return sf
         except Exception:
             pass
+    # Minimal fallback: just the category map
     cat_map = load_category_map() if _POSTQC_OK else {}
     return {"category_map": cat_map}
 
