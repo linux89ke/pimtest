@@ -544,19 +544,73 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
             else:
                 colors.append(v)
 
-    # Strategy E2: split concatenated colour strings like "PinkPurple" or
-    # "BlackRedBlue" — Jumia sometimes renders colour pills without separators.
-    # IMPORTANT: must run BEFORE the write block so COUNT_VARIATIONS is correct.
-    _SPLIT_COLOR_RE = re.compile(
-        r"(Black|White|Silver|Gold|Blue|Red|Green|Purple|Pink|Grey|Gray|"
-        r"Titanium|Midnight|Starlight|Ivory|Champagne|Rose|Copper|Yellow|"
-        r"Orange|Violet|Navy|Cream|Brown|Coral|Aqua|Cyan|Teal|Lilac|"
-        r"Maroon|Beige|Olive|Turquoise)"
-    )
-    if colors and len(colors) == 1:
-        split_parts = _SPLIT_COLOR_RE.findall(colors[0])
-        if len(split_parts) >= 2:
-            colors = list(dict.fromkeys(split_parts))
+    # ── Strategies E2 / F / G — generic variation-text tokeniser ───────────────
+    #
+    # Jumia sometimes renders variation options as plain concatenated text with
+    # no pill/list markup: "PinkPurple", "S M L XL", "RedGreenBlue", etc.
+    # The values can be ANYTHING: colours, size codes, numeric sizes, labels.
+    #
+    # _tokenise_variant_string splits a raw string into individual tokens by:
+    #   a) natural delimiters (comma, pipe, slash, space)
+    #   b) CamelCase boundaries as a last resort (PinkPurple -> Pink, Purple)
+
+    def _tokenise_variant_string(raw):
+        # Returns list[str] of individual option tokens
+        raw = raw.strip()
+        if re.search(r"[,|/]", raw):
+            parts = re.split(r"[,|/]", raw)
+        elif " " in raw:
+            parts = raw.split()
+        else:
+            # CamelCase split handles "PinkPurple", "SmallMedium", "SMLXL"
+            parts = re.findall(
+                r"[A-Z]{2,}(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+(?:\.[0-9]+)?",
+                raw,
+            )
+        return [p.strip() for p in parts if p.strip() and len(p.strip()) <= 30]
+
+    # E2: pill detection returned exactly ONE token — try to split it generically
+    if colors and len(colors) == 1 and not sizes:
+        tokens = _tokenise_variant_string(colors[0])
+        if len(tokens) >= 2:
+            colors = []
+            for tok in tokens:
+                if _is_size(tok):
+                    sizes.append(tok)
+                else:
+                    colors.append(tok)
+
+    # Strategy F: "Variation available" block in page text
+    if not colors and not sizes:
+        var_m = re.search(
+            r"Variation\s+available\s*\n([^\n]{2,80})",
+            full_text, re.IGNORECASE,
+        )
+        if var_m:
+            candidate = var_m.group(1).strip()
+            tokens = _tokenise_variant_string(candidate)
+            for tok in tokens:
+                if _is_size(tok):
+                    sizes.append(tok)
+                else:
+                    colors.append(tok)
+
+    # Strategy G: scan the Jumia variation section (.-pvs) for any short text
+    if not colors and not sizes:
+        pvs = soup.select_one("section.-pvs, div.-pvs, ul.-pvs")
+        if pvs:
+            candidate_text = pvs.get_text(" ", strip=True)
+            candidate_text = re.sub(
+                r"(Variation\s+available|Add\s+to\s+cart|Some\s+variations|low\s+stock)",
+                "", candidate_text, flags=re.IGNORECASE,
+            ).strip()
+            if candidate_text and len(candidate_text) <= 120:
+                tokens = _tokenise_variant_string(candidate_text)
+                for tok in tokens:
+                    if _is_size(tok):
+                        sizes.append(tok)
+                    else:
+                        colors.append(tok)
 
     # Strategy E: title-word colour extraction — only when pills gave nothing
     if not colors and not sizes:
