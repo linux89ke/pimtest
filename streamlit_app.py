@@ -1934,18 +1934,22 @@ country_choice = st.segmented_control(
     ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"],
     default=current_country,
     key="country_selector",
-    bind="query-params",
 )
 
 if country_choice and country_choice != current_country:
     st.session_state.selected_country = country_choice
-    # CHANGE 14: Visible feedback before the rerun so the switch feels instant
+    # Force the processing block to re-run with the new country even if files are already loaded
+    st.session_state.last_processed_files = None
+    st.session_state.final_report = pd.DataFrame()
+    st.session_state.all_data_map = pd.DataFrame()
+    st.session_state.exports_cache = {}
+    st.session_state.display_df_cache = {}
+    st.session_state.flags_expanded_initialized = False
     st.toast(f"Switching to {country_choice}…", icon="🌍")
     if country_choice == "Morocco":
         st.session_state.ui_lang = "fr"
     else:
         st.session_state.ui_lang = "en"
-    st.session_state.flags_expanded_initialized = False
     st.rerun()
 
 country_validator = CountryValidator(st.session_state.selected_country)
