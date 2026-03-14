@@ -444,42 +444,140 @@ if not _POSTQC_OK:
 tab_upload, tab_sku = st.tabs(["📁 Upload & Validate", "🔎 SKU Lookup"])
 
 # ══════════════════════════════════════════════════════════════════
-# TAB 2 — SKU LOOKUP  (defined first so helpers are in scope)
+# TAB 2 — SKU / URL LOOKUP
+# Accepts either raw SKUs or full Jumia product URLs (or a mix).
+# URLs have their SKU extracted from the slug so the same scrape
+# pipeline is used regardless of input mode.
 # ══════════════════════════════════════════════════════════════════
+
+# ── Helpers ───────────────────────────────────────────────────────
+def _extract_sku_from_url(url: str) -> str | None:
+    """
+    Pull the Jumia SKU from a product URL slug.
+    Jumia SKUs follow a known pattern and typically end in a country/platform
+    suffix like NAFAMZ, GANAFAMZ, HANAFAMZ etc., or are at least 14 chars
+    and contain both letters and digits with no purely descriptive words.
+    Pure size/measurement tokens like '2000ML800ML280ML' are excluded.
+    """
+    slug = re.sub(r"\.html.*$", "", url.rstrip("/").split("/")[-1])
+    parts = slug.split("-")
+    for part in reversed(parts):
+        # Must be 12-30 chars, mix of letters and digits
+        if not (12 <= len(part) <= 30):
+            continue
+        if not re.search(r"[A-Za-z]", part) or not re.search(r"[0-9]", part):
+            continue
+        # Exclude purely descriptive tokens: contains only common unit words
+        if re.fullmatch(r"[\dA-Z]*(ML|KG|GB|TB|CM|MM|GM|MG|PC|PCS|L)+[\dA-Z]*", part, re.IGNORECASE):
+            continue
+        # Prefer segments ending in known Jumia SKU suffixes
+        if re.search(r"(NAFAMZ|GANAFAMZ|HANAFAMZ|FANAFAMZ)$", part, re.IGNORECASE):
+            return part.upper()
+    # Second pass: any 12-30 char alphanumeric segment not a unit token
+    for part in reversed(parts):
+        if not (12 <= len(part) <= 30):
+            continue
+        if not re.search(r"[A-Za-z]", part) or not re.search(r"[0-9]", part):
+            continue
+        if re.fullmatch(r"[\dA-Z]*(ML|KG|GB|TB|CM|MM|GM|MG|PC|PCS|L)+[\dA-Z]*", part, re.IGNORECASE):
+            continue
+        return part.upper()
+    return None
+
+def _auto_detect_country_from_url(url: str) -> str | None:
+    """Detect country code from the Jumia domain in a URL."""
+    _domain_map = {
+        "jumia.co.ke": "KE",
+        "jumia.ug":    "UG",
+        "jumia.com.ng":"NG",
+        "jumia.com.gh":"GH",
+        "jumia.ma":    "MA",
+    }
+    for domain, code in _domain_map.items():
+        if domain in url:
+            return code
+    return None
+
+def _parse_lookup_inputs(raw_text: str) -> list[dict]:
+    """
+    Parse a newline-separated block of SKUs and/or URLs.
+    Returns a list of dicts: {input, sku, url, country_hint}
+      - input      : original line as typed
+      - sku        : resolved SKU (cleaned)
+      - url        : direct product URL if provided (or None)
+      - country_hint: 2-letter code detected from URL domain (or None)
+    """
+    entries = []
+    seen_skus: set[str] = set()
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("http"):
+            # It's a URL
+            sku = _extract_sku_from_url(line)
+            if not sku:
+                # No alphanumeric SKU in slug — use the numeric product ID
+                # (last hyphen-separated segment before .html) as the label.
+                # The direct URL will be used for scraping so no SKU search needed.
+                slug = re.sub(r"\.html.*$", "", line.rstrip("/").split("/")[-1])
+                # Use the last numeric segment if present, else first 20 chars of slug
+                num_m = re.search(r"(\d{6,})$", slug)
+                sku = num_m.group(1) if num_m else slug[:20]
+            hint = _auto_detect_country_from_url(line)
+            direct_url = line
+        else:
+            sku = _clean_sku(line)
+            hint = None
+            direct_url = None
+        if sku and sku not in seen_skus:
+            seen_skus.add(sku)
+            entries.append({
+                "input": line,
+                "sku": sku,
+                "url": direct_url,
+                "country_hint": hint,
+            })
+    return entries
+
 with tab_sku:
     if not _SCRAPER_OK:
         st.error(
-            "⚠️ `jumia_scraper.py` not found — SKU Lookup requires it. "
+            "⚠️ `jumia_scraper.py` not found — SKU / URL Lookup requires it. "
             "Place the file in your repo root and restart."
         )
     else:
-        st.markdown("### 🔎 SKU Lookup")
+        st.markdown("### 🔎 SKU / URL Lookup")
         st.caption(
-            "Enter one or more SKUs to fetch their data directly from Jumia — "
-            "no file upload needed."
+            "Paste **SKUs**, **product URLs**, or a mix — one per line. "
+            "URLs are auto-detected and the SKU is extracted from the link."
         )
 
-        # ── Controls ──────────────────────────────────────────────
-        sku_col_a, sku_col_b = st.columns([2, 1])
+        # ── Input area + controls ──────────────────────────────────
+        inp_col, ctrl_col = st.columns([3, 1])
 
-        with sku_col_a:
-            sku_input_raw = st.text_area(
-                "SKUs to look up (one per line)",
-                height=140,
+        with inp_col:
+            lookup_input_raw = st.text_area(
+                "SKUs or Jumia product URLs (one per line)",
+                height=160,
                 placeholder=(
-                    "GE840EA6C62GANAFAMZ-269939913\n"
-                    "AP456EA7D89HANAFAMZ\n"
-                    "SA123BC4D56EGANAFAMZ"
+                    "GE840EA6C62GANAFAMZ\n"
+                    "https://www.jumia.co.ke/some-product-AB123CD4E56FGANAFAMZ-123456.html\n"
+                    "AP456EA7D89HANAFAMZ-269939913"
                 ),
                 key="sku_lookup_input",
             )
 
-        with sku_col_b:
+        with ctrl_col:
             lookup_country = st.selectbox(
-                "Country",
+                "Default Country",
                 COUNTRIES,
                 index=COUNTRIES.index(st.session_state.sku_lookup_country),
                 key="sku_lookup_country_select",
+                help=(
+                    "Used for plain SKUs. URLs with a Jumia domain "
+                    "override this automatically."
+                ),
             )
             st.session_state.sku_lookup_country = lookup_country
             lookup_code = _code(lookup_country)
@@ -491,11 +589,11 @@ with tab_sku:
                 "GH": "jumia.com.gh",
                 "MA": "jumia.ma",
             }.get(lookup_code, "jumia.co.ke")
-            st.caption(f"🔗 Will search **{jumia_domain}**")
+            st.caption(f"🔗 Default: **{jumia_domain}**")
 
             st.markdown("")
             do_search = st.button(
-                "🔍 Search SKUs",
+                "🔍 Search",
                 use_container_width=True,
                 type="primary",
                 key="sku_search_btn",
@@ -504,36 +602,76 @@ with tab_sku:
                 _reset_sku_search()
                 st.rerun()
 
-        # ── Run search ────────────────────────────────────────────
-        if do_search and sku_input_raw and sku_input_raw.strip():
-            raw_lines = [l.strip() for l in sku_input_raw.splitlines() if l.strip()]
-            skus      = [_clean_sku(l) for l in raw_lines]
-            skus      = list(dict.fromkeys(skus))   # deduplicate, preserve order
+        # ── Live input preview ─────────────────────────────────────
+        if lookup_input_raw and lookup_input_raw.strip():
+            _preview_entries = _parse_lookup_inputs(lookup_input_raw)
+            _url_count  = sum(1 for e in _preview_entries if e["url"])
+            _sku_count  = len(_preview_entries) - _url_count
+            _auto_codes = [e["country_hint"] for e in _preview_entries if e["country_hint"]]
+            _preview_parts = []
+            if _sku_count:
+                _preview_parts.append(f"**{_sku_count}** SKU(s)")
+            if _url_count:
+                _preview_parts.append(f"**{_url_count}** URL(s)")
+            if _auto_codes:
+                _unique_codes = list(dict.fromkeys(_auto_codes))
+                _preview_parts.append(
+                    f"— country auto-detected from URL: **{', '.join(_unique_codes)}**"
+                )
+            if _preview_parts:
+                st.caption("Detected: " + " · ".join(_preview_parts))
 
-            if not skus:
-                st.warning("Please enter at least one SKU.")
+        # ── Run search ────────────────────────────────────────────
+        if do_search and lookup_input_raw and lookup_input_raw.strip():
+            entries = _parse_lookup_inputs(lookup_input_raw)
+
+            if not entries:
+                st.warning("Please enter at least one SKU or URL.")
             else:
                 _reset_sku_search()
-                st.info(f"🔍 Searching **{len(skus)}** SKU(s) on {jumia_domain}…")
+                st.info(f"🔍 Looking up **{len(entries)}** item(s)…")
                 _sbar = st.progress(0, text="Starting…")
                 _stxt = st.empty()
 
                 rows: list[dict] = []
-                for idx, sku in enumerate(skus):
+                for idx, entry in enumerate(entries):
+                    sku        = entry["sku"]
+                    direct_url = entry["url"]
+                    # Use country hint from URL domain if available,
+                    # otherwise fall back to the dropdown selection
+                    eff_code   = entry["country_hint"] or lookup_code
+
                     _sbar.progress(
-                        idx / len(skus),
-                        text=f"Looking up {idx + 1}/{len(skus)} — {sku}",
+                        idx / len(entries),
+                        text=f"Fetching {idx + 1}/{len(entries)} — {sku}",
                     )
-                    _stxt.caption(f"⏱ Searching: **{sku}**")
+                    _stxt.caption(
+                        f"⏱ {'URL' if direct_url else 'SKU'}: **{entry['input'][:80]}**"
+                    )
 
                     try:
-                        data = scrape_single_sku(sku, country_code=lookup_code)
+                        if direct_url:
+                            # Import the page-scrape function directly so we
+                            # skip the search step and use the exact URL given.
+                            from jumia_scraper import _scrape_product_page
+                            _base = (COUNTRY_URLS or {}).get(
+                                eff_code, "https://www.jumia.co.ke"
+                            )
+                            scraped = _scrape_product_page(direct_url, _base)
+                        else:
+                            scraped = scrape_single_sku(sku, country_code=eff_code)
                     except Exception as exc:
-                        logger.warning("SKU lookup failed for %s: %s", sku, exc)
-                        data = {}
+                        logger.warning("Lookup failed for %s: %s", sku, exc)
+                        scraped = {}
 
-                    row = {"SKU": sku, "Found": "Yes" if data else "No"}
-                    row.update(data)
+                    row = {
+                        "SKU":          sku,
+                        "Input":        entry["input"],
+                        "Type":         "URL" if direct_url else "SKU",
+                        "Country":      eff_code,
+                        "Found":        "Yes" if scraped else "No",
+                    }
+                    row.update(scraped)
                     rows.append(row)
 
                 _sbar.progress(1.0, text="Done!")
@@ -541,11 +679,10 @@ with tab_sku:
                 _sbar.empty()
 
                 results_df = pd.DataFrame(rows)
-                # Ensure every canonical field exists as a column (empty string
-                # when not scraped). Merge with live SCRAPABLE_FIELDS in case
-                # the installed jumia_scraper has additional fields.
                 _all_cols = list(dict.fromkeys(
-                    _ALL_FIELDS + (SCRAPABLE_FIELDS if _SCRAPER_OK else [])
+                    ["SKU", "Input", "Type", "Country", "Found"]
+                    + _ALL_FIELDS
+                    + (SCRAPABLE_FIELDS if _SCRAPER_OK else [])
                 ))
                 for col in _all_cols:
                     if col not in results_df.columns:
@@ -555,8 +692,8 @@ with tab_sku:
                 st.session_state.sku_results_df  = results_df
                 st.session_state.sku_search_done = True
 
-                found_n    = (results_df["Found"] == "Yes").sum()
-                not_found  = len(results_df) - found_n
+                found_n   = (results_df["Found"] == "Yes").sum()
+                not_found = len(results_df) - found_n
                 st.toast(
                     f"✅ {found_n} found · ❌ {not_found} not found",
                     icon="🔎",
@@ -564,35 +701,34 @@ with tab_sku:
 
         # ── Display results ───────────────────────────────────────
         if st.session_state.sku_search_done and not st.session_state.sku_results_df.empty:
-            res_df   = st.session_state.sku_results_df
-            found_n  = (res_df["Found"] == "Yes").sum()
-            total_n  = len(res_df)
+            res_df  = st.session_state.sku_results_df
+            found_n = (res_df["Found"] == "Yes").sum()
+            total_n = len(res_df)
 
             st.markdown("---")
-            ra, rb, rc = st.columns(3)
-            ra.metric("SKUs searched", total_n)
-            rb.metric("Found on Jumia", int(found_n))
-            rc.metric("Not found", int(total_n - found_n))
+            ra, rb, rc, rd = st.columns(4)
+            ra.metric("Items searched",  total_n)
+            rb.metric("Found on Jumia",  int(found_n))
+            rc.metric("Not found",       int(total_n - found_n))
+            rd.metric("URLs provided",   int((res_df.get("Type","") == "URL").sum()))
 
             # ── Card view ─────────────────────────────────────────
-            with st.expander("🃏 Card view — one card per SKU", expanded=True):
+            with st.expander("🃏 Card view — one card per item", expanded=True):
                 for _, row in res_df.iterrows():
                     sku  = row["SKU"]
                     data = {
                         k: str(row.get(k, "")).strip()
-                        for k in SCRAPABLE_FIELDS
+                        for k in _ALL_FIELDS
                         if str(row.get(k, "")).strip() not in ("", "nan")
                     }
                     _render_sku_result_card(sku, data)
 
             # ── Table view ────────────────────────────────────────
             with st.expander("📋 Table view", expanded=False):
-                # Always show SKU + Found + every known field (filled or empty)
-                base_cols = ["SKU", "Found"]
-                all_cols = base_cols + [c for c in _ALL_FIELDS if c not in base_cols]
-                # Append any unexpected extra columns from the df
+                base_cols  = ["SKU", "Input", "Type", "Country", "Found"]
+                all_cols   = base_cols + [c for c in _ALL_FIELDS if c not in base_cols]
                 extra_cols = [c for c in res_df.columns if c not in all_cols]
-                show_cols = [c for c in all_cols + extra_cols if c in res_df.columns]
+                show_cols  = [c for c in all_cols + extra_cols if c in res_df.columns]
                 st.dataframe(
                     res_df[show_cols],
                     use_container_width=True,
@@ -605,9 +741,8 @@ with tab_sku:
             d1, d2 = st.columns(2)
             _fname = f"sku_lookup_{lookup_country.lower()}_{lookup_code}"
             with d1:
-                # Re-order res_df columns to canonical order before download
-                _dl_cols = [c for c in (["SKU", "Found"] + _ALL_FIELDS)
-                            if c in res_df.columns]
+                _dl_cols  = [c for c in (["SKU", "Input", "Type", "Country", "Found"] + _ALL_FIELDS)
+                             if c in res_df.columns]
                 _dl_cols += [c for c in res_df.columns if c not in _dl_cols]
                 _res_df_ordered = res_df[_dl_cols]
                 st.download_button(
@@ -630,8 +765,7 @@ with tab_sku:
                     use_container_width=True,
                 )
             st.caption(
-                f"{total_n} SKUs · {len(res_df.columns)} columns · "
-                f"scraped from {jumia_domain}"
+                f"{total_n} items · {len(res_df.columns)} columns"
             )
 
 # ══════════════════════════════════════════════════════════════════
