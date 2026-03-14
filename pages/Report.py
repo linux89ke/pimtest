@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import re
+import zipfile
 from io import BytesIO
 import plotly.express as px
 
@@ -41,16 +42,13 @@ def generate_excel_report(daily_summary, seller_stats, top_reasons, top_categori
     """Creates a professional multi-sheet Excel file with a Cover Page."""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # 1. Cover Sheet
         cover_df = pd.DataFrame(list(metadata.items()), columns=['Metric', 'Value'])
         cover_df.to_excel(writer, sheet_name='Cover Sheet', index=False)
         
-        # Format Cover Sheet
         worksheet = writer.sheets['Cover Sheet']
         worksheet.set_column('A:A', 25)
         worksheet.set_column('B:B', 35)
 
-        # 2. Data Sheets
         daily_summary.to_excel(writer, sheet_name='Daily & Weekly Summary')
         seller_stats.to_excel(writer, sheet_name='Top Rejected Sellers')
         top_reasons.to_excel(writer, sheet_name='Top Rejection Reasons')
@@ -58,66 +56,71 @@ def generate_excel_report(daily_summary, seller_stats, top_reasons, top_categori
         
     return output.getvalue()
 
-def load_demo_data():
-    """Generates dummy data for the Try Demo feature."""
-    dates = pd.date_range(end=datetime.date.today(), periods=7).tolist() * 50
-    statuses = ['Approved'] * 280 + ['Rejected'] * 70
-    reasons = ['Duplicate product', 'Restricted brands', 'Missing COLOR', 'Missing Weight/Volume', 'Generic BRAND Issues'] * 14
-    sellers = ['Tech Hub', 'Fashion Pro', 'Daily Deals', 'Gadget Kings', 'Home Goods'] * 70
-    categories = ['Electronics', 'Clothing', 'Home', 'Beauty', 'Sports'] * 70
-    
-    df = pd.DataFrame({
-        'Date': dates, 'Status': statuses, 'FLAG': reasons, 
-        'SellerName': sellers, 'CATEGORY': categories
-    })
-    df['Day'] = df['Date'].dt.strftime('%A')
-    df['Country'] = "Demo Country"
-    return df, "Demo Country", datetime.date.today().isocalendar()[1]
+def process_dataframe(df, filename, all_data_list):
+    """Helper to apply metadata and append df to the master list."""
+    country, file_date, week_num = parse_file_metadata(filename)
+    if file_date:
+        df['Date'] = file_date
+        df['Day'] = file_date.strftime('%A')
+        df['Country'] = country
+        all_data_list.append(df)
+    return country, week_num
 
 # --- MAIN UI ---
 st.title(":material/monitoring: PIM Weekly Export Analyzer")
-st.markdown("Upload your `ProductSets` files (CSV or Excel) to generate a professional performance report.")
+st.markdown("Upload your `ProductSets` files (**CSV, Excel, or ZIP archives**) to generate a professional performance report.")
 
 # Main Uploader Area
-col_upload, col_demo = st.columns([4, 1])
-with col_upload:
-    uploaded_files = st.file_uploader("Select files to process", type=["csv", "xlsx", "xls"], accept_multiple_files=True, label_visibility="collapsed")
-with col_demo:
-    st.markdown("<br>", unsafe_allow_html=True)
-    use_demo = st.button(":material/science: Load Sample Data", use_container_width=True)
+# CHANGED: Added "zip" to accepted file types
+uploaded_files = st.file_uploader("Select files or ZIP archives to process", type=["csv", "xlsx", "xls", "zip"], accept_multiple_files=True)
 
 # --- DATA PROCESSING ---
 master_df = pd.DataFrame()
 primary_country, primary_week = "Unknown", "N/A"
 
-if use_demo:
-    master_df, primary_country, primary_week = load_demo_data()
-    st.success(f":material/check_circle: Sample Demo Data loaded successfully.")
-
-elif uploaded_files:
+if uploaded_files:
     all_data = []
-    primary_country, _, primary_week = parse_file_metadata(uploaded_files[0].name)
     
-    with st.spinner(":material/hourglass_empty: Processing files..."):
+    with st.spinner(":material/hourglass_empty: Extracting and Processing files..."):
         for file in uploaded_files:
-            df = pd.read_csv(file, low_memory=False) if file.name.endswith('.csv') else pd.read_excel(file) 
-            country, file_date, week_num = parse_file_metadata(file.name)
             
-            if file_date:
-                df['Date'] = file_date
-                df['Day'] = file_date.strftime('%A')
-                df['Country'] = country
-                all_data.append(df)
+            # --- HANDLE ZIP FILES ---
+            if file.name.endswith('.zip'):
+                with zipfile.ZipFile(file, 'r') as z:
+                    for zip_filename in z.namelist():
+                        # Ignore macOS hidden folders and non-data files
+                        if zip_filename.endswith(('.csv', '.xlsx', '.xls')) and not zip_filename.startswith('__MACOSX'):
+                            with z.open(zip_filename) as f:
+                                if zip_filename.endswith('.csv'):
+                                    df = pd.read_csv(f, low_memory=False)
+                                else:
+                                    df = pd.read_excel(f)
+                                
+                                c, w = process_dataframe(df, zip_filename.split('/')[-1], all_data)
+                                if primary_country == "Unknown":
+                                    primary_country, primary_week = c, w
+            
+            # --- HANDLE REGULAR CSV/EXCEL FILES ---
+            else:
+                if file.name.endswith('.csv'):
+                    df = pd.read_csv(file, low_memory=False)
+                else:
+                    df = pd.read_excel(file)
+                
+                c, w = process_dataframe(df, file.name, all_data)
+                if primary_country == "Unknown":
+                    primary_country, primary_week = c, w
         
+        # Combine everything (This merges Part 1 and Part 2 naturally based on date!)
         if all_data:
             master_df = pd.concat(all_data, ignore_index=True)
             st.success(f":material/check_circle: Data loaded successfully for **{primary_country}** (Week {primary_week})")
         else:
-            st.error(":material/error: Could not find valid YYYY-MM-DD dates in the filenames.")
+            st.error(":material/error: Could not find valid data files or YYYY-MM-DD dates in the filenames.")
 
-# --- DASHBOARD RENDERING ---
+# --- DASHBOARD RENDERING (Unchanged from previous version) ---
 if not master_df.empty:
-    status_col = get_col(master_df, ['Status', 'STATUS', 'status'])
+    status_col = get_col(master_df, ['Status', 'STATUS', 'status', 'LISTING_STATUS']) # Added LISTING_STATUS for safety based on your sample
     seller_col = get_col(master_df, ['SellerName', 'SELLER_NAME', 'seller_name', 'Seller'])
     flag_col = get_col(master_df, ['FLAG', 'Flag', 'flag', 'Reason'])
     cat_col = get_col(master_df, ['CATEGORY', 'Category', 'category'])
@@ -130,7 +133,6 @@ if not master_df.empty:
             ":material/table_chart: Data Explorer"
         ])
         
-        # Calculate Base Metrics
         daily_summary = master_df.groupby(['Day', status_col]).size().unstack(fill_value=0)
         days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         daily_summary = daily_summary.reindex(days_order).fillna(0).astype(int)
@@ -146,7 +148,6 @@ if not master_df.empty:
 
         # === TAB 1: EXECUTIVE SUMMARY ===
         with tab_exec:
-            # Top-Level Metrics
             c1, c2, c3 = st.columns(3)
             c1.metric("Total Processed", f"{int(weekly_total):,}")
             c2.metric("Total Approved", f"{int(weekly_approved):,}")
@@ -170,7 +171,7 @@ if not master_df.empty:
         # === TAB 2: REJECTION DEEP-DIVE ===
         with tab_deepdive:
             if rejected_df.empty:
-                st.info(":material/info: No rejected products found in this dataset. Great job!")
+                st.info(":material/info: No rejected products found in this dataset.")
             else:
                 c_pie, c_bar = st.columns(2)
                 
@@ -180,29 +181,26 @@ if not master_df.empty:
                         reason_counts = rejected_df[flag_col].value_counts().reset_index()
                         reason_counts.columns = ['Reason', 'Count']
                         fig_pie = px.pie(reason_counts, values='Count', names='Reason', hole=0.4)
-                        fig_pie.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+                        fig_pie.update_layout(margin=dict(l=0, r=0, t=30, b=0), showlegend=False)
+                        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                         st.plotly_chart(fig_pie, use_container_width=True)
                     else:
-                        st.warning("FLAG/Reason column not found.")
+                        st.warning("FLAG column not found.")
 
                 with c_bar:
-                    st.markdown("#### :material/storefront: Top 5 Rejected Sellers (with Rates)")
+                    st.markdown("#### :material/storefront: Top 5 Rejected Sellers")
                     if seller_col:
-                        # Calculate accurate rejection rates per seller
                         seller_stats = master_df.groupby(seller_col)[status_col].value_counts().unstack(fill_value=0)
                         seller_stats['Total Submitted'] = seller_stats.sum(axis=1)
                         seller_stats['Rejected'] = seller_stats.get('Rejected', 0)
                         seller_stats['Rejection Rate (%)'] = (seller_stats['Rejected'] / seller_stats['Total Submitted'] * 100).round(1)
                         
                         top_5_sellers = seller_stats.sort_values(by='Rejected', ascending=False).head(5).reset_index()
-                        
                         fig_seller = px.bar(top_5_sellers, x='Rejected', y=seller_col, orientation='h', 
                                             text='Rejection Rate (%)', color_discrete_sequence=['#ef5350'])
-                        fig_seller.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Total Rejected Items")
+                        fig_seller.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=30, b=0))
                         fig_seller.update_traces(texttemplate='%{text}% Rate', textposition='outside')
                         st.plotly_chart(fig_seller, use_container_width=True)
-                    else:
-                        st.warning("Seller column not found.")
 
                 st.divider()
                 c_cat, c_rea = st.columns(2)
@@ -212,8 +210,6 @@ if not master_df.empty:
                         top_categories = rejected_df[cat_col].value_counts().head(5).reset_index()
                         top_categories.columns = ['Category', 'Rejected Count']
                         st.dataframe(top_categories, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("Category column not found.")
 
                 with c_rea:
                     st.markdown("#### :material/report: Top 5 Rejection Reasons (Data)")
@@ -231,9 +227,8 @@ if not master_df.empty:
                 selected_status = st.multiselect("Filter by Status", master_df[status_col].dropna().unique())
             with filter_c2:
                 if seller_col:
-                    seller_search = st.text_input("Search for a specific Seller", placeholder="Type seller name...")
+                    seller_search = st.text_input("Search for a specific Seller")
             
-            # Apply filters
             filtered_df = master_df.copy()
             if selected_status:
                 filtered_df = filtered_df[filtered_df[status_col].isin(selected_status)]
@@ -246,7 +241,6 @@ if not master_df.empty:
         st.divider()
         st.markdown("#### :material/download: Export Formal Report")
         
-        # Prepare metadata for cover sheet
         report_metadata = {
             "Report Generated On": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             "Country / Region": primary_country,
@@ -257,7 +251,6 @@ if not master_df.empty:
             "Overall Rejection Rate": f"{rejection_rate:.1f}%"
         }
         
-        # Ensure data objects exist for export
         safe_seller_stats = seller_stats if seller_col else pd.DataFrame(["N/A"])
         safe_top_reasons = reason_counts if flag_col else pd.DataFrame(["N/A"])
         safe_top_cats = top_categories if cat_col else pd.DataFrame(["N/A"])
