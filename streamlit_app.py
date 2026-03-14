@@ -678,7 +678,8 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
         'Missing Weight/Volume': ('1000008 - Kindly Improve Product Name Description', "Include weight or volume (e.g., '1kg', '500ml')."),
         'Incomplete Smartphone Name': ('1000008 - Kindly Improve Product Name Description', "Include memory/storage details (e.g., '128GB')."),
         'Wrong Category': ('1000004 - Wrong Category', "Assigned to Wrong Category. Please use correct category."),
-        'Poor images': ('1000042 - Kindly follow our product image upload guideline.', "Poor Image Quality")
+        'Poor images': ('1000042 - Kindly follow our product image upload guideline.', "Poor Image Quality"),
+        'Perfume Tester': ('1000007 - Other Reason', "Sale of perfume testers is not permitted on Jumia."),
     }
 
     default_mapping = {}
@@ -842,7 +843,8 @@ FLAG_RELEVANT_COLS = {
     "Missing COLOR": ["CATEGORY_CODE", "NAME", "COLOR"],
     "Missing Weight/Volume": ["CATEGORY_CODE", "NAME"],
     "Incomplete Smartphone Name": ["CATEGORY_CODE", "NAME"],
-    "Duplicate product": ["NAME", "SELLER_NAME", "BRAND", "CATEGORY_CODE"]
+    "Duplicate product": ["NAME", "SELLER_NAME", "BRAND", "CATEGORY_CODE"],
+    "Perfume Tester": ["CATEGORY_CODE", "NAME"],
 }
 
 def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) -> str:
@@ -1071,6 +1073,23 @@ def check_seller_approved_for_perfume(data: pd.DataFrame, perfume_category_codes
         flagged['Comment_Detail'] = flagged.apply(describe, axis=1)
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
+def check_perfume_tester(data: pd.DataFrame, perfume_category_codes: List[str], perfume_data: Dict) -> pd.DataFrame:
+    """Flag any perfume product that has 'tester' in the name as prohibited."""
+    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+    sheet_cat_codes = perfume_data.get('category_codes')
+    cat_codes = sheet_cat_codes if sheet_cat_codes else set(clean_category_code(c) for c in perfume_category_codes)
+    if not cat_codes:
+        return pd.DataFrame(columns=data.columns)
+    perfume = data[data['CATEGORY_CODE'].apply(clean_category_code).isin(cat_codes)].copy()
+    if perfume.empty:
+        return pd.DataFrame(columns=data.columns)
+    tester_pattern = re.compile(r'\btester\b', re.IGNORECASE)
+    flagged = perfume[perfume['NAME'].astype(str).str.contains(tester_pattern, na=False)].copy()
+    if not flagged.empty:
+        flagged['Comment_Detail'] = "Perfume tester listed for sale: " + flagged['NAME'].astype(str).str[:60]
+    return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
+
 def check_counterfeit_sneakers(data: pd.DataFrame, sneaker_category_codes: List[str], sneaker_sensitive_brands: List[str]) -> pd.DataFrame:
     if not {'CATEGORY_CODE', 'NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     sneakers = data[data['CATEGORY_CODE'].apply(clean_category_code).isin(set(clean_category_code(c) for c in sneaker_category_codes))].copy()
@@ -1240,6 +1259,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Product Warranty", check_product_warranty, {'warranty_category_codes': support_files['warranty_category_codes']}),
         ("Seller Approve to sell books", check_seller_approved_for_books, {'books_data': support_files.get('books_data', {}), 'country_code': country_validator.code, 'book_category_codes': support_files['book_category_codes']}),
         ("Seller Approved to Sell Perfume", check_seller_approved_for_perfume, {'perfume_category_codes': support_files['perfume_category_codes'], 'perfume_data': support_files.get('perfume_data', {}), 'country_code': country_validator.code}),
+        ("Perfume Tester", check_perfume_tester, {'perfume_category_codes': support_files['perfume_category_codes'], 'perfume_data': support_files.get('perfume_data', {})}),
         ("Counterfeit Sneakers", check_counterfeit_sneakers, {'sneaker_category_codes': support_files['sneaker_category_codes'], 'sneaker_sensitive_brands': support_files['sneaker_sensitive_brands']}),
         ("Suspected counterfeit Jerseys", check_counterfeit_jerseys, {'jerseys_data': support_files.get('jerseys_data', {}), 'country_code': country_validator.code}),
         ("Prohibited products", check_prohibited_products, {'prohibited_rules': country_prohibited_words}),
@@ -1856,7 +1876,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         "Suspected counterfeit Jerseys", "Prohibited products", "Unnecessary words in NAME", "Single-word NAME",
         "Generic BRAND Issues", "Fashion brand issues", "BRAND name repeated in NAME", "Wrong Variation",
         "Generic branded products with genuine brands", "Missing COLOR", "Missing Weight/Volume",
-        "Incomplete Smartphone Name", "Duplicate product", "Poor images", "Other Reason (Custom)",
+        "Incomplete Smartphone Name", "Duplicate product", "Poor images", "Perfume Tester", "Other Reason (Custom)",
     ]
 
     btn_col1, btn_col2 = st.columns([1, 1])
