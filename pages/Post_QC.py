@@ -267,16 +267,37 @@ def _render_sku_result_card(sku: str, data: dict):
     border_color = GREEN if has_data else RED
 
     field_labels = {
-        "MAIN_IMAGE":        "Main Image URL",
+        # Pricing & availability
         "PRICE":             "Price",
         "DISCOUNT":          "Discount",
-        "RATING":            "Rating",
-        "REVIEW_COUNT":      "Reviews",
         "STOCK_STATUS":      "Stock Status",
+        # Identity & classification
+        "MODEL":             "Model",
+        "GTIN":              "GTIN / Barcode",
+        "BRAND":             "Brand",
+        "CATEGORY_PATH":     "Category Path",
+        "IS_OFFICIAL_STORE": "Official Store",
+        # Media
+        "MAIN_IMAGE":        "Main Image URL",
+        # Physical
+        "WEIGHT":            "Weight",
+        # Variations
         "COLOR":             "Color(s)",
+        "COLOR_IN_TITLE":    "Color in Title",
         "COUNT_VARIATIONS":  "# Variations",
+        "SIZES_AVAILABLE":   "Sizes Available",
+        # Warranty
         "PRODUCT_WARRANTY":  "Warranty",
         "WARRANTY_DURATION": "Warranty Duration",
+        # Ratings
+        "RATING":            "Rating",
+        "REVIEW_COUNT":      "Reviews",
+        # Content
+        "DESCRIPTION":       "Description",
+        "KEY_FEATURES":      "Key Features",
+        "KEY_SPECS":         "Key Specs",
+        "SPECIFICATIONS":    "Specifications",
+        "WHATS_IN_BOX":      "What's in the Box",
     }
 
     rows_html = ""
@@ -506,8 +527,23 @@ with tab_sku:
                 _sbar.empty()
 
                 results_df = pd.DataFrame(rows)
-                # Ensure all scrapable columns present
-                for col in SCRAPABLE_FIELDS:
+                # Canonical full column list — defined locally so new fields
+                # always appear even if the imported SCRAPABLE_FIELDS is stale.
+                _ALL_FIELDS = [
+                    "PRICE", "DISCOUNT", "STOCK_STATUS",
+                    "MODEL", "GTIN", "BRAND", "CATEGORY_PATH", "IS_OFFICIAL_STORE",
+                    "MAIN_IMAGE", "WEIGHT",
+                    "COLOR", "COLOR_IN_TITLE", "COUNT_VARIATIONS", "SIZES_AVAILABLE",
+                    "PRODUCT_WARRANTY", "WARRANTY_DURATION",
+                    "RATING", "REVIEW_COUNT",
+                    "DESCRIPTION", "KEY_FEATURES", "KEY_SPECS", "SPECIFICATIONS",
+                    "WHATS_IN_BOX",
+                ]
+                # Also include anything from the live import in case it has extras
+                _all_cols = list(dict.fromkeys(
+                    _ALL_FIELDS + (SCRAPABLE_FIELDS if _SCRAPER_OK else [])
+                ))
+                for col in _all_cols:
                     if col not in results_df.columns:
                         results_df[col] = ""
                 results_df = results_df.fillna("").replace("nan", "")
@@ -547,16 +583,11 @@ with tab_sku:
 
             # ── Table view ────────────────────────────────────────
             with st.expander("📋 Table view", expanded=False):
-                # Always include SKU + Found + all SCRAPABLE_FIELDS columns
+                # Always show SKU + Found + every known field (filled or empty)
                 base_cols = ["SKU", "Found"]
-                all_cols = base_cols + [
-                    c for c in SCRAPABLE_FIELDS if c not in base_cols
-                ]
-                # Add any extra columns in res_df not already included
-                extra_cols = [
-                    c for c in res_df.columns
-                    if c not in all_cols
-                ]
+                all_cols = base_cols + [c for c in _ALL_FIELDS if c not in base_cols]
+                # Append any unexpected extra columns from the df
+                extra_cols = [c for c in res_df.columns if c not in all_cols]
                 show_cols = [c for c in all_cols + extra_cols if c in res_df.columns]
                 st.dataframe(
                     res_df[show_cols],
@@ -570,9 +601,14 @@ with tab_sku:
             d1, d2 = st.columns(2)
             _fname = f"sku_lookup_{lookup_country.lower()}_{lookup_code}"
             with d1:
+                # Re-order res_df columns to canonical order before download
+                _dl_cols = [c for c in (["SKU", "Found"] + _ALL_FIELDS)
+                            if c in res_df.columns]
+                _dl_cols += [c for c in res_df.columns if c not in _dl_cols]
+                _res_df_ordered = res_df[_dl_cols]
                 st.download_button(
                     label="📥 Download as Excel (.xlsx)",
-                    data=_to_excel_bytes(res_df),
+                    data=_to_excel_bytes(_res_df_ordered),
                     file_name=f"{_fname}.xlsx",
                     mime=(
                         "application/vnd.openxmlformats-officedocument"
@@ -584,7 +620,7 @@ with tab_sku:
             with d2:
                 st.download_button(
                     label="📄 Download as CSV (.csv)",
-                    data=_to_csv_bytes(res_df),
+                    data=_to_csv_bytes(_res_df_ordered),
                     file_name=f"{_fname}.csv",
                     mime="text/csv",
                     use_container_width=True,
