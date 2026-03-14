@@ -44,15 +44,9 @@ except ImportError:
     pass
 
 # Import the full validation pipeline and support helpers from the main app.
-# streamlit_app.py lives in the repo root (one level above pages/).
-# The ROOT path fix at the top of this file already adds ROOT to sys.path,
-# so importlib.import_module("streamlit_app") will always find it.
-# We never use __main__ — when Streamlit runs a page, __main__ is the
-# Streamlit runner itself, not streamlit_app.py.
 try:
     import importlib as _importlib
     _main_mod = (
-        # Prefer already-loaded module to avoid double-execution side effects
         sys.modules.get("streamlit_app")
         or _importlib.import_module("streamlit_app")
     )
@@ -70,15 +64,6 @@ except Exception as _fv_err:
     _fv_err_msg = str(_fv_err)
 
 # ── Post-QC aware brand-check overrides ───────────────────────────────────────
-# The original check_fashion_brand_issues and check_generic_brand_issues only
-# compare CATEGORY_CODE against the fashion code list.  In post-QC files the
-# CATEGORY_CODE may still be unresolved (non-numeric slug) when the category
-# map didn't contain that leaf name.  In that case we fall back to checking the
-# CATEGORY path string itself for the word "fashion" before flagging.
-#
-# These overrides are injected into validate_products via monkey-patching the
-# module-level functions on _main_mod so the validation runner picks them up.
-
 if _FULL_VALIDATION_OK:
     import pandas as _pd_patch
 
@@ -89,7 +74,6 @@ if _FULL_VALIDATION_OK:
         fas_set = set(clean_category_code(c) for c in valid_category_codes_fas)
         brand_is_fashion = data["BRAND"].astype(str).str.strip().str.lower() == "fashion"
         code_not_fas     = ~data["CATEGORY_CODE"].apply(clean_category_code).isin(fas_set)
-        # Path fallback: if CATEGORY path contains "fashion" treat as fashion cat
         if "CATEGORY" in data.columns:
             path_is_fashion = data["CATEGORY"].astype(str).str.contains(
                 r"\bfashion\b", case=False, na=False, regex=True
@@ -106,7 +90,6 @@ if _FULL_VALIDATION_OK:
         fas_set = set(clean_category_code(c) for c in valid_category_codes_fas)
         brand_is_generic = data["BRAND"].astype(str).str.lower() == "generic"
         code_in_fas      = data["CATEGORY_CODE"].apply(clean_category_code).isin(fas_set)
-        # Path fallback: if CATEGORY path contains "fashion" treat as fashion cat
         if "CATEGORY" in data.columns:
             path_is_fashion = data["CATEGORY"].astype(str).str.contains(
                 r"\bfashion\b", case=False, na=False, regex=True
@@ -116,7 +99,6 @@ if _FULL_VALIDATION_OK:
         flagged = data[brand_is_generic & (code_in_fas | path_is_fashion)].copy()
         return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
 
-    # Patch onto the imported module so validate_products() uses our versions
     _main_mod.check_fashion_brand_issues  = _pq_check_fashion_brand_issues
     _main_mod.check_generic_brand_issues  = _pq_check_generic_brand_issues
 
@@ -227,24 +209,16 @@ _SS_DEFAULTS = {
     "pq_country":         "Kenya",
     "pq_data":            pd.DataFrame(),
     "pq_last_sig":        None,
-    "pq_cached_files":    [],
     "scraper_enabled":    False,
     # enrichment state
     "enriched_df":        None,
     "enrichment_summary": {},
     "enrichment_done":    False,
-    # sku lookup state
-    "sku_results_df":     pd.DataFrame(),
-    "sku_search_done":    False,
-    "sku_lookup_country": "Kenya",
     # full validation results
     "pq_val_report":      pd.DataFrame(),
     "pq_val_results":     {},
     "pq_val_exports":     {},
     "pq_flags_init":      False,
-    # ── Keys required by render_flag_expander / bulk_approve_dialog ──
-    # (these functions are imported from streamlit_app.py and access
-    #  these keys directly via st.session_state.<key>)
     "display_df_cache":   {},
     "exports_cache":      {},
     "final_report":       pd.DataFrame(),
@@ -256,7 +230,7 @@ for _k, _v in _SS_DEFAULTS.items():
         st.session_state[_k] = _v
 
 # ------------------------------------------------------------------
-# CANONICAL FIELD LIST  (module-level so it's always in scope)
+# CANONICAL FIELD LIST
 # ------------------------------------------------------------------
 _ALL_FIELDS = [
     "PRICE", "DISCOUNT", "STOCK_STATUS",
@@ -270,8 +244,64 @@ _ALL_FIELDS = [
 ]
 
 # ------------------------------------------------------------------
-# HELPERS
+# MAPPER & HELPERS
 # ------------------------------------------------------------------
+_PQ_COL_MAP = {
+    # Post-QC standard
+    "sku":               "PRODUCT_SET_SID",
+    "name":              "NAME",
+    "brand":             "BRAND",
+    "category":          "CATEGORY",
+    "categories":        "CATEGORY",      # Data Grab
+    "price":             "GLOBAL_SALE_PRICE",
+    "newprice":          "GLOBAL_SALE_PRICE", # Data Grab
+    "old price":         "GLOBAL_PRICE",
+    "oldprice":          "GLOBAL_PRICE",  # Data Grab
+    "seller":            "SELLER_NAME",
+    "sellername":        "SELLER_NAME",   # Data Grab
+    "seller name":       "SELLER_NAME",
+    "image url":         "MAIN_IMAGE",
+    "image":             "MAIN_IMAGE",    # Data Grab
+    "main image":        "MAIN_IMAGE",
+    "url":               "PRODUCT_URL",   # Data Grab
+    "product url":       "PRODUCT_URL",
+    "stock":             "STOCK_STATUS",
+    "stock status":      "STOCK_STATUS",
+    "rating":            "RATING",
+    "averagerating":     "RATING",        # Data Grab
+    "average rating":    "RATING",
+    "total ratings":     "REVIEW_COUNT",
+    "totalratings":      "REVIEW_COUNT",  # Data Grab
+    "review count":      "REVIEW_COUNT",
+    "discount":          "DISCOUNT",
+    "tags":              "TAGS",
+    "jumia express":     "JUMIA_EXPRESS",
+    "isexpress":         "JUMIA_EXPRESS", # Data Grab
+    "shop global":       "SHOP_GLOBAL",
+    "isglobal":          "SHOP_GLOBAL",   # Data Grab
+    "color":             "COLOR",
+    "colour":            "COLOR",
+    "product warranty":  "PRODUCT_WARRANTY",
+    "warranty":          "PRODUCT_WARRANTY",
+    "warranty duration": "WARRANTY_DURATION",
+    "count variations":  "COUNT_VARIATIONS",
+    "variations":        "COUNT_VARIATIONS",
+    "seller sku":        "SELLER_SKU",
+    "parentsku":         "PARENTSKU",
+    "parent sku":        "PARENTSKU",
+    "description":       "DESCRIPTION",
+}
+
+def _standardise_pq(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = df.columns.str.strip()
+    rename = {}
+    for col in df.columns:
+        mapped = _PQ_COL_MAP.get(col.lower().strip())
+        if mapped:
+            rename[col] = mapped
+    return df.rename(columns=rename)
+
 COUNTRY_CODES = {
     "Kenya":   "KE",
     "Uganda":  "UG",
@@ -281,19 +311,12 @@ COUNTRY_CODES = {
 }
 COUNTRIES = list(COUNTRY_CODES.keys())
 
-
-def _t(key):
-    return get_translation(st.session_state.ui_lang, key)
-
-
-def _code(name: str) -> str:
-    return COUNTRY_CODES.get(name, "KE")
-
+def _t(key): return get_translation(st.session_state.ui_lang, key)
+def _code(name: str) -> str: return COUNTRY_CODES.get(name, "KE")
 
 def _load_support_files() -> dict:
     if "support_files" in st.session_state:
         return st.session_state.support_files
-    # Use the already-imported load_all_support_files if available
     if _FULL_VALIDATION_OK:
         try:
             sf = load_all_support_files()
@@ -301,22 +324,19 @@ def _load_support_files() -> dict:
             return sf
         except Exception:
             pass
-    # Minimal fallback: just the category map
     cat_map = load_category_map() if _POSTQC_OK else {}
     return {"category_map": cat_map}
 
-
 def _reset_results():
-    st.session_state.pq_data          = pd.DataFrame()
-    st.session_state.pq_last_sig      = None
+    st.session_state.pq_data            = pd.DataFrame()
+    st.session_state.pq_last_sig        = None
     st.session_state.enriched_df        = None
     st.session_state.enrichment_summary = {}
     st.session_state.enrichment_done    = False
-    st.session_state.pq_val_report    = pd.DataFrame()
-    st.session_state.pq_val_results   = {}
-    st.session_state.pq_val_exports   = {}
-    st.session_state.pq_flags_init    = False
-
+    st.session_state.pq_val_report      = pd.DataFrame()
+    st.session_state.pq_val_results     = {}
+    st.session_state.pq_val_exports     = {}
+    st.session_state.pq_flags_init      = False
 
 def _count_filled(series: pd.Series) -> int:
     return int(
@@ -326,9 +346,7 @@ def _count_filled(series: pd.Series) -> int:
         .sum()
     )
 
-
 def _build_enrichment_summary(before: pd.DataFrame, after: pd.DataFrame) -> dict:
-    """Compare before/after to record how many cells each field gained."""
     summary = {}
     for col in SCRAPABLE_FIELDS:
         b_count = _count_filled(before[col]) if col in before.columns else 0
@@ -340,254 +358,38 @@ def _build_enrichment_summary(before: pd.DataFrame, after: pd.DataFrame) -> dict
         }
     return summary
 
-
 def _to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Enriched Data")
     return buf.getvalue()
 
-
 def _to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8-sig")
 
-
-def _reset_sku_search():
-    st.session_state.sku_results_df  = pd.DataFrame()
-    st.session_state.sku_search_done = False
-
-
 def _clean_sku(raw: str) -> str:
-    """Strip Jumia suffix (everything after the first hyphen)."""
     return raw.split("-")[0].strip()
 
-
-def _render_sku_result_card(sku: str, data: dict):
-    """Render a single SKU result as a styled card."""
-    has_data = bool(data)
-    border_color = GREEN if has_data else RED
-
-    field_labels = {
-        # Pricing & availability
-        "PRICE":             "Price",
-        "DISCOUNT":          "Discount",
-        "STOCK_STATUS":      "Stock Status",
-        # Identity & classification
-        "MODEL":             "Model",
-        "GTIN":              "GTIN / Barcode",
-        "BRAND":             "Brand",
-        "CATEGORY_PATH":     "Category Path",
-        "IS_OFFICIAL_STORE": "Official Store",
-        # Media
-        "MAIN_IMAGE":        "Main Image URL",
-        # Physical
-        "WEIGHT":            "Weight",
-        # Variations
-        "COLOR":             "Color(s)",
-        "COLOR_IN_TITLE":    "Color in Title",
-        "COUNT_VARIATIONS":  "# Variations",
-        "SIZES_AVAILABLE":   "Sizes Available",
-        # Warranty
-        "PRODUCT_WARRANTY":  "Warranty",
-        "WARRANTY_DURATION": "Warranty Duration",
-        # Ratings
-        "RATING":            "Rating",
-        "REVIEW_COUNT":      "Reviews",
-        # Content
-        "DESCRIPTION":       "Description",
-        "KEY_FEATURES":      "Key Features",
-        "KEY_SPECS":         "Key Specs",
-        "SPECIFICATIONS":    "Specifications",
-        "WHATS_IN_BOX":      "What's in the Box",
-    }
-
-    rows_html = ""
-    for key, label in field_labels.items():
-        val = data.get(key, "")
-        if val:
-            rows_html += (
-                f'<tr>'
-                f'<td style="color:{MED};font-size:12px;padding:3px 8px 3px 0;'
-                f'white-space:nowrap;font-weight:500;">{label}</td>'
-                f'<td style="font-size:13px;padding:3px 0;word-break:break-all;">{val}</td>'
-                f'</tr>'
-            )
-        else:
-            rows_html += (
-                f'<tr>'
-                f'<td style="color:{MED};font-size:12px;padding:3px 8px 3px 0;'
-                f'white-space:nowrap;font-weight:500;">{label}</td>'
-                f'<td style="font-size:13px;padding:3px 0;color:#BDBDBD;font-style:italic;">—</td>'
-                f'</tr>'
-            )
-
-    body = (
-        rows_html if rows_html
-        else f'<p style="color:{RED};font-size:13px;margin:0;">No data found on Jumia</p>'
-    )
-
-    st.markdown(
-        f"""
-        <div style="border:1px solid {border_color};border-radius:8px;
-                    padding:14px 16px;margin-bottom:12px;background:{LIGHT};">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-            <span style="font-weight:700;font-size:15px;color:{DARK};">{sku}</span>
-            <span style="font-size:11px;padding:2px 8px;border-radius:10px;
-                         background:{'#E8F5E9' if has_data else '#FFEBEE'};
-                         color:{'#2E7D32' if has_data else '#B71C1C'};
-                         font-weight:600;">
-              {'✅ Found' if has_data else '❌ Not found'}
-            </span>
-          </div>
-          <table style="border-collapse:collapse;width:100%;">{body}</table>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ------------------------------------------------------------------
-# SIDEBAR
-# ------------------------------------------------------------------
-with st.sidebar:
-    st.header("🔍 Post-QC Settings")
-
-    pq_country = st.selectbox(
-        "Country",
-        COUNTRIES,
-        index=COUNTRIES.index(st.session_state.pq_country),
-        key="pq_country_select",
-    )
-    if pq_country != st.session_state.pq_country:
-        st.session_state.pq_country = pq_country
-        _reset_results()
-
-    country_code = _code(pq_country)
-
-    st.markdown("---")
-
-    if _SCRAPER_OK:
-        st.subheader("🌐 Jumia Enrichment")
-        st.session_state.scraper_enabled = st.toggle(
-            "Auto-fill missing fields from Jumia",
-            value=st.session_state.scraper_enabled,
-            help=(
-                "Uses product SKUs to scrape Color, Warranty, Variations, "
-                "Price, Discount, Rating, Image and Stock status from Jumia. "
-                "Runs once per file upload."
-            ),
-        )
-        if st.session_state.scraper_enabled:
-            st.caption("⏱ ~1–3 s per product row. Runs once on upload.")
-            jumia_site_label = {
-                "KE": "jumia.co.ke",
-                "UG": "jumia.ug",
-                "NG": "jumia.com.ng",
-                "GH": "jumia.com.gh",
-                "MA": "jumia.ma",
-            }.get(country_code, "jumia.co.ke")
-            st.caption(f"🔗 Target: **{jumia_site_label}**")
-    else:
-        st.caption(
-            "⚠️ `jumia_scraper.py` not found. Place it in the repo root to "
-            "enable auto-enrichment."
-        )
-
-    st.markdown("---")
-
-    if st.button("🗑 Clear Results", use_container_width=True, type="secondary"):
-        _reset_results()
-        st.session_state.pq_cached_files  = []
-        st.session_state.pq_val_exports   = {}
-        st.rerun()
-
-# ------------------------------------------------------------------
-# HEADER BANNER
-# ------------------------------------------------------------------
-st.markdown(f"""
-<div style="background:linear-gradient(135deg,{ORANGE},{ORANGE2});
-padding:20px 24px;border-radius:10px;margin-bottom:20px;
-box-shadow:0 4px 12px rgba(246,139,30,0.25);">
-<h2 style="color:white;margin:0;font-size:26px;font-weight:700;">
-🔍 Post-QC Validation</h2>
-<p style="color:rgba(255,255,255,0.9);margin:6px 0 0;font-size:13px;">
-Upload a Jumia post-QC export · missing fields auto-filled from Jumia</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ------------------------------------------------------------------
-# HARD STOP if postqc.py failed to import
-# (needed for detect_file_type and normalize_post_qc)
-# ------------------------------------------------------------------
-if not _POSTQC_OK:
-    st.error(
-        f"**postqc.py could not be imported.**\n\n"
-        f"Error: `{_postqc_err_msg}`\n\n"
-        "Make sure `postqc.py` is in the same folder as `streamlit_app.py`."
-    )
-    st.stop()
-
-if not _FULL_VALIDATION_OK:
-    st.warning(
-        f"⚠️ Full validation engine not available — "
-        f"`streamlit_app.py` could not be imported: `{_fv_err_msg}`. "
-        "Validations will be skipped."
-    )
-
-# ------------------------------------------------------------------
-# TABS
-# ------------------------------------------------------------------
-tab_upload, tab_sku = st.tabs(["📁 Upload & Validate", "🔎 SKU Lookup"])
-
-# ══════════════════════════════════════════════════════════════════
-# TAB 2 — SKU / URL LOOKUP
-# Accepts either raw SKUs or full Jumia product URLs (or a mix).
-# URLs have their SKU extracted from the slug so the same scrape
-# pipeline is used regardless of input mode.
-# ══════════════════════════════════════════════════════════════════
-
-# ── Helpers ───────────────────────────────────────────────────────
 def _extract_sku_from_url(url: str) -> str | None:
-    """
-    Pull the Jumia SKU from a product URL slug.
-    Jumia SKUs follow a known pattern and typically end in a country/platform
-    suffix like NAFAMZ, GANAFAMZ, HANAFAMZ etc., or are at least 14 chars
-    and contain both letters and digits with no purely descriptive words.
-    Pure size/measurement tokens like '2000ML800ML280ML' are excluded.
-    """
     slug = re.sub(r"\.html.*$", "", url.rstrip("/").split("/")[-1])
     parts = slug.split("-")
     for part in reversed(parts):
-        # Must be 12-30 chars, mix of letters and digits
-        if not (12 <= len(part) <= 30):
-            continue
-        if not re.search(r"[A-Za-z]", part) or not re.search(r"[0-9]", part):
-            continue
-        # Exclude purely descriptive tokens: contains only common unit words
-        if re.fullmatch(r"[\dA-Z]*(ML|KG|GB|TB|CM|MM|GM|MG|PC|PCS|L)+[\dA-Z]*", part, re.IGNORECASE):
-            continue
-        # Prefer segments ending in known Jumia SKU suffixes
+        if not (12 <= len(part) <= 30): continue
+        if not re.search(r"[A-Za-z]", part) or not re.search(r"[0-9]", part): continue
+        if re.fullmatch(r"[\dA-Z]*(ML|KG|GB|TB|CM|MM|GM|MG|PC|PCS|L)+[\dA-Z]*", part, re.IGNORECASE): continue
         if re.search(r"(NAFAMZ|GANAFAMZ|HANAFAMZ|FANAFAMZ)$", part, re.IGNORECASE):
             return part.upper()
-    # Second pass: any 12-30 char alphanumeric segment not a unit token
     for part in reversed(parts):
-        if not (12 <= len(part) <= 30):
-            continue
-        if not re.search(r"[A-Za-z]", part) or not re.search(r"[0-9]", part):
-            continue
-        if re.fullmatch(r"[\dA-Z]*(ML|KG|GB|TB|CM|MM|GM|MG|PC|PCS|L)+[\dA-Z]*", part, re.IGNORECASE):
-            continue
+        if not (12 <= len(part) <= 30): continue
+        if not re.search(r"[A-Za-z]", part) or not re.search(r"[0-9]", part): continue
+        if re.fullmatch(r"[\dA-Z]*(ML|KG|GB|TB|CM|MM|GM|MG|PC|PCS|L)+[\dA-Z]*", part, re.IGNORECASE): continue
         return part.upper()
     return None
 
 def _auto_detect_country_from_url(url: str) -> str | None:
-    """Detect country code from the Jumia domain in a URL."""
     _domain_map = {
-        "jumia.co.ke": "KE",
-        "jumia.ug":    "UG",
-        "jumia.com.ng":"NG",
-        "jumia.com.gh":"GH",
-        "jumia.ma":    "MA",
+        "jumia.co.ke": "KE", "jumia.ug": "UG", "jumia.com.ng": "NG",
+        "jumia.com.gh": "GH", "jumia.ma": "MA",
     }
     for domain, code in _domain_map.items():
         if domain in url:
@@ -595,29 +397,15 @@ def _auto_detect_country_from_url(url: str) -> str | None:
     return None
 
 def _parse_lookup_inputs(raw_text: str) -> list[dict]:
-    """
-    Parse a newline-separated block of SKUs and/or URLs.
-    Returns a list of dicts: {input, sku, url, country_hint}
-      - input      : original line as typed
-      - sku        : resolved SKU (cleaned)
-      - url        : direct product URL if provided (or None)
-      - country_hint: 2-letter code detected from URL domain (or None)
-    """
     entries = []
     seen_skus: set[str] = set()
     for line in raw_text.splitlines():
         line = line.strip()
-        if not line:
-            continue
+        if not line: continue
         if line.startswith("http"):
-            # It's a URL
             sku = _extract_sku_from_url(line)
             if not sku:
-                # No alphanumeric SKU in slug — use the numeric product ID
-                # (last hyphen-separated segment before .html) as the label.
-                # The direct URL will be used for scraping so no SKU search needed.
                 slug = re.sub(r"\.html.*$", "", line.rstrip("/").split("/")[-1])
-                # Use the last numeric segment if present, else first 20 chars of slug
                 num_m = re.search(r"(\d{6,})$", slug)
                 sku = num_m.group(1) if num_m else slug[:20]
             hint = _auto_detect_country_from_url(line)
@@ -629,792 +417,458 @@ def _parse_lookup_inputs(raw_text: str) -> list[dict]:
         if sku and sku not in seen_skus:
             seen_skus.add(sku)
             entries.append({
-                "input": line,
-                "sku": sku,
-                "url": direct_url,
-                "country_hint": hint,
+                "input": line, "sku": sku, "url": direct_url, "country_hint": hint,
             })
     return entries
 
-with tab_sku:
-    if not _SCRAPER_OK:
-        st.error(
-            "⚠️ `jumia_scraper.py` not found — SKU / URL Lookup requires it. "
-            "Place the file in your repo root and restart."
-        )
-    else:
-        st.markdown("### 🔎 SKU / URL Lookup")
-        st.caption(
-            "Paste **SKUs**, **product URLs**, or a mix — one per line. "
-            "URLs are auto-detected and the SKU is extracted from the link."
-        )
+# ------------------------------------------------------------------
+# SIDEBAR
+# ------------------------------------------------------------------
+with st.sidebar:
+    st.header("🔍 Post-QC Settings")
 
-        # ── Input area + controls ──────────────────────────────────
-        inp_col, ctrl_col = st.columns([3, 1])
-
-        with inp_col:
-            lookup_input_raw = st.text_area(
-                "SKUs or Jumia product URLs (one per line)",
-                height=160,
-                placeholder=(
-                    "GE840EA6C62GANAFAMZ\n"
-                    "https://www.jumia.co.ke/some-product-AB123CD4E56FGANAFAMZ-123456.html\n"
-                    "AP456EA7D89HANAFAMZ-269939913"
-                ),
-                key="sku_lookup_input",
-            )
-
-        with ctrl_col:
-            lookup_country = st.selectbox(
-                "Default Country",
-                COUNTRIES,
-                index=COUNTRIES.index(st.session_state.sku_lookup_country),
-                key="sku_lookup_country_select",
-                help=(
-                    "Used for plain SKUs. URLs with a Jumia domain "
-                    "override this automatically."
-                ),
-            )
-            st.session_state.sku_lookup_country = lookup_country
-            lookup_code = _code(lookup_country)
-
-            jumia_domain = {
-                "KE": "jumia.co.ke",
-                "UG": "jumia.ug",
-                "NG": "jumia.com.ng",
-                "GH": "jumia.com.gh",
-                "MA": "jumia.ma",
-            }.get(lookup_code, "jumia.co.ke")
-            st.caption(f"🔗 Default: **{jumia_domain}**")
-
-            st.markdown("")
-            do_search = st.button(
-                "🔍 Search",
-                use_container_width=True,
-                type="primary",
-                key="sku_search_btn",
-            )
-            if st.button("🗑 Clear", use_container_width=True, key="sku_clear_btn"):
-                _reset_sku_search()
-                st.rerun()
-
-        # ── Live input preview ─────────────────────────────────────
-        if lookup_input_raw and lookup_input_raw.strip():
-            _preview_entries = _parse_lookup_inputs(lookup_input_raw)
-            _url_count  = sum(1 for e in _preview_entries if e["url"])
-            _sku_count  = len(_preview_entries) - _url_count
-            _auto_codes = [e["country_hint"] for e in _preview_entries if e["country_hint"]]
-            _preview_parts = []
-            if _sku_count:
-                _preview_parts.append(f"**{_sku_count}** SKU(s)")
-            if _url_count:
-                _preview_parts.append(f"**{_url_count}** URL(s)")
-            if _auto_codes:
-                _unique_codes = list(dict.fromkeys(_auto_codes))
-                _preview_parts.append(
-                    f"— country auto-detected from URL: **{', '.join(_unique_codes)}**"
-                )
-            if _preview_parts:
-                st.caption("Detected: " + " · ".join(_preview_parts))
-
-        # ── Run search ────────────────────────────────────────────
-        if do_search and lookup_input_raw and lookup_input_raw.strip():
-            entries = _parse_lookup_inputs(lookup_input_raw)
-
-            if not entries:
-                st.warning("Please enter at least one SKU or URL.")
-            else:
-                _reset_sku_search()
-                st.info(f"🔍 Looking up **{len(entries)}** item(s)…")
-                _sbar = st.progress(0, text="Starting…")
-                _stxt = st.empty()
-
-                rows: list[dict] = []
-                for idx, entry in enumerate(entries):
-                    sku        = entry["sku"]
-                    direct_url = entry["url"]
-                    # Use country hint from URL domain if available,
-                    # otherwise fall back to the dropdown selection
-                    eff_code   = entry["country_hint"] or lookup_code
-
-                    _sbar.progress(
-                        idx / len(entries),
-                        text=f"Fetching {idx + 1}/{len(entries)} — {sku}",
-                    )
-                    _stxt.caption(
-                        f"⏱ {'URL' if direct_url else 'SKU'}: **{entry['input'][:80]}**"
-                    )
-
-                    try:
-                        if direct_url:
-                            # Import the page-scrape function directly so we
-                            # skip the search step and use the exact URL given.
-                            from jumia_scraper import _scrape_product_page
-                            _base = (COUNTRY_URLS or {}).get(
-                                eff_code, "https://www.jumia.co.ke"
-                            )
-                            scraped = _scrape_product_page(direct_url, _base)
-                        else:
-                            scraped = scrape_single_sku(sku, country_code=eff_code)
-                    except Exception as exc:
-                        logger.warning("Lookup failed for %s: %s", sku, exc)
-                        scraped = {}
-
-                    row = {
-                        "SKU":          sku,
-                        "Input":        entry["input"],
-                        "Type":         "URL" if direct_url else "SKU",
-                        "Country":      eff_code,
-                        "Found":        "Yes" if scraped else "No",
-                    }
-                    row.update(scraped)
-                    rows.append(row)
-
-                _sbar.progress(1.0, text="Done!")
-                _stxt.empty()
-                _sbar.empty()
-
-                results_df = pd.DataFrame(rows)
-                _all_cols = list(dict.fromkeys(
-                    ["SKU", "Input", "Type", "Country", "Found"]
-                    + _ALL_FIELDS
-                    + (SCRAPABLE_FIELDS if _SCRAPER_OK else [])
-                ))
-                for col in _all_cols:
-                    if col not in results_df.columns:
-                        results_df[col] = ""
-                results_df = results_df.fillna("").replace("nan", "")
-
-                st.session_state.sku_results_df  = results_df
-                st.session_state.sku_search_done = True
-
-                found_n   = (results_df["Found"] == "Yes").sum()
-                not_found = len(results_df) - found_n
-                st.toast(
-                    f"✅ {found_n} found · ❌ {not_found} not found",
-                    icon="🔎",
-                )
-
-        # ── Display results ───────────────────────────────────────
-        if st.session_state.sku_search_done and not st.session_state.sku_results_df.empty:
-            res_df  = st.session_state.sku_results_df
-            found_n = (res_df["Found"] == "Yes").sum()
-            total_n = len(res_df)
-
-            st.markdown("---")
-            ra, rb, rc, rd = st.columns(4)
-            ra.metric("Items searched",  total_n)
-            rb.metric("Found on Jumia",  int(found_n))
-            rc.metric("Not found",       int(total_n - found_n))
-            rd.metric("URLs provided",   int((res_df["Type"] == "URL").sum()) if "Type" in res_df.columns else 0)
-
-            # ── Card view ─────────────────────────────────────────
-            with st.expander("🃏 Card view — one card per item", expanded=True):
-                for _, row in res_df.iterrows():
-                    sku  = row["SKU"]
-                    data = {
-                        k: str(row.get(k, "")).strip()
-                        for k in _ALL_FIELDS
-                        if str(row.get(k, "")).strip() not in ("", "nan")
-                    }
-                    _render_sku_result_card(sku, data)
-
-            # ── Table view ────────────────────────────────────────
-            with st.expander("📋 Table view", expanded=False):
-                base_cols  = ["SKU", "Input", "Type", "Country", "Found"]
-                all_cols   = base_cols + [c for c in _ALL_FIELDS if c not in base_cols]
-                extra_cols = [c for c in res_df.columns if c not in all_cols]
-                show_cols  = [c for c in all_cols + extra_cols if c in res_df.columns]
-                st.dataframe(
-                    res_df[show_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    height=min(400, 50 + 35 * len(res_df)),
-                )
-
-            # ── Downloads ─────────────────────────────────────────
-            st.markdown("#### ⬇️ Download Results")
-            d1, d2 = st.columns(2)
-            _fname = f"sku_lookup_{lookup_country.lower()}_{lookup_code}"
-            with d1:
-                _dl_cols  = [c for c in (["SKU", "Input", "Type", "Country", "Found"] + _ALL_FIELDS)
-                             if c in res_df.columns]
-                _dl_cols += [c for c in res_df.columns if c not in _dl_cols]
-                _res_df_ordered = res_df[_dl_cols]
-                st.download_button(
-                    label="📥 Download as Excel (.xlsx)",
-                    data=_to_excel_bytes(_res_df_ordered),
-                    file_name=f"{_fname}.xlsx",
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument"
-                        ".spreadsheetml.sheet"
-                    ),
-                    use_container_width=True,
-                    type="primary",
-                )
-            with d2:
-                st.download_button(
-                    label="📄 Download as CSV (.csv)",
-                    data=_to_csv_bytes(_res_df_ordered),
-                    file_name=f"{_fname}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
-            st.caption(
-                f"{total_n} items · {len(res_df.columns)} columns"
-            )
-
-# ══════════════════════════════════════════════════════════════════
-# TAB 1 — UPLOAD & VALIDATE
-# ══════════════════════════════════════════════════════════════════
-with tab_upload:
-
-    st.header("📁 Upload Post-QC File", anchor=False)
-    st.caption(
-        "Expected columns: **SKU, Name, Brand, Category, Price, Seller** "
-        "— plus any extras your export includes."
+    pq_country = st.selectbox(
+        "Country", COUNTRIES,
+        index=COUNTRIES.index(st.session_state.pq_country),
+        key="pq_country_select",
     )
-
-    uploaded = st.file_uploader(
-        "Drop your post-QC export here",
-        type=["csv", "xlsx"],
-        accept_multiple_files=True,
-        key="pq_uploader",
-    )
-
-    if uploaded:
-        st.session_state.pq_cached_files = [
-            {"name": f.name, "bytes": f.read()} for f in uploaded
-        ]
-    elif uploaded is not None and len(uploaded) == 0:
-        st.session_state.pq_cached_files = []
+    if pq_country != st.session_state.pq_country:
+        st.session_state.pq_country = pq_country
         _reset_results()
 
-    files = st.session_state.pq_cached_files
+    country_code = _code(pq_country)
+    st.markdown("---")
 
-    # ------------------------------------------------------------------
-    # PROCESSING
-    # ------------------------------------------------------------------
-    if files:
+    if _SCRAPER_OK:
+        st.subheader("🌐 Jumia Enrichment")
+        st.session_state.scraper_enabled = st.toggle(
+            "Auto-fill missing fields from Jumia",
+            value=st.session_state.scraper_enabled,
+            help="Uses product SKUs to scrape additional data from Jumia. Runs once per file upload.",
+        )
+        if st.session_state.scraper_enabled:
+            st.caption("⏱ ~1–3 s per product row. Runs once on upload.")
+    else:
+        st.caption("⚠️ `jumia_scraper.py` not found. Auto-enrichment disabled.")
+
+    st.markdown("---")
+    if st.button("🗑 Clear Results", use_container_width=True, type="secondary"):
+        _reset_results()
+        st.rerun()
+
+# ------------------------------------------------------------------
+# HEADER BANNER & MAIN UI
+# ------------------------------------------------------------------
+st.markdown(f"""
+<div style="background:linear-gradient(135deg,{ORANGE},{ORANGE2});
+padding:20px 24px;border-radius:10px;margin-bottom:20px;
+box-shadow:0 4px 12px rgba(246,139,30,0.25);">
+<h2 style="color:white;margin:0;font-size:26px;font-weight:700;">
+🔍 Post-QC Validation</h2>
+<p style="color:rgba(255,255,255,0.9);margin:6px 0 0;font-size:13px;">
+Validate Jumia product data, auto-fill fields via Scraper, and generate detailed reports.</p>
+</div>
+""", unsafe_allow_html=True)
+
+if not _POSTQC_OK:
+    st.error(f"**postqc.py could not be imported.**\nError: `{_postqc_err_msg}`")
+    st.stop()
+if not _FULL_VALIDATION_OK:
+    st.warning(f"⚠️ Full validation engine not available: `{_fv_err_msg}`. Validations skipped.")
+
+st.header("📥 Input Source", anchor=False)
+input_mode = st.radio(
+    "Choose Input Method:",
+    ["📁 Upload Post-QC File", "📊 Data Grab Upload", "🌐 Paste SKUs / URLs"],
+    horizontal=True,
+    key="input_mode",
+)
+
+# ------------------------------------------------------------------
+# INPUT FETCHING
+# ------------------------------------------------------------------
+all_dfs = []
+sig = None
+
+if input_mode in ["📁 Upload Post-QC File", "📊 Data Grab Upload"]:
+    uploaded = st.file_uploader(
+        f"Drop your {input_mode.split(' ', 1)[1]} here",
+        type=["csv", "xlsx"],
+        accept_multiple_files=True,
+        key=f"pq_uploader_{input_mode}",
+    )
+    if uploaded:
+        files_data = [{"name": f.name, "bytes": f.read()} for f in uploaded]
         sig = hashlib.md5(
             (
-                str(sorted(f["name"] + str(len(f["bytes"])) for f in files))
+                str(sorted(f["name"] + str(len(f["bytes"])) for f in files_data))
                 + country_code
                 + str(st.session_state.scraper_enabled)
+                + input_mode
             ).encode()
         ).hexdigest()
 
         if st.session_state.pq_last_sig != sig:
-            _reset_results()
-
-            try:
-                # ── Column mapping for Jumia post-QC CSV exports ───────
-                # Maps the exact column names from the Jumia export format
-                # to the internal names used by validate_products().
-                _PQ_COL_MAP = {
-                    "sku":               "PRODUCT_SET_SID",
-                    "name":              "NAME",
-                    "brand":             "BRAND",
-                    "category":          "CATEGORY",
-                    "price":             "GLOBAL_SALE_PRICE",
-                    "old price":         "GLOBAL_PRICE",
-                    "seller":            "SELLER_NAME",
-                    "sellername":        "SELLER_NAME",
-                    "seller name":       "SELLER_NAME",
-                    "image url":         "MAIN_IMAGE",
-                    "image":             "MAIN_IMAGE",
-                    "main image":        "MAIN_IMAGE",
-                    "stock":             "STOCK_STATUS",
-                    "stock status":      "STOCK_STATUS",
-                    "rating":            "RATING",
-                    "total ratings":     "REVIEW_COUNT",
-                    "review count":      "REVIEW_COUNT",
-                    "discount":          "DISCOUNT",
-                    "tags":              "TAGS",
-                    "product url":       "PRODUCT_URL",
-                    "jumia express":     "JUMIA_EXPRESS",
-                    "shop global":       "SHOP_GLOBAL",
-                    "color":             "COLOR",
-                    "colour":            "COLOR",
-                    "product warranty":  "PRODUCT_WARRANTY",
-                    "warranty":          "PRODUCT_WARRANTY",
-                    "warranty duration": "WARRANTY_DURATION",
-                    "count variations":  "COUNT_VARIATIONS",
-                    "variations":        "COUNT_VARIATIONS",
-                    "seller sku":        "SELLER_SKU",
-                    "parentsku":         "PARENTSKU",
-                    "parent sku":        "PARENTSKU",
-                    "description":       "DESCRIPTION",
-                }
-
-                def _is_jumia_csv(df: pd.DataFrame) -> bool:
-                    """True if the file looks like a Jumia product export CSV."""
-                    cols_lower = {c.strip().lower() for c in df.columns}
-                    # Must have at least SKU + Name + Category + Seller
-                    required = {"sku", "name", "category", "seller"}
-                    return required.issubset(cols_lower)
-
-                def _standardise_pq(df: pd.DataFrame) -> pd.DataFrame:
-                    """Rename columns to internal names using _PQ_COL_MAP."""
-                    df = df.copy()
-                    df.columns = df.columns.str.strip()
-                    rename = {}
-                    for col in df.columns:
-                        mapped = _PQ_COL_MAP.get(col.lower().strip())
-                        if mapped:
-                            rename[col] = mapped
-                    return df.rename(columns=rename)
-
-                all_dfs = []
-                for uf in files:
-                    buf = BytesIO(uf["bytes"])
-                    if uf["name"].endswith(".xlsx"):
-                        raw = pd.read_excel(buf, engine="openpyxl", dtype=str)
+            for uf in files_data:
+                buf = BytesIO(uf["bytes"])
+                if uf["name"].endswith(".xlsx"):
+                    raw = pd.read_excel(buf, engine="openpyxl", dtype=str)
+                else:
+                    if input_mode == "📊 Data Grab Upload":
+                        try:
+                            raw = pd.read_csv(buf, sep="|", dtype=str)
+                            if len(raw.columns) <= 1:
+                                buf.seek(0)
+                                raw = pd.read_csv(buf, sep=",", dtype=str)
+                        except Exception:
+                            buf.seek(0)
+                            raw = pd.read_csv(buf, dtype=str)
                     else:
                         try:
                             raw = pd.read_csv(buf, dtype=str)
                             if len(raw.columns) <= 1:
                                 buf.seek(0)
-                                raw = pd.read_csv(
-                                    buf, sep=";", encoding="ISO-8859-1", dtype=str
-                                )
+                                raw = pd.read_csv(buf, sep=";", encoding="ISO-8859-1", dtype=str)
                         except Exception:
                             buf.seek(0)
-                            raw = pd.read_csv(
-                                buf, sep=";", encoding="ISO-8859-1", dtype=str
-                            )
+                            raw = pd.read_csv(buf, sep=";", encoding="ISO-8859-1", dtype=str)
 
-                    # Accept both the standard post-QC format AND the
-                    # Jumia CSV export format (SKU, Name, Category, Seller…)
-                    _is_jumia = _is_jumia_csv(raw)
-                    _is_pq    = _POSTQC_OK and detect_file_type(raw) == "post_qc"
+                # Standardize columns unless it's perfectly native post-qc format
+                _is_pq = _POSTQC_OK and detect_file_type(raw) == "post_qc"
+                if not _is_pq:
+                    raw = _standardise_pq(raw)
+                all_dfs.append(raw)
+    else:
+        # File uploader cleared
+        if st.session_state.pq_last_sig is not None:
+            _reset_results()
 
-                    if not _is_pq and not _is_jumia:
-                        st.error(
-                            f"**{uf['name']}** doesn't look like a recognised format. "
-                            "Expected either a Jumia post-QC export or a Jumia product "
-                            "CSV with columns: SKU, Name, Category, Seller."
-                        )
-                        st.stop()
+elif input_mode == "🌐 Paste SKUs / URLs":
+    if not _SCRAPER_OK:
+        st.error("⚠️ `jumia_scraper.py` is required for this functionality.")
+        st.stop()
+        
+    lookup_input_raw = st.text_area(
+        "SKUs or Jumia product URLs (one per line)",
+        height=160,
+        placeholder="GE840EA6C62GANAFAMZ\nhttps://www.jumia.co.ke/some-product.html"
+    )
+    
+    if lookup_input_raw.strip():
+        sig = hashlib.md5(
+            (lookup_input_raw + country_code + str(st.session_state.scraper_enabled) + input_mode).encode()
+        ).hexdigest()
 
-                    # Standardise column names if it's the Jumia CSV format
-                    if _is_jumia and not _is_pq:
-                        raw = _standardise_pq(raw)
-
-                    all_dfs.append(raw)
-
-                # ── Support files ──────────────────────────────────────
-                support_files    = _load_support_files()
-                cat_map          = support_files.get("category_map", {})
-                support_files_pq = dict(support_files)
-                support_files_pq["country_code"] = country_code
-                support_files_pq["country_name"] = pq_country
-
-                # ── Build rich category lookup from category_map.xlsx ──
-                # category_map.xlsx columns:
-                #   category_name | category_code | Category Path
-                # Paths use " / " as separator (space-slash-space).
-                # Post-QC CATEGORY column uses " > " as separator.
-                # We normalise both sides to the same form for comparison.
-                import unicodedata as _ud
-
-                def _nk(s: str) -> str:
-                    """Strip accents, lowercase, keep only a-z0-9."""
-                    s = _ud.normalize("NFKD", str(s)).lower()
-                    return re.sub(r"[^a-z0-9]", "", s)
-
-                def _norm_sep(s: str) -> str:
-                    """Normalise any path separator ( / , > , | , \ ) to ' / '."""
-                    return re.sub(r"\s*[>/|\\]\s*", " / ", str(s).strip()).lower()
-
-                # Three lookup tables
-                _cmap_by_path: dict = {}  # norm_sep(full_path) → code
-                _cmap_by_name: dict = {}  # lower(name)         → code
-                _cmap_by_seg:  dict = {}  # lower(each segment) → code
-                #   (setdefault keeps the FIRST = most-specific entry per seg)
-
-                # Load directly from category_map.xlsx — this is the source of truth
-                _cmap_xlsx_path = "category_map.xlsx"
-                if os.path.exists(_cmap_xlsx_path):
-                    try:
-                        _cm_df = pd.read_excel(
-                            _cmap_xlsx_path, engine="openpyxl", dtype=str
-                        )
-                        _cm_df.columns = [c.strip().lower() for c in _cm_df.columns]
-                        _col_name = next(
-                            (c for c in _cm_df.columns
-                             if "name" in c and "path" not in c), None
-                        )
-                        _col_code = next(
-                            (c for c in _cm_df.columns if "code" in c), None
-                        )
-                        _col_path = next(
-                            (c for c in _cm_df.columns if "path" in c), None
-                        )
-                        if _col_name and _col_code:
-                            for _, _row in _cm_df.iterrows():
-                                _cs = str(_row[_col_code]).split(".")[0].strip()
-                                if not re.match(r"^\d+$", _cs):
-                                    continue
-                                # Index by name (exact lower)
-                                _nm = str(_row[_col_name]).strip()
-                                if _nm and _nm.lower() not in ("nan", "none", ""):
-                                    _cmap_by_name[_nm.lower()] = _cs
-                                    # Also index every word-normalised variant
-                                    _cmap_by_seg.setdefault(_nm.lower(), _cs)
-                                # Index by full path (normalised separator)
-                                if _col_path:
-                                    _pt = str(_row[_col_path]).strip()
-                                    if _pt and _pt.lower() not in ("nan", "none", ""):
-                                        _cmap_by_path[_norm_sep(_pt)] = _cs
-                                        # Index each segment of the path.
-                                        # Split ONLY on the known separator " / "
-                                        # to avoid breaking names with & or -
-                                        for _seg in _pt.split(" / "):
-                                            _seg = _seg.strip()
-                                            if _seg and _seg.lower() not in ("nan","none",""):
-                                                _cmap_by_seg.setdefault(_seg.lower(), _cs)
-                    except Exception as _cm_err:
-                        logger.warning(f"category_map.xlsx load failed: {_cm_err}")
+        if st.session_state.pq_last_sig != sig:
+            do_process = st.button("🔍 Search & Process", type="primary")
+            if do_process:
+                entries = _parse_lookup_inputs(lookup_input_raw)
+                if not entries:
+                    st.warning("Please enter at least one valid SKU or URL.")
                 else:
-                    # Fallback: populate from load_category_map() name→code dict
-                    for _n, _c in cat_map.items():
-                        _cs = str(_c).split(".")[0].strip()
-                        if re.match(r"^\d+$", _cs):
-                            _cmap_by_name[_n.lower()] = _cs
-                            _cmap_by_seg[_n.lower()]   = _cs
+                    st.info(f"🔍 Looking up **{len(entries)}** item(s)…")
+                    _sbar = st.progress(0, text="Starting…")
+                    _stxt = st.empty()
 
-                # Sorted longest-key-first for contains matching
-                _cmap_seg_sorted = sorted(
-                    _cmap_by_seg.items(), key=lambda x: len(x[0]), reverse=True
-                )
+                    rows = []
+                    for idx, entry in enumerate(entries):
+                        sku = entry["sku"]
+                        direct_url = entry["url"]
+                        eff_code = entry["country_hint"] or country_code
 
-                def _resolve_cat_code(category: str, existing: str = "") -> str:
-                    """
-                    Resolve a category path/name string to a numeric code.
+                        _sbar.progress(idx / len(entries), text=f"Fetching {idx + 1}/{len(entries)} — {sku}")
+                        _stxt.caption(f"⏱ {'URL' if direct_url else 'SKU'}: **{entry['input'][:80]}**")
 
-                    Strategy order (stops at first hit):
-                      A. Full normalised path — exact match in _cmap_by_path
-                         Works for both " / " and " > " separators since we
-                         normalise both to " / " before lookup.
-                      B. Exact name match on each segment, most-specific first.
-                         Segment split uses the path separator only (not & or -).
-                      C. Contains match — longest map key that is a substring
-                         of a segment OR the segment is a substring of a key.
-                         Picks the longest match to get most-specific code.
-                      D. Keep existing code if it is already numeric.
-                    """
-                    _existing = str(existing).strip()
-
-                    raw = str(category).strip()
-                    if not raw or raw.lower() in ("nan", "none", ""):
-                        return _existing
-
-                    def _valid(v: str) -> str:
-                        v = str(v).split(".")[0].strip()
-                        return v if re.match(r"^\d+$", v) else ""
-
-                    # ── A: full path match ─────────────────────────────────
-                    c = _valid(_cmap_by_path.get(_norm_sep(raw), ""))
-                    if c: return c
-
-                    # ── B: exact segment match, most-specific first ────────
-                    # Split on separator chars but NOT on & (names contain &)
-                    segs = [s.strip() for s in re.split(r"\s*[>/|\\]\s*", raw)
-                            if s.strip()]
-                    for seg in reversed(segs):
-                        c = _valid(_cmap_by_name.get(seg.lower(), ""))
-                        if c: return c
-
-                    # ── C: contains match, most-specific segment first ─────
-                    for seg in reversed(segs):
-                        sn = _nk(seg)
-                        if not sn: continue
-                        best_c, best_len = "", 0
-                        for k, v in _cmap_seg_sorted:
-                            kn = _nk(k)
-                            if not kn: continue
-                            # Only match if the key is a reasonable length
-                            # (≥3 chars) to avoid noise from short tokens
-                            if len(kn) < 3: continue
-                            if kn == sn or kn in sn or sn in kn:
-                                c = _valid(v)
-                                if c and len(kn) > best_len:
-                                    best_c, best_len = c, len(kn)
-                        if best_c: return best_c
-
-                    # ── D: keep existing if already numeric ────────────────
-                    if re.match(r"^\d+$", _existing):
-                        return _existing
-                    return _existing
-
-                # ── Normalise ──────────────────────────────────────────
-                norm_dfs = []
-                for df in all_dfs:
-                    # If the df already has PRODUCT_SET_SID (standardised above
-                    # or native post-QC format), skip normalize_post_qc which
-                    # expects the raw post-QC column names.
-                    if "PRODUCT_SET_SID" in df.columns:
-                        ndf = df.copy()
-                        # Ensure CATEGORY_CODE column exists
-                        if "CATEGORY_CODE" not in ndf.columns:
-                            ndf["CATEGORY_CODE"] = ""
-                    else:
-                        # Native post-QC format — let postqc.py handle it
-                        ndf = normalize_post_qc(df, category_map=cat_map)
-                        if "CATEGORY_CODE" not in ndf.columns:
-                            ndf["CATEGORY_CODE"] = ""
-
-                    # Re-resolve every row using the rich multi-index
-                    if "CATEGORY" in ndf.columns:
-                        ndf["CATEGORY_CODE"] = ndf.apply(
-                            lambda r: _resolve_cat_code(
-                                r.get("CATEGORY", ""),
-                                r.get("CATEGORY_CODE", ""),
-                            ),
-                            axis=1,
-                        )
-                    norm_dfs.append(ndf)
-
-                merged = pd.concat(norm_dfs, ignore_index=True)
-                merged_dedup = merged.drop_duplicates(
-                    subset=["PRODUCT_SET_SID"], keep="first"
-                )
-
-                # ── Scraper enrichment ─────────────────────────────────
-                if _SCRAPER_OK and st.session_state.scraper_enabled:
-                    _missing_cols = [
-                        c for c in SCRAPABLE_FIELDS
-                        if c not in merged_dedup.columns
-                        or merged_dedup[c]
-                            .astype(str).str.strip()
-                            .replace({"nan": "", "None": ""})
-                            .eq("")
-                            .mean() > 0.5
-                    ]
-                    if _missing_cols:
-                        st.info(
-                            f"🌐 Enriching **{len(merged_dedup)}** products from Jumia "
-                            f"({', '.join(_missing_cols)})…"
-                        )
-                        _bar  = st.progress(0, text="Starting enrichment…")
-                        _txt  = st.empty()
-                        _before_df = merged_dedup.copy()
-
-                        def _cb(done, total, sku, bar=_bar, txt=_txt):
-                            bar.progress(
-                                done / max(total, 1),
-                                text=f"Scraped {done}/{total} — {sku}",
-                            )
-                            txt.caption(f"⏱ Last scraped: **{sku}**")
-
-                        merged_dedup = enrich_post_qc_df(
-                            merged_dedup,
-                            country_code=country_code,
-                            progress_callback=_cb,
-                        )
-                        _bar.empty()
-                        _txt.empty()
-
-                        enrich_summary = _build_enrichment_summary(
-                            _before_df, merged_dedup
-                        )
-                        total_filled = sum(v["filled"] for v in enrich_summary.values())
-
-                        st.session_state.enriched_df        = merged_dedup.copy()
-                        st.session_state.enrichment_summary = enrich_summary
-                        st.session_state.enrichment_done    = True
-
-                        if total_filled:
-                            st.toast(f"✅ {total_filled} cell(s) filled from Jumia", icon="🌐")
-                        else:
-                            st.toast("No new data found on Jumia.", icon="ℹ️")
-                    else:
-                        st.toast(
-                            "All enrichable columns already populated — no scraping needed.",
-                            icon="ℹ️",
-                        )
-
-                # ── Prepare data for full validation ───────────────────
-                # validate_products() requires ACTIVE_STATUS_COUNTRY and
-                # CATEGORY_CODE as a numeric code.  Post-QC files have
-                # a CATEGORY path string, so we resolve it here.
-
-                ready = merged_dedup.copy()
-
-                # 1. Inject ACTIVE_STATUS_COUNTRY so country filter passes
-                ready["ACTIVE_STATUS_COUNTRY"] = country_code
-
-                # 2. Re-apply category code resolution using the rich
-                #    multi-index built above (already applied during normalise,
-                #    but re-run here after scraper enrichment may have updated
-                #    CATEGORY_PATH field).
-                if "CATEGORY" in ready.columns:
-                    if "CATEGORY_CODE" not in ready.columns:
-                        ready["CATEGORY_CODE"] = ""
-                    ready["CATEGORY_CODE"] = ready.apply(
-                        lambda r: _resolve_cat_code(
-                            r.get("CATEGORY", ""),
-                            r.get("CATEGORY_CODE", ""),
-                        ),
-                        axis=1,
-                    )
-
-                    # Warn about rows that still have no numeric code
-                    _unresolved = ready[
-                        ~ready["CATEGORY_CODE"].astype(str).str.match(r"^\d+$")
-                    ]["CATEGORY"].dropna().unique()
-                    if len(_unresolved):
-                        st.warning(
-                            f"⚠️ **{len(_unresolved)}** category path(s) could not be "
-                            f"resolved to a numeric code — validations for these rows "
-                            f"may be incomplete. Add them to `category_map.xlsx`:\n\n"
-                            + "\n".join(f"- `{c}`" for c in _unresolved[:10])
-                            + ("\n- *(and more…)*" if len(_unresolved) > 10 else ""),
-                            icon="⚠️",
-                        )
-
-                # 3. Ensure all columns validate_products needs are present
-
-                # LIST_VARIATIONS — build from scraped variation fields if
-                # the file didn't already supply it.
-                if "LIST_VARIATIONS" not in ready.columns or (
-                    ready["LIST_VARIATIONS"].astype(str).str.strip()
-                    .replace({"nan": "", "None": ""}).eq("").all()
-                ):
-                    _var_parts = []
-                    for _vcol in ["COLOR", "SIZES_AVAILABLE"]:
-                        if _vcol in ready.columns:
-                            _var_parts.append(
-                                ready[_vcol].astype(str)
-                                .str.strip()
-                                .replace({"nan": "", "None": ""})
-                            )
-                    if _var_parts:
-                        import functools as _ft
-                        def _join_vars(*cols):
-                            return " | ".join(v for v in cols if v)
-                        ready["LIST_VARIATIONS"] = _ft.reduce(
-                            lambda a, b: a.where(b.eq(""), a + " | " + b).where(a.ne(""), b),
-                            _var_parts,
-                        ).replace({"": pd.NA})
-                    else:
-                        ready["LIST_VARIATIONS"] = ""
-
-                # GLOBAL_SALE_PRICE / GLOBAL_PRICE — used by
-                # check_suspected_fake_products.
-                # Priority: file price > scraped PRICE > empty.
-                # Post-QC files may have a "PRICE" or "GLOBAL_SALE_PRICE" column.
-                # The scraper stores price as "KSh 759" — strip non-numeric chars.
-                def _parse_price_str(s) -> str:
-                    """Extract numeric value from a price string like 'KSh 1,299'."""
-                    try:
-                        clean = re.sub(r"[^\d.]", "", str(s))
-                        val = float(clean) if clean else None
-                        if val and val > 0:
-                            return str(val)
-                    except (ValueError, TypeError):
-                        pass
-                    return ""
-
-                # Determine GLOBAL_SALE_PRICE
-                # Priority: explicit file price column > scraped PRICE > empty.
-                # We never treat the scraper's "PRICE" column as a file column —
-                # instead we use it only as a fallback when no file price exists
-                # or where the file price is blank for a row.
-                _file_price_candidates = [
-                    c for c in [
-                        "GLOBAL_SALE_PRICE", "GLOBAL_PRICE",
-                        "SALE_PRICE", "sale_price", "listed_price",
-                    ]
-                    if c in ready.columns
-                ]
-                _file_price_col = _file_price_candidates[0] if _file_price_candidates else None
-
-                if _file_price_col and _file_price_col != "GLOBAL_SALE_PRICE":
-                    # File has its own price column — parse it
-                    ready["GLOBAL_SALE_PRICE"] = (
-                        ready[_file_price_col].astype(str).apply(_parse_price_str)
-                    )
-                elif "GLOBAL_SALE_PRICE" not in ready.columns:
-                    ready["GLOBAL_SALE_PRICE"] = ""
-
-                # Wherever GLOBAL_SALE_PRICE is still empty, fall back to
-                # scraped PRICE (e.g. "KSh 759" → "759.0")
-                _sp_empty = ready["GLOBAL_SALE_PRICE"].astype(str).str.strip().eq("")
-                if "PRICE" in ready.columns and _sp_empty.any():
-                    ready.loc[_sp_empty, "GLOBAL_SALE_PRICE"] = (
-                        ready.loc[_sp_empty, "PRICE"]
-                        .astype(str).apply(_parse_price_str)
-                    )
-
-                # GLOBAL_PRICE mirrors GLOBAL_SALE_PRICE when not present
-                if "GLOBAL_PRICE" not in ready.columns or (
-                    ready["GLOBAL_PRICE"].astype(str).str.strip()
-                    .replace({"nan": "", "None": ""}).eq("").all()
-                ):
-                    ready["GLOBAL_PRICE"] = ready["GLOBAL_SALE_PRICE"]
-
-                # PARENTSKU — not available in post-QC; leave blank
-                if "PARENTSKU" not in ready.columns:
-                    ready["PARENTSKU"] = ""
-
-                # Remaining safety cols
-                for _col_needed in [
-                    "NAME", "BRAND", "COLOR", "SELLER_NAME",
-                    "PRODUCT_WARRANTY", "WARRANTY_DURATION",
-                    "COUNT_VARIATIONS", "COLOR_FAMILY",
-                ]:
-                    if _col_needed not in ready.columns:
-                        ready[_col_needed] = ""
-                for _col_str in ["NAME", "BRAND", "COLOR", "SELLER_NAME"]:
-                    if _col_str in ready.columns:
-                        ready[_col_str] = ready[_col_str].astype(str).fillna("")
-
-                # ── Run full validation pipeline ───────────────────────
-                if _FULL_VALIDATION_OK:
-                    with st.spinner("Running validations…"):
-                        _cv = CountryValidator(pq_country)
                         try:
-                            _sf_full = load_all_support_files()
-                        except Exception:
-                            _sf_full = support_files_pq
-                        data_has_warranty = all(
-                            c in ready.columns
-                            for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"]
-                        )
-                        _val_report, _val_results = validate_products(
-                            ready,
-                            _sf_full,
-                            _cv,
-                            data_has_warranty,
-                        )
-                    st.session_state.pq_val_report  = _val_report
-                    st.session_state.pq_val_results = _val_results
-                    st.session_state.pq_flags_init  = False
+                            if direct_url:
+                                from jumia_scraper import _scrape_product_page
+                                _base = (COUNTRY_URLS or {}).get(eff_code, "https://www.jumia.co.ke")
+                                scraped = _scrape_product_page(direct_url, _base)
+                            else:
+                                scraped = scrape_single_sku(sku, country_code=eff_code)
+                        except Exception as exc:
+                            logger.warning("Lookup failed for %s: %s", sku, exc)
+                            scraped = {}
 
-                st.session_state.pq_data     = ready
-                st.session_state.pq_last_sig = sig
+                        row = {
+                            "PRODUCT_SET_SID": sku,
+                            "Input": entry["input"],
+                            "Type": "URL" if direct_url else "SKU",
+                            "Country": eff_code,
+                            "Found": "Yes" if scraped else "No",
+                        }
+                        row.update(scraped)
+                        rows.append(row)
 
-                if not st.session_state.enrichment_done:
-                    st.session_state.enriched_df = ready.copy()
+                    _sbar.progress(1.0, text="Done!")
+                    _stxt.empty()
+                    _sbar.empty()
 
-            except Exception as exc:
-                st.error(f"Processing error: {exc}")
-                st.code(traceback.format_exc())
+                    raw = pd.DataFrame(rows)
+                    raw = _standardise_pq(raw)
+                    all_dfs.append(raw)
+        else:
+            st.success("✅ Inputs processed successfully. Results are displayed below.")
 
-    # ------------------------------------------------------------------
-    # ENRICHMENT PANEL
-    # ------------------------------------------------------------------
-    if st.session_state.enrichment_done and st.session_state.enriched_df is not None:
-        edf      = st.session_state.enriched_df
-        esummary = st.session_state.enrichment_summary
+# ------------------------------------------------------------------
+# PIPELINE PROCESSING
+# ------------------------------------------------------------------
+if all_dfs and sig and st.session_state.pq_last_sig != sig:
+    _reset_results()
 
+    try:
+        support_files = _load_support_files()
+        cat_map = support_files.get("category_map", {})
+        support_files_pq = dict(support_files)
+        support_files_pq["country_code"] = country_code
+        support_files_pq["country_name"] = pq_country
+
+        # Load Category Map rules dynamically
+        import unicodedata as _ud
+        def _nk(s: str) -> str:
+            s = _ud.normalize("NFKD", str(s)).lower()
+            return re.sub(r"[^a-z0-9]", "", s)
+        def _norm_sep(s: str) -> str:
+            return re.sub(r"\s*[>/|\\]\s*", " / ", str(s).strip()).lower()
+
+        _cmap_by_path, _cmap_by_name, _cmap_by_seg = {}, {}, {}
+        _cmap_xlsx_path = "category_map.xlsx"
+        if os.path.exists(_cmap_xlsx_path):
+            try:
+                _cm_df = pd.read_excel(_cmap_xlsx_path, engine="openpyxl", dtype=str)
+                _cm_df.columns = [c.strip().lower() for c in _cm_df.columns]
+                _col_name = next((c for c in _cm_df.columns if "name" in c and "path" not in c), None)
+                _col_code = next((c for c in _cm_df.columns if "code" in c), None)
+                _col_path = next((c for c in _cm_df.columns if "path" in c), None)
+                if _col_name and _col_code:
+                    for _, _row in _cm_df.iterrows():
+                        _cs = str(_row[_col_code]).split(".")[0].strip()
+                        if not re.match(r"^\d+$", _cs): continue
+                        _nm = str(_row[_col_name]).strip()
+                        if _nm and _nm.lower() not in ("nan", "none", ""):
+                            _cmap_by_name[_nm.lower()] = _cs
+                            _cmap_by_seg.setdefault(_nm.lower(), _cs)
+                        if _col_path:
+                            _pt = str(_row[_col_path]).strip()
+                            if _pt and _pt.lower() not in ("nan", "none", ""):
+                                _cmap_by_path[_norm_sep(_pt)] = _cs
+                                for _seg in _pt.split(" / "):
+                                    _seg = _seg.strip()
+                                    if _seg and _seg.lower() not in ("nan","none",""):
+                                        _cmap_by_seg.setdefault(_seg.lower(), _cs)
+            except Exception as _cm_err:
+                logger.warning(f"category_map.xlsx load failed: {_cm_err}")
+        else:
+            for _n, _c in cat_map.items():
+                _cs = str(_c).split(".")[0].strip()
+                if re.match(r"^\d+$", _cs):
+                    _cmap_by_name[_n.lower()] = _cs
+                    _cmap_by_seg[_n.lower()]   = _cs
+
+        _cmap_seg_sorted = sorted(_cmap_by_seg.items(), key=lambda x: len(x[0]), reverse=True)
+
+        def _resolve_cat_code(category: str, existing: str = "") -> str:
+            _existing = str(existing).strip()
+            raw = str(category).strip()
+            if not raw or raw.lower() in ("nan", "none", ""): return _existing
+            def _valid(v: str) -> str:
+                v = str(v).split(".")[0].strip()
+                return v if re.match(r"^\d+$", v) else ""
+
+            c = _valid(_cmap_by_path.get(_norm_sep(raw), ""))
+            if c: return c
+
+            segs = [s.strip() for s in re.split(r"\s*[>/|\\]\s*", raw) if s.strip()]
+            for seg in reversed(segs):
+                c = _valid(_cmap_by_name.get(seg.lower(), ""))
+                if c: return c
+
+            for seg in reversed(segs):
+                sn = _nk(seg)
+                if not sn: continue
+                best_c, best_len = "", 0
+                for k, v in _cmap_seg_sorted:
+                    kn = _nk(k)
+                    if not kn: continue
+                    if len(kn) < 3: continue
+                    if kn == sn or kn in sn or sn in kn:
+                        c = _valid(v)
+                        if c and len(kn) > best_len:
+                            best_c, best_len = c, len(kn)
+                if best_c: return best_c
+
+            if re.match(r"^\d+$", _existing): return _existing
+            return _existing
+
+        # Normalize across all loaded DataFrames
+        norm_dfs = []
+        for df in all_dfs:
+            if "PRODUCT_SET_SID" in df.columns:
+                ndf = df.copy()
+                if "CATEGORY_CODE" not in ndf.columns:
+                    ndf["CATEGORY_CODE"] = ""
+            else:
+                ndf = normalize_post_qc(df, category_map=cat_map)
+                if "CATEGORY_CODE" not in ndf.columns:
+                    ndf["CATEGORY_CODE"] = ""
+            if "CATEGORY" in ndf.columns:
+                ndf["CATEGORY_CODE"] = ndf.apply(
+                    lambda r: _resolve_cat_code(r.get("CATEGORY", ""), r.get("CATEGORY_CODE", "")), axis=1
+                )
+            norm_dfs.append(ndf)
+
+        merged = pd.concat(norm_dfs, ignore_index=True)
+        merged_dedup = merged.drop_duplicates(subset=["PRODUCT_SET_SID"], keep="first")
+
+        # ── Scraper enrichment ─────────────────────────────────
+        if _SCRAPER_OK and st.session_state.scraper_enabled and input_mode != "🌐 Paste SKUs / URLs":
+            _missing_cols = [
+                c for c in SCRAPABLE_FIELDS
+                if c not in merged_dedup.columns
+                or merged_dedup[c].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("").mean() > 0.5
+            ]
+            if _missing_cols:
+                st.info(f"🌐 Enriching **{len(merged_dedup)}** products from Jumia ({', '.join(_missing_cols)})…")
+                _bar = st.progress(0, text="Starting enrichment…")
+                _txt = st.empty()
+                _before_df = merged_dedup.copy()
+
+                def _cb(done, total, sku, bar=_bar, txt=_txt):
+                    bar.progress(done / max(total, 1), text=f"Scraped {done}/{total} — {sku}")
+                    txt.caption(f"⏱ Last scraped: **{sku}**")
+
+                merged_dedup = enrich_post_qc_df(
+                    merged_dedup, country_code=country_code, progress_callback=_cb
+                )
+                _bar.empty()
+                _txt.empty()
+
+                enrich_summary = _build_enrichment_summary(_before_df, merged_dedup)
+                total_filled = sum(v["filled"] for v in enrich_summary.values())
+
+                st.session_state.enriched_df        = merged_dedup.copy()
+                st.session_state.enrichment_summary = enrich_summary
+                st.session_state.enrichment_done    = True
+
+                if total_filled:
+                    st.toast(f"✅ {total_filled} cell(s) filled from Jumia", icon="🌐")
+                else:
+                    st.toast("No new data found on Jumia.", icon="ℹ️")
+            else:
+                st.toast("All enrichable columns already populated — no scraping needed.", icon="ℹ️")
+        
+        elif input_mode == "🌐 Paste SKUs / URLs":
+            st.session_state.enriched_df = merged_dedup.copy()
+            st.session_state.enrichment_done = True
+
+        # ── Prepare data for full validation ───────────────────
+        ready = merged_dedup.copy()
+
+        # If scraper dumped info into CATEGORY_PATH but CATEGORY is missing, merge them up
+        if "CATEGORY_PATH" in ready.columns:
+            if "CATEGORY" not in ready.columns:
+                ready["CATEGORY"] = ready["CATEGORY_PATH"]
+            else:
+                ready["CATEGORY"] = ready["CATEGORY"].where(ready["CATEGORY"].ne(""), ready["CATEGORY_PATH"])
+
+        ready["ACTIVE_STATUS_COUNTRY"] = country_code
+
+        if "CATEGORY" in ready.columns:
+            if "CATEGORY_CODE" not in ready.columns:
+                ready["CATEGORY_CODE"] = ""
+            ready["CATEGORY_CODE"] = ready.apply(
+                lambda r: _resolve_cat_code(r.get("CATEGORY", ""), r.get("CATEGORY_CODE", "")), axis=1
+            )
+            _unresolved = ready[~ready["CATEGORY_CODE"].astype(str).str.match(r"^\d+$")]["CATEGORY"].dropna().unique()
+            if len(_unresolved):
+                st.warning(
+                    f"⚠️ **{len(_unresolved)}** category path(s) could not be resolved to a numeric code.\n\n"
+                    + "\n".join(f"- `{c}`" for c in _unresolved[:10]) + ("\n- *(and more…)*" if len(_unresolved) > 10 else ""),
+                    icon="⚠️",
+                )
+
+        if "LIST_VARIATIONS" not in ready.columns or (
+            ready["LIST_VARIATIONS"].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("").all()
+        ):
+            _var_parts = []
+            for _vcol in ["COLOR", "SIZES_AVAILABLE"]:
+                if _vcol in ready.columns:
+                    _var_parts.append(ready[_vcol].astype(str).str.strip().replace({"nan": "", "None": ""}))
+            if _var_parts:
+                import functools as _ft
+                ready["LIST_VARIATIONS"] = _ft.reduce(
+                    lambda a, b: a.where(b.eq(""), a + " | " + b).where(a.ne(""), b), _var_parts
+                ).replace({"": pd.NA})
+            else:
+                ready["LIST_VARIATIONS"] = ""
+
+        def _parse_price_str(s) -> str:
+            try:
+                clean = re.sub(r"[^\d.]", "", str(s))
+                val = float(clean) if clean else None
+                if val and val > 0: return str(val)
+            except (ValueError, TypeError): pass
+            return ""
+
+        _file_price_candidates = [c for c in ["GLOBAL_SALE_PRICE", "GLOBAL_PRICE", "SALE_PRICE"] if c in ready.columns]
+        _file_price_col = _file_price_candidates[0] if _file_price_candidates else None
+
+        if _file_price_col and _file_price_col != "GLOBAL_SALE_PRICE":
+            ready["GLOBAL_SALE_PRICE"] = ready[_file_price_col].astype(str).apply(_parse_price_str)
+        elif "GLOBAL_SALE_PRICE" not in ready.columns:
+            ready["GLOBAL_SALE_PRICE"] = ""
+
+        _sp_empty = ready["GLOBAL_SALE_PRICE"].astype(str).str.strip().eq("")
+        if "PRICE" in ready.columns and _sp_empty.any():
+            ready.loc[_sp_empty, "GLOBAL_SALE_PRICE"] = ready.loc[_sp_empty, "PRICE"].astype(str).apply(_parse_price_str)
+
+        if "GLOBAL_PRICE" not in ready.columns or ready["GLOBAL_PRICE"].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("").all():
+            ready["GLOBAL_PRICE"] = ready["GLOBAL_SALE_PRICE"]
+
+        if "PARENTSKU" not in ready.columns: ready["PARENTSKU"] = ""
+
+        for _col_needed in ["NAME", "BRAND", "COLOR", "SELLER_NAME", "PRODUCT_WARRANTY", "WARRANTY_DURATION", "COUNT_VARIATIONS", "COLOR_FAMILY"]:
+            if _col_needed not in ready.columns: ready[_col_needed] = ""
+        for _col_str in ["NAME", "BRAND", "COLOR", "SELLER_NAME"]:
+            if _col_str in ready.columns: ready[_col_str] = ready[_col_str].astype(str).fillna("")
+
+        # ── Run full validation pipeline ───────────────────────
+        if _FULL_VALIDATION_OK:
+            with st.spinner("Running validations…"):
+                _cv = CountryValidator(pq_country)
+                try: _sf_full = load_all_support_files()
+                except Exception: _sf_full = support_files_pq
+                
+                data_has_warranty = all(c in ready.columns for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"])
+                _val_report, _val_results = validate_products(ready, _sf_full, _cv, data_has_warranty)
+                
+            st.session_state.pq_val_report  = _val_report
+            st.session_state.pq_val_results = _val_results
+            st.session_state.pq_flags_init  = False
+
+        st.session_state.pq_data     = ready
+        st.session_state.pq_last_sig = sig
+        if not st.session_state.enrichment_done:
+            st.session_state.enriched_df = ready.copy()
+
+    except Exception as exc:
+        st.error(f"Processing error: {exc}")
+        st.code(traceback.format_exc())
+
+# ------------------------------------------------------------------
+# ENRICHMENT PANEL
+# ------------------------------------------------------------------
+if st.session_state.enrichment_done and st.session_state.enriched_df is not None:
+    edf      = st.session_state.enriched_df
+    esummary = st.session_state.enrichment_summary
+
+    st.markdown("---")
+    
+    if esummary:
         total_cells_filled = sum(v["filled"] for v in esummary.values())
         cols_with_data     = [c for c, v in esummary.items() if v["after"] > 0]
         cols_filled        = [c for c, v in esummary.items() if v["filled"] > 0]
 
-        st.markdown("---")
         st.markdown(
             f"### 🌐 Jumia Enrichment Results "
             f'<span class="enrich-badge">+{total_cells_filled} cells filled</span>',
@@ -1433,197 +887,127 @@ with tab_upload:
                 info  = esummary.get(col, {"before": 0, "after": 0, "filled": 0})
                 label = col.replace("_", " ").title()
                 if info["filled"] > 0:
-                    chip_html += (
-                        f'<span class="field-chip">✅ {label} (+{info["filled"]})</span>'
-                    )
+                    chip_html += f'<span class="field-chip">✅ {label} (+{info["filled"]})</span>'
                 else:
                     status = "—" if info["after"] == 0 else f'{info["after"]} rows'
-                    chip_html += (
-                        f'<span class="field-chip missing">⬜ {label} ({status})</span>'
-                    )
+                    chip_html += f'<span class="field-chip missing">⬜ {label} ({status})</span>'
             st.markdown(chip_html, unsafe_allow_html=True)
-
-            detail_rows = []
-            for col in SCRAPABLE_FIELDS:
-                info = esummary.get(col, {"before": 0, "after": 0, "filled": 0})
-                detail_rows.append({
-                    "Field":           col,
-                    "Before (filled)": info["before"],
-                    "After (filled)":  info["after"],
-                    "Newly filled":    info["filled"],
-                    "Total rows":      len(edf),
-                })
-            st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
-
-        with st.expander(
-            f"📋 Inline preview — enriched data ({len(edf)} rows)", expanded=False
-        ):
-            preview_cols   = [
-                c for c in edf.columns
-                if edf[c].astype(str).str.strip()
-                .replace({"nan": "", "None": ""}).ne("").any()
-            ]
-            enriched_first = cols_with_data + [
-                c for c in preview_cols if c not in cols_with_data
-            ]
-            st.dataframe(
-                edf[enriched_first].fillna("").replace("nan", ""),
-                use_container_width=True,
-                height=400,
-            )
-
-        st.markdown("#### ⬇️ Download Enriched Dataset")
-        dl_col1, dl_col2 = st.columns(2)
-        with dl_col1:
-            st.download_button(
-                label="📥 Download as Excel (.xlsx)",
-                data=_to_excel_bytes(edf),
-                file_name=f"enriched_postqc_{pq_country.lower()}_{country_code}.xlsx",
-                mime=(
-                    "application/vnd.openxmlformats-officedocument"
-                    ".spreadsheetml.sheet"
-                ),
-                use_container_width=True,
-                type="primary",
-            )
-        with dl_col2:
-            st.download_button(
-                label="📄 Download as CSV (.csv)",
-                data=_to_csv_bytes(edf),
-                file_name=f"enriched_postqc_{pq_country.lower()}_{country_code}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-        st.caption(
-            f"File contains all original columns plus enriched Jumia data · "
-            f"{len(edf)} rows · {len(edf.columns)} columns"
-        )
-        st.markdown("---")
-
-    # ------------------------------------------------------------------
-    # FULL VALIDATION RESULTS
-    # ------------------------------------------------------------------
-    _val_report = st.session_state.get("pq_val_report", pd.DataFrame())
-    _pq_data    = st.session_state.pq_data
-
-    if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
-        _app_df = _val_report[_val_report["Status"] == "Approved"]
-        _rej_df = _val_report[_val_report["Status"] == "Rejected"]
-        _sf     = _load_support_files()
-        _cv     = CountryValidator(pq_country)
-
-        st.markdown("---")
+            
+    else:
         st.markdown(
-            f"""<div style='background:linear-gradient(135deg,{ORANGE},{ORANGE2});
-            padding:18px 24px;border-radius:10px;margin-bottom:16px;
-            box-shadow:0 4px 12px rgba(246,139,30,0.25);'>
-            <h3 style='color:white;margin:0;font-size:20px;font-weight:700;'>
-            🛡️ Validation Results</h3></div>""",
+            f"### 🌐 Data Generated "
+            f'<span class="enrich-badge">{len(edf)} Products Loaded</span>',
             unsafe_allow_html=True,
         )
 
-        # ── Metrics ────────────────────────────────────────────────
-        mc1, mc2, mc3, mc4 = st.columns(4)
-        for _col, _lbl, _val, _color in [
-            (mc1, "Total Products", len(_pq_data),   DARK),
-            (mc2, "Approved",       len(_app_df),    GREEN),
-            (mc3, "Rejected",       len(_rej_df),    RED),
-            (mc4, "Rejection Rate",
-             f"{(len(_rej_df)/len(_pq_data)*100) if len(_pq_data)>0 else 0:.1f}%",
-             ORANGE),
-        ]:
-            with _col:
+    with st.expander(f"📋 Inline preview — enriched data ({len(edf)} rows)", expanded=False):
+        preview_cols = [c for c in edf.columns if edf[c].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("").any()]
+        st.dataframe(edf[preview_cols].fillna("").replace("nan", ""), use_container_width=True, height=400)
+
+    st.markdown("#### ⬇️ Download Enriched Dataset")
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            label="📥 Download as Excel (.xlsx)",
+            data=_to_excel_bytes(edf),
+            file_name=f"enriched_data_{pq_country.lower()}_{country_code}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True, type="primary",
+        )
+    with dl_col2:
+        st.download_button(
+            label="📄 Download as CSV (.csv)",
+            data=_to_csv_bytes(edf),
+            file_name=f"enriched_data_{pq_country.lower()}_{country_code}.csv",
+            mime="text/csv", use_container_width=True,
+        )
+
+# ------------------------------------------------------------------
+# FULL VALIDATION RESULTS
+# ------------------------------------------------------------------
+_val_report = st.session_state.get("pq_val_report", pd.DataFrame())
+_pq_data    = st.session_state.pq_data
+
+if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
+    _app_df = _val_report[_val_report["Status"] == "Approved"]
+    _rej_df = _val_report[_val_report["Status"] == "Rejected"]
+    _sf     = _load_support_files()
+    _cv     = CountryValidator(pq_country)
+
+    st.markdown("---")
+    st.markdown(
+        f"""<div style='background:linear-gradient(135deg,{ORANGE},{ORANGE2});
+        padding:18px 24px;border-radius:10px;margin-bottom:16px;
+        box-shadow:0 4px 12px rgba(246,139,30,0.25);'>
+        <h3 style='color:white;margin:0;font-size:20px;font-weight:700;'>
+        🛡️ Validation Results</h3></div>""",
+        unsafe_allow_html=True,
+    )
+
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    for _col, _lbl, _val, _color in [
+        (mc1, "Total Products", len(_pq_data),  DARK),
+        (mc2, "Approved",       len(_app_df),   GREEN),
+        (mc3, "Rejected",       len(_rej_df),   RED),
+        (mc4, "Rejection Rate", f"{(len(_rej_df)/len(_pq_data)*100) if len(_pq_data)>0 else 0:.1f}%", ORANGE),
+    ]:
+        with _col:
+            st.markdown(f"<div style='height:4px;background:{_color};border-radius:4px 4px 0 0;'></div>", unsafe_allow_html=True)
+            st.metric(_lbl, _val)
+
+    if not _rej_df.empty:
+        st.subheader("🚩 Flags Breakdown", anchor=False)
+
+        if not st.session_state.pq_flags_init:
+            _top = _rej_df["FLAG"].value_counts().index[0]
+            st.session_state[f"pqexp_{_top}"] = True
+            st.session_state.pq_flags_init = True
+
+        st.session_state.final_report = st.session_state.pq_val_report.copy()
+        _data_has_w = all(c in _pq_data.columns for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"])
+        
+        for _flag_title in _rej_df["FLAG"].unique():
+            _flag_df = _rej_df[_rej_df["FLAG"] == _flag_title]
+            with st.expander(f"{_flag_title} ({len(_flag_df)})", key=f"pqexp_{_flag_title}"):
+                render_flag_expander(_flag_title, _flag_df, _pq_data, _data_has_w, _sf, _cv)
+
+        st.session_state.pq_val_report = st.session_state.final_report.copy()
+    else:
+        st.success("✅ All products passed validation — no rejections found.")
+
+    st.markdown("---")
+    st.markdown("#### ⬇️ Download Validation Reports")
+    _date_str = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+    _fname_base = f"Validation_Report_{pq_country}_{country_code}_{_date_str}"
+    _reasons_df = _sf.get("reasons", pd.DataFrame())
+
+    _export_cfg = [
+        ("PIM Export",    _val_report, "All products with status"),
+        ("Rejected Only", _rej_df,     "Only rejected products"),
+        ("Approved Only", _app_df,     "Only approved products"),
+    ]
+    
+    _ecols = st.columns(3)
+    for _ei, (_etitle, _edf, _edesc) in enumerate(_export_cfg):
+        with _ecols[_ei]:
+            _ekey = f"pq_exp_{_etitle}"
+            with st.container(border=True):
                 st.markdown(
-                    f"<div style='height:4px;background:{_color};"
-                    f"border-radius:4px 4px 0 0;'></div>",
+                    f"<div style='text-align:center;'>"
+                    f"<div style='font-weight:700;font-size:15px;'>{_etitle}</div>"
+                    f"<div style='font-size:11px;opacity:.7;margin-top:4px;'>{_edesc}</div>"
+                    f"<div style='background:{LIGHT};color:{ORANGE};padding:6px;"
+                    f"border-radius:6px;margin-top:10px;font-weight:600;'>"
+                    f"{len(_edf):,} rows</div></div>",
                     unsafe_allow_html=True,
                 )
-                st.metric(_lbl, _val)
-
-        # ── Flag expanders ─────────────────────────────────────────
-        if not _rej_df.empty:
-            st.subheader("🚩 Flags Breakdown", anchor=False)
-
-            # Auto-expand the top flag once per load
-            if not st.session_state.pq_flags_init:
-                _top = _rej_df["FLAG"].value_counts().index[0]
-                st.session_state[f"pqexp_{_top}"] = True
-                st.session_state.pq_flags_init = True
-
-            # render_flag_expander reads/writes st.session_state.final_report
-            # and st.session_state.display_df_cache internally.
-            # Sync our pq_val_report into final_report so approve/reject work.
-            st.session_state.final_report = st.session_state.pq_val_report.copy()
-
-            _data_has_w = all(
-                c in _pq_data.columns
-                for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"]
-            )
-            for _flag_title in _rej_df["FLAG"].unique():
-                _flag_df = _rej_df[_rej_df["FLAG"] == _flag_title]
-                with st.expander(
-                    f"{_flag_title} ({len(_flag_df)})",
-                    key=f"pqexp_{_flag_title}",
-                ):
-                    render_flag_expander(
-                        _flag_title, _flag_df, _pq_data,
-                        _data_has_w, _sf, _cv,
-                    )
-
-            # Sync any approve/reject changes back into pq_val_report
-            st.session_state.pq_val_report = st.session_state.final_report.copy()
-        else:
-            st.success("✅ All products passed validation — no rejections found.")
-
-        # ── Exports ────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown("#### ⬇️ Download Validation Reports")
-        _date_str = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
-        _fname_base = f"PostQC_{pq_country}_{country_code}_{_date_str}"
-        _reasons_df = _sf.get("reasons", pd.DataFrame())
-
-        _export_cfg = [
-            ("PIM Export",    _val_report, "All products with status"),
-            ("Rejected Only", _rej_df,     "Only rejected products"),
-            ("Approved Only", _app_df,     "Only approved products"),
-        ]
-        _ecols = st.columns(3)
-        for _ei, (_etitle, _edf, _edesc) in enumerate(_export_cfg):
-            with _ecols[_ei]:
-                _ekey = f"pq_exp_{_etitle}"
-                with st.container(border=True):
-                    st.markdown(
-                        f"<div style='text-align:center;'>"
-                        f"<div style='font-weight:700;font-size:15px;'>{_etitle}</div>"
-                        f"<div style='font-size:11px;opacity:.7;margin-top:4px;'>{_edesc}</div>"
-                        f"<div style='background:{LIGHT};color:{ORANGE};padding:6px;"
-                        f"border-radius:6px;margin-top:10px;font-weight:600;'>"
-                        f"{len(_edf):,} rows</div></div>",
-                        unsafe_allow_html=True,
-                    )
-                    if _ekey not in st.session_state.pq_val_exports:
-                        if st.button(
-                            "Generate", key=f"gen_{_ekey}",
-                            type="primary", use_container_width=True,
-                        ):
-                            _res, _fn, _mime = generate_smart_export(
-                                _edf, f"{_fname_base}_{_etitle.replace(' ','_')}",
-                                "simple", _reasons_df,
-                            )
-                            st.session_state.pq_val_exports[_ekey] = {
-                                "data": _res.getvalue(), "fname": _fn, "mime": _mime,
-                            }
-                            st.rerun()
-                    else:
-                        _ec = st.session_state.pq_val_exports[_ekey]
-                        st.download_button(
-                            "📥 Download", data=_ec["data"],
-                            file_name=_ec["fname"], mime=_ec["mime"],
-                            use_container_width=True, type="primary",
-                            key=f"dl_{_ekey}",
+                if _ekey not in st.session_state.pq_val_exports:
+                    if st.button("Generate", key=f"gen_{_ekey}", type="primary", use_container_width=True):
+                        _res, _fn, _mime = generate_smart_export(
+                            _edf, f"{_fname_base}_{_etitle.replace(' ','_')}", "simple", _reasons_df,
                         )
-
-    if files and st.session_state.pq_val_report.empty and st.session_state.pq_data.empty:
-        st.info("⏳ File uploaded — results will appear here once processing completes.")
-    elif not files:
-        st.info("👆 Upload a post-QC export above to get started.")
+                        st.session_state.pq_val_exports[_ekey] = {"data": _res.getvalue(), "fname": _fn, "mime": _mime}
+                        st.rerun()
+                else:
+                    _ec = st.session_state.pq_val_exports[_ekey]
+                    st.download_button("📥 Download", data=_ec["data"], file_name=_ec["fname"], mime=_ec["mime"], use_container_width=True, type="primary", key=f"dl_{_ekey}")
