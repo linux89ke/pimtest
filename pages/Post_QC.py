@@ -1001,12 +1001,95 @@ with tab_upload:
                     )
 
                 # 3. Ensure all columns validate_products needs are present
+
+                # LIST_VARIATIONS — build from scraped variation fields if
+                # the file didn't already supply it.
+                if "LIST_VARIATIONS" not in ready.columns or (
+                    ready["LIST_VARIATIONS"].astype(str).str.strip()
+                    .replace({"nan": "", "None": ""}).eq("").all()
+                ):
+                    _var_parts = []
+                    for _vcol in ["COLOR", "SIZES_AVAILABLE"]:
+                        if _vcol in ready.columns:
+                            _var_parts.append(
+                                ready[_vcol].astype(str)
+                                .str.strip()
+                                .replace({"nan": "", "None": ""})
+                            )
+                    if _var_parts:
+                        import functools as _ft
+                        def _join_vars(*cols):
+                            return " | ".join(v for v in cols if v)
+                        ready["LIST_VARIATIONS"] = _ft.reduce(
+                            lambda a, b: a.where(b.eq(""), a + " | " + b).where(a.ne(""), b),
+                            _var_parts,
+                        ).replace({"": pd.NA})
+                    else:
+                        ready["LIST_VARIATIONS"] = ""
+
+                # GLOBAL_SALE_PRICE / GLOBAL_PRICE — used by
+                # check_suspected_fake_products.
+                # Priority: file price > scraped PRICE > empty.
+                # Post-QC files may have a "PRICE" or "GLOBAL_SALE_PRICE" column.
+                # The scraper stores price as "KSh 759" — strip non-numeric chars.
+                def _parse_price_str(s) -> str:
+                    """Extract numeric value from a price string like 'KSh 1,299'."""
+                    try:
+                        clean = re.sub(r"[^\d.]", "", str(s))
+                        val = float(clean) if clean else None
+                        if val and val > 0:
+                            return str(val)
+                    except (ValueError, TypeError):
+                        pass
+                    return ""
+
+                # Determine GLOBAL_SALE_PRICE
+                # Priority: explicit file price column > scraped PRICE > empty.
+                # We never treat the scraper's "PRICE" column as a file column —
+                # instead we use it only as a fallback when no file price exists
+                # or where the file price is blank for a row.
+                _file_price_candidates = [
+                    c for c in [
+                        "GLOBAL_SALE_PRICE", "GLOBAL_PRICE",
+                        "SALE_PRICE", "sale_price", "listed_price",
+                    ]
+                    if c in ready.columns
+                ]
+                _file_price_col = _file_price_candidates[0] if _file_price_candidates else None
+
+                if _file_price_col and _file_price_col != "GLOBAL_SALE_PRICE":
+                    # File has its own price column — parse it
+                    ready["GLOBAL_SALE_PRICE"] = (
+                        ready[_file_price_col].astype(str).apply(_parse_price_str)
+                    )
+                elif "GLOBAL_SALE_PRICE" not in ready.columns:
+                    ready["GLOBAL_SALE_PRICE"] = ""
+
+                # Wherever GLOBAL_SALE_PRICE is still empty, fall back to
+                # scraped PRICE (e.g. "KSh 759" → "759.0")
+                _sp_empty = ready["GLOBAL_SALE_PRICE"].astype(str).str.strip().eq("")
+                if "PRICE" in ready.columns and _sp_empty.any():
+                    ready.loc[_sp_empty, "GLOBAL_SALE_PRICE"] = (
+                        ready.loc[_sp_empty, "PRICE"]
+                        .astype(str).apply(_parse_price_str)
+                    )
+
+                # GLOBAL_PRICE mirrors GLOBAL_SALE_PRICE when not present
+                if "GLOBAL_PRICE" not in ready.columns or (
+                    ready["GLOBAL_PRICE"].astype(str).str.strip()
+                    .replace({"nan": "", "None": ""}).eq("").all()
+                ):
+                    ready["GLOBAL_PRICE"] = ready["GLOBAL_SALE_PRICE"]
+
+                # PARENTSKU — not available in post-QC; leave blank
+                if "PARENTSKU" not in ready.columns:
+                    ready["PARENTSKU"] = ""
+
+                # Remaining safety cols
                 for _col_needed in [
                     "NAME", "BRAND", "COLOR", "SELLER_NAME",
                     "PRODUCT_WARRANTY", "WARRANTY_DURATION",
-                    "COUNT_VARIATIONS", "LIST_VARIATIONS",
-                    "GLOBAL_PRICE", "GLOBAL_SALE_PRICE",
-                    "PARENTSKU", "COLOR_FAMILY",
+                    "COUNT_VARIATIONS", "COLOR_FAMILY",
                 ]:
                     if _col_needed not in ready.columns:
                         ready[_col_needed] = ""
