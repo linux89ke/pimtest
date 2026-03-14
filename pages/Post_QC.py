@@ -900,6 +900,63 @@ with tab_upload:
             _reset_results()
 
             try:
+                # ── Column mapping for Jumia post-QC CSV exports ───────
+                # Maps the exact column names from the Jumia export format
+                # to the internal names used by validate_products().
+                _PQ_COL_MAP = {
+                    "sku":               "PRODUCT_SET_SID",
+                    "name":              "NAME",
+                    "brand":             "BRAND",
+                    "category":          "CATEGORY",
+                    "price":             "GLOBAL_SALE_PRICE",
+                    "old price":         "GLOBAL_PRICE",
+                    "seller":            "SELLER_NAME",
+                    "sellername":        "SELLER_NAME",
+                    "seller name":       "SELLER_NAME",
+                    "image url":         "MAIN_IMAGE",
+                    "image":             "MAIN_IMAGE",
+                    "main image":        "MAIN_IMAGE",
+                    "stock":             "STOCK_STATUS",
+                    "stock status":      "STOCK_STATUS",
+                    "rating":            "RATING",
+                    "total ratings":     "REVIEW_COUNT",
+                    "review count":      "REVIEW_COUNT",
+                    "discount":          "DISCOUNT",
+                    "tags":              "TAGS",
+                    "product url":       "PRODUCT_URL",
+                    "jumia express":     "JUMIA_EXPRESS",
+                    "shop global":       "SHOP_GLOBAL",
+                    "color":             "COLOR",
+                    "colour":            "COLOR",
+                    "product warranty":  "PRODUCT_WARRANTY",
+                    "warranty":          "PRODUCT_WARRANTY",
+                    "warranty duration": "WARRANTY_DURATION",
+                    "count variations":  "COUNT_VARIATIONS",
+                    "variations":        "COUNT_VARIATIONS",
+                    "seller sku":        "SELLER_SKU",
+                    "parentsku":         "PARENTSKU",
+                    "parent sku":        "PARENTSKU",
+                    "description":       "DESCRIPTION",
+                }
+
+                def _is_jumia_csv(df: pd.DataFrame) -> bool:
+                    """True if the file looks like a Jumia product export CSV."""
+                    cols_lower = {c.strip().lower() for c in df.columns}
+                    # Must have at least SKU + Name + Category + Seller
+                    required = {"sku", "name", "category", "seller"}
+                    return required.issubset(cols_lower)
+
+                def _standardise_pq(df: pd.DataFrame) -> pd.DataFrame:
+                    """Rename columns to internal names using _PQ_COL_MAP."""
+                    df = df.copy()
+                    df.columns = df.columns.str.strip()
+                    rename = {}
+                    for col in df.columns:
+                        mapped = _PQ_COL_MAP.get(col.lower().strip())
+                        if mapped:
+                            rename[col] = mapped
+                    return df.rename(columns=rename)
+
                 all_dfs = []
                 for uf in files:
                     buf = BytesIO(uf["bytes"])
@@ -919,12 +976,22 @@ with tab_upload:
                                 buf, sep=";", encoding="ISO-8859-1", dtype=str
                             )
 
-                    if detect_file_type(raw) != "post_qc":
+                    # Accept both the standard post-QC format AND the
+                    # Jumia CSV export format (SKU, Name, Category, Seller…)
+                    _is_jumia = _is_jumia_csv(raw)
+                    _is_pq    = _POSTQC_OK and detect_file_type(raw) == "post_qc"
+
+                    if not _is_pq and not _is_jumia:
                         st.error(
-                            f"**{uf['name']}** doesn't look like a post-QC export. "
-                            "Expected columns: SKU, Name, Brand, Category, Price, Seller."
+                            f"**{uf['name']}** doesn't look like a recognised format. "
+                            "Expected either a Jumia post-QC export or a Jumia product "
+                            "CSV with columns: SKU, Name, Category, Seller."
                         )
                         st.stop()
+
+                    # Standardise column names if it's the Jumia CSV format
+                    if _is_jumia and not _is_pq:
+                        raw = _standardise_pq(raw)
 
                     all_dfs.append(raw)
 
@@ -935,30 +1002,170 @@ with tab_upload:
                 support_files_pq["country_code"] = country_code
                 support_files_pq["country_name"] = pq_country
 
+                # ── Build rich category lookup from category_map.xlsx ──
+                # category_map.xlsx columns:
+                #   category_name | category_code | Category Path
+                # Paths use " / " as separator (space-slash-space).
+                # Post-QC CATEGORY column uses " > " as separator.
+                # We normalise both sides to the same form for comparison.
+                import unicodedata as _ud
+
+                def _nk(s: str) -> str:
+                    """Strip accents, lowercase, keep only a-z0-9."""
+                    s = _ud.normalize("NFKD", str(s)).lower()
+                    return re.sub(r"[^a-z0-9]", "", s)
+
+                def _norm_sep(s: str) -> str:
+                    """Normalise any path separator ( / , > , | , \ ) to ' / '."""
+                    return re.sub(r"\s*[>/|\\]\s*", " / ", str(s).strip()).lower()
+
+                # Three lookup tables
+                _cmap_by_path: dict = {}  # norm_sep(full_path) → code
+                _cmap_by_name: dict = {}  # lower(name)         → code
+                _cmap_by_seg:  dict = {}  # lower(each segment) → code
+                #   (setdefault keeps the FIRST = most-specific entry per seg)
+
+                # Load directly from category_map.xlsx — this is the source of truth
+                _cmap_xlsx_path = "category_map.xlsx"
+                if os.path.exists(_cmap_xlsx_path):
+                    try:
+                        _cm_df = pd.read_excel(
+                            _cmap_xlsx_path, engine="openpyxl", dtype=str
+                        )
+                        _cm_df.columns = [c.strip().lower() for c in _cm_df.columns]
+                        _col_name = next(
+                            (c for c in _cm_df.columns
+                             if "name" in c and "path" not in c), None
+                        )
+                        _col_code = next(
+                            (c for c in _cm_df.columns if "code" in c), None
+                        )
+                        _col_path = next(
+                            (c for c in _cm_df.columns if "path" in c), None
+                        )
+                        if _col_name and _col_code:
+                            for _, _row in _cm_df.iterrows():
+                                _cs = str(_row[_col_code]).split(".")[0].strip()
+                                if not re.match(r"^\d+$", _cs):
+                                    continue
+                                # Index by name (exact lower)
+                                _nm = str(_row[_col_name]).strip()
+                                if _nm and _nm.lower() not in ("nan", "none", ""):
+                                    _cmap_by_name[_nm.lower()] = _cs
+                                    # Also index every word-normalised variant
+                                    _cmap_by_seg.setdefault(_nm.lower(), _cs)
+                                # Index by full path (normalised separator)
+                                if _col_path:
+                                    _pt = str(_row[_col_path]).strip()
+                                    if _pt and _pt.lower() not in ("nan", "none", ""):
+                                        _cmap_by_path[_norm_sep(_pt)] = _cs
+                                        # Index each segment of the path.
+                                        # Split ONLY on the known separator " / "
+                                        # to avoid breaking names with & or -
+                                        for _seg in _pt.split(" / "):
+                                            _seg = _seg.strip()
+                                            if _seg and _seg.lower() not in ("nan","none",""):
+                                                _cmap_by_seg.setdefault(_seg.lower(), _cs)
+                    except Exception as _cm_err:
+                        logger.warning(f"category_map.xlsx load failed: {_cm_err}")
+                else:
+                    # Fallback: populate from load_category_map() name→code dict
+                    for _n, _c in cat_map.items():
+                        _cs = str(_c).split(".")[0].strip()
+                        if re.match(r"^\d+$", _cs):
+                            _cmap_by_name[_n.lower()] = _cs
+                            _cmap_by_seg[_n.lower()]   = _cs
+
+                # Sorted longest-key-first for contains matching
+                _cmap_seg_sorted = sorted(
+                    _cmap_by_seg.items(), key=lambda x: len(x[0]), reverse=True
+                )
+
+                def _resolve_cat_code(category: str, existing: str = "") -> str:
+                    """
+                    Resolve a category path/name string to a numeric code.
+
+                    Strategy order (stops at first hit):
+                      A. Full normalised path — exact match in _cmap_by_path
+                         Works for both " / " and " > " separators since we
+                         normalise both to " / " before lookup.
+                      B. Exact name match on each segment, most-specific first.
+                         Segment split uses the path separator only (not & or -).
+                      C. Contains match — longest map key that is a substring
+                         of a segment OR the segment is a substring of a key.
+                         Picks the longest match to get most-specific code.
+                      D. Keep existing code if it is already numeric.
+                    """
+                    _existing = str(existing).strip()
+
+                    raw = str(category).strip()
+                    if not raw or raw.lower() in ("nan", "none", ""):
+                        return _existing
+
+                    def _valid(v: str) -> str:
+                        v = str(v).split(".")[0].strip()
+                        return v if re.match(r"^\d+$", v) else ""
+
+                    # ── A: full path match ─────────────────────────────────
+                    c = _valid(_cmap_by_path.get(_norm_sep(raw), ""))
+                    if c: return c
+
+                    # ── B: exact segment match, most-specific first ────────
+                    # Split on separator chars but NOT on & (names contain &)
+                    segs = [s.strip() for s in re.split(r"\s*[>/|\\]\s*", raw)
+                            if s.strip()]
+                    for seg in reversed(segs):
+                        c = _valid(_cmap_by_name.get(seg.lower(), ""))
+                        if c: return c
+
+                    # ── C: contains match, most-specific segment first ─────
+                    for seg in reversed(segs):
+                        sn = _nk(seg)
+                        if not sn: continue
+                        best_c, best_len = "", 0
+                        for k, v in _cmap_seg_sorted:
+                            kn = _nk(k)
+                            if not kn: continue
+                            # Only match if the key is a reasonable length
+                            # (≥3 chars) to avoid noise from short tokens
+                            if len(kn) < 3: continue
+                            if kn == sn or kn in sn or sn in kn:
+                                c = _valid(v)
+                                if c and len(kn) > best_len:
+                                    best_c, best_len = c, len(kn)
+                        if best_c: return best_c
+
+                    # ── D: keep existing if already numeric ────────────────
+                    if re.match(r"^\d+$", _existing):
+                        return _existing
+                    return _existing
+
                 # ── Normalise ──────────────────────────────────────────
                 norm_dfs = []
                 for df in all_dfs:
-                    ndf = normalize_post_qc(df, category_map=cat_map)
-                    if cat_map and "CATEGORY" in ndf.columns:
-                        resolved = ndf["CATEGORY_CODE"].str.match(r"^\d+$").sum()
-                        if resolved == 0:
-                            def _resolve(raw, cmap=cat_map):
-                                if not raw or raw == "nan":
-                                    return ""
-                                segs = [
-                                    s.strip()
-                                    for s in re.split(r"[>/]", str(raw))
-                                    if s.strip()
-                                ]
-                                for seg in reversed(segs):
-                                    code = cmap.get(seg.lower())
-                                    if code:
-                                        return code
-                                last = segs[-1] if segs else raw
-                                return re.sub(r"[^a-z0-9]", "_", last.lower())
-                            ndf["CATEGORY_CODE"] = (
-                                ndf["CATEGORY"].astype(str).apply(_resolve)
-                            )
+                    # If the df already has PRODUCT_SET_SID (standardised above
+                    # or native post-QC format), skip normalize_post_qc which
+                    # expects the raw post-QC column names.
+                    if "PRODUCT_SET_SID" in df.columns:
+                        ndf = df.copy()
+                        # Ensure CATEGORY_CODE column exists
+                        if "CATEGORY_CODE" not in ndf.columns:
+                            ndf["CATEGORY_CODE"] = ""
+                    else:
+                        # Native post-QC format — let postqc.py handle it
+                        ndf = normalize_post_qc(df, category_map=cat_map)
+                        if "CATEGORY_CODE" not in ndf.columns:
+                            ndf["CATEGORY_CODE"] = ""
+
+                    # Re-resolve every row using the rich multi-index
+                    if "CATEGORY" in ndf.columns:
+                        ndf["CATEGORY_CODE"] = ndf.apply(
+                            lambda r: _resolve_cat_code(
+                                r.get("CATEGORY", ""),
+                                r.get("CATEGORY_CODE", ""),
+                            ),
+                            axis=1,
+                        )
                     norm_dfs.append(ndf)
 
                 merged = pd.concat(norm_dfs, ignore_index=True)
@@ -1030,38 +1237,34 @@ with tab_upload:
                 # 1. Inject ACTIVE_STATUS_COUNTRY so country filter passes
                 ready["ACTIVE_STATUS_COUNTRY"] = country_code
 
-                # 2. Resolve CATEGORY_CODE from the category map.
-                #    cat_map keys are lower-cased category names; values are
-                #    the numeric codes used by all validation checks.
-                #    We walk every segment of the path in reverse order
-                #    (most-specific first) so "Water Bottles" resolves before
-                #    "Home & Office".
-                #    IMPORTANT: only overwrite CATEGORY_CODE when we actually
-                #    find a match — never replace a good existing code with a
-                #    meaningless slug fallback.
-                if cat_map and "CATEGORY" in ready.columns:
-                    def _resolve_code(row, cmap=cat_map):
-                        raw = str(row.get("CATEGORY", "")).strip()
-                        existing = str(row.get("CATEGORY_CODE", "")).strip()
+                # 2. Re-apply category code resolution using the rich
+                #    multi-index built above (already applied during normalise,
+                #    but re-run here after scraper enrichment may have updated
+                #    CATEGORY_PATH field).
+                if "CATEGORY" in ready.columns:
+                    if "CATEGORY_CODE" not in ready.columns:
+                        ready["CATEGORY_CODE"] = ""
+                    ready["CATEGORY_CODE"] = ready.apply(
+                        lambda r: _resolve_cat_code(
+                            r.get("CATEGORY", ""),
+                            r.get("CATEGORY_CODE", ""),
+                        ),
+                        axis=1,
+                    )
 
-                        if not raw or raw.lower() in ("nan", "none", ""):
-                            return existing
-
-                        segs = [
-                            s.strip()
-                            for s in re.split(r"[>/\\|]", raw)
-                            if s.strip()
-                        ]
-                        # Walk most-specific → least-specific
-                        for seg in reversed(segs):
-                            code = cmap.get(seg.lower())
-                            if code:
-                                return str(code).split(".")[0]
-
-                        # No match found — keep whatever normalize_post_qc set
-                        return existing
-
-                    ready["CATEGORY_CODE"] = ready.apply(_resolve_code, axis=1)
+                    # Warn about rows that still have no numeric code
+                    _unresolved = ready[
+                        ~ready["CATEGORY_CODE"].astype(str).str.match(r"^\d+$")
+                    ]["CATEGORY"].dropna().unique()
+                    if len(_unresolved):
+                        st.warning(
+                            f"⚠️ **{len(_unresolved)}** category path(s) could not be "
+                            f"resolved to a numeric code — validations for these rows "
+                            f"may be incomplete. Add them to `category_map.xlsx`:\n\n"
+                            + "\n".join(f"- `{c}`" for c in _unresolved[:10])
+                            + ("\n- *(and more…)*" if len(_unresolved) > 10 else ""),
+                            icon="⚠️",
+                        )
 
                 # 3. Ensure all columns validate_products needs are present
 
