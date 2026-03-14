@@ -63,10 +63,62 @@ try:
     generate_smart_export  = _main_mod.generate_smart_export
     PRODUCTSETS_COLS       = _main_mod.PRODUCTSETS_COLS
     REJECTION_REASONS_COLS = _main_mod.REJECTION_REASONS_COLS
+    clean_category_code    = _main_mod.clean_category_code
     _FULL_VALIDATION_OK    = True
 except Exception as _fv_err:
     _FULL_VALIDATION_OK = False
     _fv_err_msg = str(_fv_err)
+
+# ── Post-QC aware brand-check overrides ───────────────────────────────────────
+# The original check_fashion_brand_issues and check_generic_brand_issues only
+# compare CATEGORY_CODE against the fashion code list.  In post-QC files the
+# CATEGORY_CODE may still be unresolved (non-numeric slug) when the category
+# map didn't contain that leaf name.  In that case we fall back to checking the
+# CATEGORY path string itself for the word "fashion" before flagging.
+#
+# These overrides are injected into validate_products via monkey-patching the
+# module-level functions on _main_mod so the validation runner picks them up.
+
+if _FULL_VALIDATION_OK:
+    import pandas as _pd_patch
+
+    def _pq_check_fashion_brand_issues(data: "pd.DataFrame",
+                                        valid_category_codes_fas: list) -> "pd.DataFrame":
+        if not {"CATEGORY_CODE", "BRAND"}.issubset(data.columns):
+            return _pd_patch.DataFrame(columns=data.columns)
+        fas_set = set(clean_category_code(c) for c in valid_category_codes_fas)
+        brand_is_fashion = data["BRAND"].astype(str).str.strip().str.lower() == "fashion"
+        code_not_fas     = ~data["CATEGORY_CODE"].apply(clean_category_code).isin(fas_set)
+        # Path fallback: if CATEGORY path contains "fashion" treat as fashion cat
+        if "CATEGORY" in data.columns:
+            path_is_fashion = data["CATEGORY"].astype(str).str.contains(
+                r"\bfashion\b", case=False, na=False, regex=True
+            )
+        else:
+            path_is_fashion = _pd_patch.Series(False, index=data.index)
+        flagged = data[brand_is_fashion & code_not_fas & ~path_is_fashion].copy()
+        return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+    def _pq_check_generic_brand_issues(data: "pd.DataFrame",
+                                        valid_category_codes_fas: list) -> "pd.DataFrame":
+        if not {"CATEGORY_CODE", "BRAND"}.issubset(data.columns):
+            return _pd_patch.DataFrame(columns=data.columns)
+        fas_set = set(clean_category_code(c) for c in valid_category_codes_fas)
+        brand_is_generic = data["BRAND"].astype(str).str.lower() == "generic"
+        code_in_fas      = data["CATEGORY_CODE"].apply(clean_category_code).isin(fas_set)
+        # Path fallback: if CATEGORY path contains "fashion" treat as fashion cat
+        if "CATEGORY" in data.columns:
+            path_is_fashion = data["CATEGORY"].astype(str).str.contains(
+                r"\bfashion\b", case=False, na=False, regex=True
+            )
+        else:
+            path_is_fashion = _pd_patch.Series(False, index=data.index)
+        flagged = data[brand_is_generic & (code_in_fas | path_is_fashion)].copy()
+        return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+    # Patch onto the imported module so validate_products() uses our versions
+    _main_mod.check_fashion_brand_issues  = _pq_check_fashion_brand_issues
+    _main_mod.check_generic_brand_issues  = _pq_check_generic_brand_issues
 
 try:
     from jumia_scraper import (
@@ -981,28 +1033,35 @@ with tab_upload:
                 # 2. Resolve CATEGORY_CODE from the category map.
                 #    cat_map keys are lower-cased category names; values are
                 #    the numeric codes used by all validation checks.
-                #    We try every segment of the path in reverse order
+                #    We walk every segment of the path in reverse order
                 #    (most-specific first) so "Water Bottles" resolves before
                 #    "Home & Office".
+                #    IMPORTANT: only overwrite CATEGORY_CODE when we actually
+                #    find a match — never replace a good existing code with a
+                #    meaningless slug fallback.
                 if cat_map and "CATEGORY" in ready.columns:
-                    def _resolve_code(raw, cmap=cat_map):
-                        if not raw or str(raw).strip().lower() in ("nan", "none", ""):
-                            return ""
+                    def _resolve_code(row, cmap=cat_map):
+                        raw = str(row.get("CATEGORY", "")).strip()
+                        existing = str(row.get("CATEGORY_CODE", "")).strip()
+
+                        if not raw or raw.lower() in ("nan", "none", ""):
+                            return existing
+
                         segs = [
                             s.strip()
-                            for s in re.split(r"[>/\\|]", str(raw))
+                            for s in re.split(r"[>/\\|]", raw)
                             if s.strip()
                         ]
+                        # Walk most-specific → least-specific
                         for seg in reversed(segs):
                             code = cmap.get(seg.lower())
                             if code:
                                 return str(code).split(".")[0]
-                        # fallback: use last segment slugified
-                        last = segs[-1] if segs else str(raw)
-                        return re.sub(r"[^a-z0-9]", "_", last.lower())
-                    ready["CATEGORY_CODE"] = (
-                        ready["CATEGORY"].astype(str).apply(_resolve_code)
-                    )
+
+                        # No match found — keep whatever normalize_post_qc set
+                        return existing
+
+                    ready["CATEGORY_CODE"] = ready.apply(_resolve_code, axis=1)
 
                 # 3. Ensure all columns validate_products needs are present
 
