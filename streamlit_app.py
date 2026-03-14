@@ -1209,8 +1209,10 @@ def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[
         r'(?:kg|kgs|g|gm|gms|grams|mg|mcg|ml|l|ltr|liter|litres|litre|cl|oz|ounces|lb|lbs'
         r'|tablets?|tabs?|capsules?|caps?|sachets?|count|ct|sticks?|iu'
         r'|tea\s*bags?|teabags?|bags?'
-        r'|pieces?|pcs|pack|packs)'
-        r'|\b\d+s\b',
+        r'|pieces?|pcs|pack|packs'
+        r'|dozens?|pairs?|rolls?|sheets?|wipes?|pods?|softgels?|lozenges?|gummies|gummy|units?|serves?|servings?)'
+        r'|\b\d+s\b'
+        r'|\b(?:a\s+)?dozen\b',
         re.IGNORECASE
     )
     return target[~target['NAME'].apply(lambda n: bool(pat.search(str(n))))].drop_duplicates(subset=['PRODUCT_SET_SID'])
