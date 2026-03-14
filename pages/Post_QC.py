@@ -31,8 +31,6 @@ try:
     from postqc import (
         detect_file_type,
         normalize_post_qc,
-        run_checks as run_post_qc_checks,
-        render_post_qc_section,
         load_category_map,
     )
     _POSTQC_OK = True
@@ -172,22 +170,19 @@ _SS_DEFAULTS = {
     "selected_country":   "Kenya",
     "layout_mode":        "wide",
     "pq_country":         "Kenya",
-    "pq_summary":         pd.DataFrame(),
-    "pq_results":         {},
     "pq_data":            pd.DataFrame(),
     "pq_last_sig":        None,
-    "pq_exports_cache":   {},
     "pq_cached_files":    [],
     "scraper_enabled":    False,
     # enrichment state
     "enriched_df":        None,
-    "enrichment_summary": {},   # col -> {before, after, filled}
+    "enrichment_summary": {},
     "enrichment_done":    False,
     # sku lookup state
     "sku_results_df":     pd.DataFrame(),
     "sku_search_done":    False,
     "sku_lookup_country": "Kenya",
-    # full validation results (runs after post-QC normalisation)
+    # full validation results
     "pq_val_report":      pd.DataFrame(),
     "pq_val_results":     {},
     "pq_val_exports":     {},
@@ -248,11 +243,8 @@ def _load_support_files() -> dict:
 
 
 def _reset_results():
-    st.session_state.pq_summary       = pd.DataFrame()
-    st.session_state.pq_results       = {}
     st.session_state.pq_data          = pd.DataFrame()
     st.session_state.pq_last_sig      = None
-    st.session_state.pq_exports_cache = {}
     st.session_state.enriched_df        = None
     st.session_state.enrichment_summary = {}
     st.session_state.enrichment_done    = False
@@ -441,7 +433,8 @@ with st.sidebar:
 
     if st.button("🗑 Clear Results", use_container_width=True, type="secondary"):
         _reset_results()
-        st.session_state.pq_cached_files = []
+        st.session_state.pq_cached_files  = []
+        st.session_state.pq_val_exports   = {}
         st.rerun()
 
 # ------------------------------------------------------------------
@@ -460,6 +453,7 @@ Upload a Jumia post-QC export · missing fields auto-filled from Jumia</p>
 
 # ------------------------------------------------------------------
 # HARD STOP if postqc.py failed to import
+# (needed for detect_file_type and normalize_post_qc)
 # ------------------------------------------------------------------
 if not _POSTQC_OK:
     st.error(
@@ -468,6 +462,13 @@ if not _POSTQC_OK:
         "Make sure `postqc.py` is in the same folder as `streamlit_app.py`."
     )
     st.stop()
+
+if not _FULL_VALIDATION_OK:
+    st.warning(
+        f"⚠️ Full validation engine not available — "
+        f"`streamlit_app.py` could not be imported: `{_fv_err_msg}`. "
+        "Validations will be skipped."
+    )
 
 # ------------------------------------------------------------------
 # TABS
@@ -963,22 +964,70 @@ with tab_upload:
                             icon="ℹ️",
                         )
 
-                # ── Run full validation pipeline (same as main app) ────
+                # ── Prepare data for full validation ───────────────────
+                # validate_products() requires ACTIVE_STATUS_COUNTRY and
+                # CATEGORY_CODE as a numeric code.  Post-QC files have
+                # a CATEGORY path string, so we resolve it here.
+
+                ready = merged_dedup.copy()
+
+                # 1. Inject ACTIVE_STATUS_COUNTRY so country filter passes
+                ready["ACTIVE_STATUS_COUNTRY"] = country_code
+
+                # 2. Resolve CATEGORY_CODE from the category map.
+                #    cat_map keys are lower-cased category names; values are
+                #    the numeric codes used by all validation checks.
+                #    We try every segment of the path in reverse order
+                #    (most-specific first) so "Water Bottles" resolves before
+                #    "Home & Office".
+                if cat_map and "CATEGORY" in ready.columns:
+                    def _resolve_code(raw, cmap=cat_map):
+                        if not raw or str(raw).strip().lower() in ("nan", "none", ""):
+                            return ""
+                        segs = [
+                            s.strip()
+                            for s in re.split(r"[>/\\|]", str(raw))
+                            if s.strip()
+                        ]
+                        for seg in reversed(segs):
+                            code = cmap.get(seg.lower())
+                            if code:
+                                return str(code).split(".")[0]
+                        # fallback: use last segment slugified
+                        last = segs[-1] if segs else str(raw)
+                        return re.sub(r"[^a-z0-9]", "_", last.lower())
+                    ready["CATEGORY_CODE"] = (
+                        ready["CATEGORY"].astype(str).apply(_resolve_code)
+                    )
+
+                # 3. Ensure all columns validate_products needs are present
+                for _col_needed in [
+                    "NAME", "BRAND", "COLOR", "SELLER_NAME",
+                    "PRODUCT_WARRANTY", "WARRANTY_DURATION",
+                    "COUNT_VARIATIONS", "LIST_VARIATIONS",
+                    "GLOBAL_PRICE", "GLOBAL_SALE_PRICE",
+                    "PARENTSKU", "COLOR_FAMILY",
+                ]:
+                    if _col_needed not in ready.columns:
+                        ready[_col_needed] = ""
+                for _col_str in ["NAME", "BRAND", "COLOR", "SELLER_NAME"]:
+                    if _col_str in ready.columns:
+                        ready[_col_str] = ready[_col_str].astype(str).fillna("")
+
+                # ── Run full validation pipeline ───────────────────────
                 if _FULL_VALIDATION_OK:
                     with st.spinner("Running validations…"):
-                        # Build a CountryValidator for the selected country
                         _cv = CountryValidator(pq_country)
-                        # Reload support files with full set
                         try:
                             _sf_full = load_all_support_files()
                         except Exception:
                             _sf_full = support_files_pq
                         data_has_warranty = all(
-                            c in merged_dedup.columns
+                            c in ready.columns
                             for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"]
                         )
                         _val_report, _val_results = validate_products(
-                            merged_dedup.copy(),
+                            ready,
                             _sf_full,
                             _cv,
                             data_has_warranty,
@@ -987,19 +1036,11 @@ with tab_upload:
                     st.session_state.pq_val_results = _val_results
                     st.session_state.pq_flags_init  = False
 
-                # ── Also run legacy post-QC checks ────────────────────
-                with st.spinner("Running Post-QC checks…"):
-                    summary_df, results = run_post_qc_checks(
-                        merged_dedup, support_files_pq
-                    )
-
-                st.session_state.pq_summary  = summary_df
-                st.session_state.pq_results  = results
-                st.session_state.pq_data     = merged_dedup
+                st.session_state.pq_data     = ready
                 st.session_state.pq_last_sig = sig
 
                 if not st.session_state.enrichment_done:
-                    st.session_state.enriched_df = merged_dedup.copy()
+                    st.session_state.enriched_df = ready.copy()
 
             except Exception as exc:
                 st.error(f"Processing error: {exc}")
@@ -1217,33 +1258,7 @@ with tab_upload:
                             key=f"dl_{_ekey}",
                         )
 
-    # ── Legacy post-QC section (postqc.py checks) ─────────────────────────
-    if not st.session_state.pq_summary.empty:
-        _save = {
-            k: st.session_state.get(k)
-            for k in ("post_qc_summary", "post_qc_results",
-                      "post_qc_data", "exports_cache")
-        }
-
-        st.session_state.post_qc_summary = st.session_state.pq_summary
-        st.session_state.post_qc_results = st.session_state.pq_results
-        st.session_state.post_qc_data    = st.session_state.pq_data
-        st.session_state.exports_cache   = st.session_state.pq_exports_cache
-
-        _sf_legacy = _load_support_files()
-        st.markdown("---")
-        st.markdown("### 📋 Post-QC Specific Checks")
-        render_post_qc_section(_sf_legacy)
-
-        st.session_state.pq_exports_cache = st.session_state.exports_cache
-
-        for k, v in _save.items():
-            if v is None:
-                st.session_state.pop(k, None)
-            else:
-                st.session_state[k] = v
-
-    elif files:
+    if files and st.session_state.pq_val_report.empty and st.session_state.pq_data.empty:
         st.info("⏳ File uploaded — results will appear here once processing completes.")
-    else:
+    elif not files:
         st.info("👆 Upload a post-QC export above to get started.")
