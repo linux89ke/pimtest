@@ -290,6 +290,14 @@ def _render_sku_result_card(sku: str, data: dict):
                 f'<td style="font-size:13px;padding:3px 0;word-break:break-all;">{val}</td>'
                 f'</tr>'
             )
+        else:
+            rows_html += (
+                f'<tr>'
+                f'<td style="color:{MED};font-size:12px;padding:3px 8px 3px 0;'
+                f'white-space:nowrap;font-weight:500;">{label}</td>'
+                f'<td style="font-size:13px;padding:3px 0;color:#BDBDBD;font-style:italic;">—</td>'
+                f'</tr>'
+            )
 
     body = (
         rows_html if rows_html
@@ -539,11 +547,17 @@ with tab_sku:
 
             # ── Table view ────────────────────────────────────────
             with st.expander("📋 Table view", expanded=False):
-                # Only show columns that have at least one value
-                show_cols = [
-                    c for c in res_df.columns
-                    if res_df[c].astype(str).str.strip().ne("").any()
+                # Always include SKU + Found + all SCRAPABLE_FIELDS columns
+                base_cols = ["SKU", "Found"]
+                all_cols = base_cols + [
+                    c for c in SCRAPABLE_FIELDS if c not in base_cols
                 ]
+                # Add any extra columns in res_df not already included
+                extra_cols = [
+                    c for c in res_df.columns
+                    if c not in all_cols
+                ]
+                show_cols = [c for c in all_cols + extra_cols if c in res_df.columns]
                 st.dataframe(
                     res_df[show_cols],
                     use_container_width=True,
