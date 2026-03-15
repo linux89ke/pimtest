@@ -669,6 +669,8 @@ with st.sidebar:
         _reset_results()
 
     country_code = _code(pq_country)
+    st.session_state.pq_country = pq_country
+    st.session_state._pq_country_code = country_code
     st.markdown("---")
 
     if _SCRAPER_OK:
@@ -1383,23 +1385,27 @@ def _render_pq_image_grid():
     if _fr.empty or _data.empty:
         return
 
+    # Read country from session state — pq_country is a local var in the outer
+    # script and is NOT available during fragment-scoped reruns.
+    _pq_country      = st.session_state.get("pq_country", "Kenya")
+
     _sf = _load_support_files()
 
     st.markdown("---")
-    st.header("🖼️ Manual Image Review", anchor=False)
+    st.header("\U0001f5bc\ufe0f Manual Image Review", anchor=False)
     st.caption(
         "Inspect product images on this page. Use **Poor Image** or the "
         "dropdown to reject individual cards, then **Batch Reject** "
         "to commit. Rejections sync back to the validation report above."
     )
 
-    # Show all products (approved + already-rejected-via-grid so undo works)
+    # Show approved + already-manually-rejected (so undo overlay works)
     _committed_sids = {
         k.replace("pq_qrej_", "")
         for k in st.session_state.keys()
         if k.startswith("pq_qrej_") and "reason" not in k
     }
-    _approved_mask  = (
+    _approved_mask = (
         (_fr["Status"] == "Approved") |
         (_fr["ProductSetSid"].isin(_committed_sids))
     )
@@ -1408,11 +1414,11 @@ def _render_pq_image_grid():
     # ── filters ──────────────────────────────────────────────────────
     _gc1, _gc2, _gc3 = st.columns([1.5, 1.5, 2])
     with _gc1:
-        _gsearch_n = st.text_input("Search by Name", placeholder="Product name…",
+        _gsearch_n = st.text_input("Search by Name", placeholder="Product name\u2026",
                                    key="pq_grid_search_n")
     with _gc2:
         _gsearch_sc = st.text_input("Search by Seller/Category",
-                                    placeholder="Seller or Category…",
+                                    placeholder="Seller or Category\u2026",
                                     key="pq_grid_search_sc")
     with _gc3:
         st.session_state.pq_grid_items_per_page = st.select_slider(
@@ -1421,7 +1427,7 @@ def _render_pq_image_grid():
             key="pq_grid_ipp",
         )
 
-    # ── merge with product data ───────────────────────────────────────
+    # ── merge product data ────────────────────────────────────────────
     _avail_cols  = [c for c in GRID_COLS if c in _data.columns]
     _review_data = pd.merge(
         _grid_fr[["ProductSetSid"]],
@@ -1446,7 +1452,11 @@ def _render_pq_image_grid():
         )
         _review_data = _review_data[_mc | _ms]
 
-    # ── pagination ───────────────────────────────────────────────────
+    if _review_data.empty:
+        st.info("No products to display in the image grid.")
+        return
+
+    # ── pagination ────────────────────────────────────────────────────
     _ipp         = st.session_state.pq_grid_items_per_page
     _total_pages = max(1, (len(_review_data) + _ipp - 1) // _ipp)
     if st.session_state.pq_grid_page >= _total_pages:
@@ -1454,7 +1464,7 @@ def _render_pq_image_grid():
 
     _pg_c1, _pg_c2, _pg_c3 = st.columns([1, 2, 1], vertical_alignment="center")
     with _pg_c1:
-        if st.button("◀ Prev", use_container_width=True,
+        if st.button("\u25c4 Prev", use_container_width=True,
                      disabled=st.session_state.pq_grid_page == 0,
                      key="pq_grid_prev"):
             st.session_state.pq_grid_page = max(0, st.session_state.pq_grid_page - 1)
@@ -1462,7 +1472,7 @@ def _render_pq_image_grid():
             st.rerun(scope="fragment")
     with _pg_c2:
         _new_page = st.number_input(
-            f"Page (of {_total_pages} · {len(_review_data)} items)",
+            f"Page (of {_total_pages} \u00b7 {len(_review_data)} items)",
             min_value=1, max_value=max(1, _total_pages),
             value=st.session_state.pq_grid_page + 1, step=1,
             key="pq_grid_page_input",
@@ -1472,7 +1482,7 @@ def _render_pq_image_grid():
             st.session_state.pq_do_scroll_top = True
             st.rerun(scope="fragment")
     with _pg_c3:
-        if st.button("Next ▶", use_container_width=True,
+        if st.button("Next \u25ba", use_container_width=True,
                      disabled=st.session_state.pq_grid_page >= _total_pages - 1,
                      key="pq_grid_next"):
             st.session_state.pq_grid_page += 1
@@ -1508,14 +1518,18 @@ def _render_pq_image_grid():
     _cols_per_row = 3 if st.session_state.get("layout_mode") == "centered" else 4
 
     # ── build and render the grid iframe ─────────────────────────────
-    # Re-use the main app's build_fast_grid_html if available,
-    # otherwise fall back to our own leaner version.
+    # Try the main app grid builder first; fall back to self-contained version.
+    # Use _pq_country (from session state) NOT the outer-scope pq_country.
+    _grid_html = None
     try:
         _grid_html = build_fast_grid_html(
             _page_data, _sf.get("flags_mapping", {}),
-            pq_country, _page_warnings, _rejected_state, _cols_per_row,
+            _pq_country, _page_warnings, _rejected_state, _cols_per_row,
         )
-    except Exception:
+    except Exception as _grid_err:
+        logger.warning("build_fast_grid_html failed (%s), using fallback", _grid_err)
+
+    if _grid_html is None:
         _grid_html = _build_pq_grid_html(
             _page_data, _page_warnings, _rejected_state, _cols_per_row,
         )
