@@ -4,6 +4,8 @@ import re
 import hashlib
 import traceback
 import logging
+import json
+import concurrent.futures
 from io import BytesIO
 
 # ------------------------------------------------------------------
@@ -16,6 +18,13 @@ os.chdir(ROOT)
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+try:
+    import requests as _requests
+    from PIL import Image as _Image
+    _IMAGE_CHECK_OK = True
+except ImportError:
+    _IMAGE_CHECK_OK = False
 
 # ------------------------------------------------------------------
 # LOCAL IMPORTS
@@ -57,10 +66,28 @@ try:
     PRODUCTSETS_COLS       = _main_mod.PRODUCTSETS_COLS
     REJECTION_REASONS_COLS = _main_mod.REJECTION_REASONS_COLS
     clean_category_code    = _main_mod.clean_category_code
+    # Image grid helpers
+    build_fast_grid_html            = _main_mod.build_fast_grid_html
+    analyze_image_quality_cached    = _main_mod.analyze_image_quality_cached
+    format_local_price              = _main_mod.format_local_price
+    GRID_COLS                       = _main_mod.GRID_COLS
+    REASON_MAP                      = _main_mod.REASON_MAP
     _FULL_VALIDATION_OK    = True
 except Exception as _fv_err:
     _FULL_VALIDATION_OK = False
     _fv_err_msg = str(_fv_err)
+    REASON_MAP = {
+        "REJECT_POOR_IMAGE": "Poor images",
+        "REJECT_WRONG_CAT":  "Wrong Category",
+        "REJECT_FAKE":       "Suspected Fake product",
+        "REJECT_BRAND":      "Restricted brands",
+        "REJECT_PROHIBITED": "Prohibited products",
+        "REJECT_COLOR":      "Missing COLOR",
+        "REJECT_WRONG_BRAND":"Generic branded products with genuine brands",
+        "OTHER_CUSTOM":      "Other Reason (Custom)",
+    }
+    GRID_COLS = ['PRODUCT_SET_SID','NAME','BRAND','CATEGORY','SELLER_NAME',
+                 'MAIN_IMAGE','GLOBAL_SALE_PRICE','GLOBAL_PRICE','COLOR']
 
 # ── Post-QC aware brand-check overrides ───────────────────────────────────────
 if _FULL_VALIDATION_OK:
@@ -221,6 +248,11 @@ _SS_DEFAULTS = {
     "final_report":       pd.DataFrame(),
     "main_toasts":        [],
     "flags_expanded_initialized": False,
+    # image grid state
+    "pq_grid_page":          0,
+    "pq_grid_items_per_page": 50,
+    "pq_bridge_counter":     0,
+    "pq_do_scroll_top":      False,
 }
 for _k, _v in _SS_DEFAULTS.items():
     if _k not in st.session_state:
@@ -333,6 +365,16 @@ def _reset_results():
     st.session_state.pq_val_results     = {}
     st.session_state.pq_val_exports     = {}
     st.session_state.pq_flags_init      = False
+    st.session_state.final_report       = pd.DataFrame()
+    # image grid
+    st.session_state.pq_grid_page       = 0
+    st.session_state.pq_bridge_counter  = 0
+    st.session_state.pq_do_scroll_top   = False
+    # clear per-product rejection keys from previous run
+    _keys_to_del = [k for k in st.session_state.keys()
+                    if k.startswith("pq_qrej_")]
+    for _k in _keys_to_del:
+        del st.session_state[_k]
 
 def _count_filled(series: pd.Series) -> int:
     return int(
@@ -597,6 +639,19 @@ def _render_data_quality_flags(df: pd.DataFrame) -> None:
             "reviewed before publishing.",
             icon="ℹ️",
         )
+
+
+def _restore_pq_item(sid: str):
+    """Mark a manually-rejected post-QC item as approved again."""
+    st.session_state.final_report.loc[
+        st.session_state.final_report["ProductSetSid"] == sid,
+        ["Status", "Reason", "Comment", "FLAG"],
+    ] = ["Approved", "", "", "Approved by User"]
+    st.session_state.pop(f"pq_qrej_{sid}", None)
+    st.session_state.pop(f"pq_qrej_reason_{sid}", None)
+    st.session_state.exports_cache.clear()
+    st.session_state.display_df_cache.clear()
+    st.session_state.main_toasts.append("Restored item to approved.")
 
 
 # ------------------------------------------------------------------
@@ -1252,3 +1307,443 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
                         mime=_ec["mime"], use_container_width=True, type="primary",
                         key=f"dl_{_ekey}",
                     )
+
+# ------------------------------------------------------------------
+# JTBRIDGE — receives reject / undo messages from the iframe
+# Uses pq_qrej_ prefixed keys to avoid colliding with main app state.
+# ------------------------------------------------------------------
+_pq_bridge_val = st.text_input(
+    "jtbridge_pq", value="",
+    placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE",
+    key=f"pq_bridge_{st.session_state.pq_bridge_counter}",
+    label_visibility="collapsed",
+)
+
+if _pq_bridge_val:
+    try:
+        _pq_msg = json.loads(_pq_bridge_val)
+
+        if _pq_msg.get("action") == "reject":
+            _pq_payload = _pq_msg.get("payload", {})
+            if isinstance(_pq_payload, dict) and _pq_payload:
+                _pq_sf = _load_support_files()
+                _pq_rgroups: dict = {}
+                for _sid, _rkey in _pq_payload.items():
+                    _pq_rgroups.setdefault(_rkey, []).append(_sid)
+                _pq_total = 0
+                for _rkey, _sids in _pq_rgroups.items():
+                    _flag    = REASON_MAP.get(_rkey, "Poor images")
+                    _rinfo   = _pq_sf.get("flags_mapping", {}).get(
+                        _flag,
+                        {"reason": "1000042 - Kindly follow our product image upload guideline.",
+                         "en": "Poor Image Quality"},
+                    )
+                    _rcode = _rinfo["reason"]
+                    _rcmt  = _rinfo.get("en", "Manual image rejection")
+                    st.session_state.final_report.loc[
+                        st.session_state.final_report["ProductSetSid"].isin(_sids),
+                        ["Status", "Reason", "Comment", "FLAG"],
+                    ] = ["Rejected", _rcode, _rcmt, _flag]
+                    for _s in _sids:
+                        st.session_state[f"pq_qrej_{_s}"]        = True
+                        st.session_state[f"pq_qrej_reason_{_s}"] = _flag
+                    _pq_total += len(_sids)
+                st.session_state.exports_cache.clear()
+                st.session_state.display_df_cache.clear()
+                st.session_state.pq_val_exports.clear()
+                # Sync final_report back into pq_val_report so the flags
+                # breakdown above updates on re-render
+                st.session_state.pq_val_report = st.session_state.final_report.copy()
+                st.session_state.main_toasts.append(
+                    (f"Rejected {_pq_total} product(s) via image review", "🖼️")
+                )
+                st.session_state.pq_bridge_counter += 1
+                st.session_state.pq_do_scroll_top = False
+                st.rerun()
+
+        elif _pq_msg.get("action") == "undo":
+            _pq_payload = _pq_msg.get("payload", {})
+            if isinstance(_pq_payload, dict):
+                for _sid in _pq_payload.keys():
+                    _restore_pq_item(_sid)
+                st.session_state.pq_val_report = st.session_state.final_report.copy()
+                st.session_state.pq_bridge_counter += 1
+                st.session_state.pq_do_scroll_top = False
+                st.rerun()
+
+    except Exception as _pq_bridge_err:
+        logger.error(f"PQ bridge parse error: {_pq_bridge_err}")
+
+
+# ------------------------------------------------------------------
+# IMAGE REVIEW GRID
+# Shown after validation results when data is available.
+# ------------------------------------------------------------------
+@st.fragment
+def _render_pq_image_grid():
+    _fr   = st.session_state.get("final_report", pd.DataFrame())
+    _data = st.session_state.pq_data
+
+    if _fr.empty or _data.empty:
+        return
+
+    _sf = _load_support_files()
+
+    st.markdown("---")
+    st.header("🖼️ Manual Image Review", anchor=False)
+    st.caption(
+        "Inspect product images on this page. Use **Poor Image** or the "
+        "dropdown to reject individual cards, then **Batch Reject** "
+        "to commit. Rejections sync back to the validation report above."
+    )
+
+    # Show all products (approved + already-rejected-via-grid so undo works)
+    _committed_sids = {
+        k.replace("pq_qrej_", "")
+        for k in st.session_state.keys()
+        if k.startswith("pq_qrej_") and "reason" not in k
+    }
+    _approved_mask  = (
+        (_fr["Status"] == "Approved") |
+        (_fr["ProductSetSid"].isin(_committed_sids))
+    )
+    _grid_fr = _fr[_approved_mask]
+
+    # ── filters ──────────────────────────────────────────────────────
+    _gc1, _gc2, _gc3 = st.columns([1.5, 1.5, 2])
+    with _gc1:
+        _gsearch_n = st.text_input("Search by Name", placeholder="Product name…",
+                                   key="pq_grid_search_n")
+    with _gc2:
+        _gsearch_sc = st.text_input("Search by Seller/Category",
+                                    placeholder="Seller or Category…",
+                                    key="pq_grid_search_sc")
+    with _gc3:
+        st.session_state.pq_grid_items_per_page = st.select_slider(
+            "Items per page", options=[20, 50, 100, 200],
+            value=st.session_state.pq_grid_items_per_page,
+            key="pq_grid_ipp",
+        )
+
+    # ── merge with product data ───────────────────────────────────────
+    _avail_cols  = [c for c in GRID_COLS if c in _data.columns]
+    _review_data = pd.merge(
+        _grid_fr[["ProductSetSid"]],
+        _data[_avail_cols],
+        left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
+    )
+    if "MAIN_IMAGE" not in _review_data.columns:
+        _review_data["MAIN_IMAGE"] = ""
+
+    if _gsearch_n:
+        _review_data = _review_data[
+            _review_data["NAME"].astype(str).str.contains(_gsearch_n, case=False, na=False)
+        ]
+    if _gsearch_sc:
+        _mc = (
+            _review_data["CATEGORY"].astype(str).str.contains(_gsearch_sc, case=False, na=False)
+            if "CATEGORY" in _review_data.columns
+            else pd.Series(False, index=_review_data.index)
+        )
+        _ms = _review_data["SELLER_NAME"].astype(str).str.contains(
+            _gsearch_sc, case=False, na=False
+        )
+        _review_data = _review_data[_mc | _ms]
+
+    # ── pagination ───────────────────────────────────────────────────
+    _ipp         = st.session_state.pq_grid_items_per_page
+    _total_pages = max(1, (len(_review_data) + _ipp - 1) // _ipp)
+    if st.session_state.pq_grid_page >= _total_pages:
+        st.session_state.pq_grid_page = 0
+
+    _pg_c1, _pg_c2, _pg_c3 = st.columns([1, 2, 1], vertical_alignment="center")
+    with _pg_c1:
+        if st.button("◀ Prev", use_container_width=True,
+                     disabled=st.session_state.pq_grid_page == 0,
+                     key="pq_grid_prev"):
+            st.session_state.pq_grid_page = max(0, st.session_state.pq_grid_page - 1)
+            st.session_state.pq_do_scroll_top = True
+            st.rerun(scope="fragment")
+    with _pg_c2:
+        _new_page = st.number_input(
+            f"Page (of {_total_pages} · {len(_review_data)} items)",
+            min_value=1, max_value=max(1, _total_pages),
+            value=st.session_state.pq_grid_page + 1, step=1,
+            key="pq_grid_page_input",
+        )
+        if _new_page - 1 != st.session_state.pq_grid_page:
+            st.session_state.pq_grid_page = _new_page - 1
+            st.session_state.pq_do_scroll_top = True
+            st.rerun(scope="fragment")
+    with _pg_c3:
+        if st.button("Next ▶", use_container_width=True,
+                     disabled=st.session_state.pq_grid_page >= _total_pages - 1,
+                     key="pq_grid_next"):
+            st.session_state.pq_grid_page += 1
+            st.session_state.pq_do_scroll_top = True
+            st.rerun(scope="fragment")
+
+    _page_start = st.session_state.pq_grid_page * _ipp
+    _page_data  = _review_data.iloc[_page_start : _page_start + _ipp]
+
+    # ── image quality warnings (async) ───────────────────────────────
+    _page_warnings: dict = {}
+    if _IMAGE_CHECK_OK:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as _ex:
+            _fut_map = {
+                _ex.submit(
+                    _analyze_image_quality,
+                    str(_r.get("MAIN_IMAGE", "")).strip()
+                ): str(_r["PRODUCT_SET_SID"])
+                for _, _r in _page_data.iterrows()
+            }
+            for _fut in concurrent.futures.as_completed(_fut_map):
+                _warns = _fut.result()
+                if _warns:
+                    _page_warnings[_fut_map[_fut]] = _warns
+
+    # ── committed rejections for this page ───────────────────────────
+    _rejected_state = {
+        _sid: st.session_state[f"pq_qrej_reason_{_sid}"]
+        for _sid in _page_data["PRODUCT_SET_SID"].astype(str)
+        if st.session_state.get(f"pq_qrej_{_sid}")
+    }
+
+    _cols_per_row = 3 if st.session_state.get("layout_mode") == "centered" else 4
+
+    # ── build and render the grid iframe ─────────────────────────────
+    # Re-use the main app's build_fast_grid_html if available,
+    # otherwise fall back to our own leaner version.
+    try:
+        _grid_html = build_fast_grid_html(
+            _page_data, _sf.get("flags_mapping", {}),
+            pq_country, _page_warnings, _rejected_state, _cols_per_row,
+        )
+    except Exception:
+        _grid_html = _build_pq_grid_html(
+            _page_data, _page_warnings, _rejected_state, _cols_per_row,
+        )
+
+    components.html(_grid_html, height=800, scrolling=True)
+
+    if st.session_state.get("pq_do_scroll_top", False):
+        components.html(
+            "<script>"
+            "window.parent.document.querySelector('.main')"
+            ".scrollTo({top:0,behavior:'smooth'});"
+            "</script>",
+            height=0,
+        )
+        st.session_state.pq_do_scroll_top = False
+
+
+# ------------------------------------------------------------------
+# Lightweight image quality checker (no dependency on main app cache)
+# ------------------------------------------------------------------
+@st.cache_data(ttl=86400, show_spinner=False)
+def _analyze_image_quality(url: str):
+    if not url or not url.startswith("http"):
+        return []
+    if not _IMAGE_CHECK_OK:
+        return []
+    warnings = []
+    try:
+        resp = _requests.get(url, timeout=1, stream=True)
+        if resp.status_code == 200:
+            img = _Image.open(resp.raw)
+            w, h = img.size
+            if w < 300 or h < 300:
+                warnings.append("Low Resolution")
+            ratio = h / w if w > 0 else 1
+            if ratio > 1.5:
+                warnings.append("Tall (Screenshot?)")
+            elif ratio < 0.6:
+                warnings.append("Wide Aspect")
+    except Exception:
+        pass
+    return warnings
+
+
+# ------------------------------------------------------------------
+# Fallback grid builder (used if build_fast_grid_html isn't importable)
+# Mirrors the main app's grid but scoped to post-QC page keys.
+# ------------------------------------------------------------------
+def _build_pq_grid_html(page_data, page_warnings, rejected_state, cols_per_row):
+    import json as _json
+
+    O = ORANGE
+    R = RED
+    G = GREEN
+
+    committed_json = _json.dumps(rejected_state)
+
+    cards_data = []
+    for _, row in page_data.iterrows():
+        sid     = str(row["PRODUCT_SET_SID"])
+        img_url = str(row.get("MAIN_IMAGE", "")).strip()
+        if img_url.startswith("http://"):
+            img_url = img_url.replace("http://", "https://")
+        if not img_url.startswith("http"):
+            img_url = "https://via.placeholder.com/150?text=No+Image"
+        try:
+            sp   = row.get("GLOBAL_SALE_PRICE")
+            rp   = row.get("GLOBAL_PRICE")
+            uval = sp if pd.notna(sp) and str(sp).strip() not in ("", "nan") else rp
+            price_str = f"KSh {float(str(uval).replace(',','')):.0f}" if pd.notna(uval) else ""
+        except Exception:
+            price_str = ""
+        cards_data.append({
+            "sid":      sid,
+            "img":      img_url,
+            "name":     str(row.get("NAME",  "")),
+            "brand":    str(row.get("BRAND", "Unknown Brand")),
+            "cat":      str(row.get("CATEGORY", "Unknown Category")),
+            "seller":   str(row.get("SELLER_NAME", "Unknown Seller")),
+            "warnings": page_warnings.get(sid, []),
+            "price":    price_str,
+        })
+    cards_json = _json.dumps(cards_data)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
+body{{background:#f5f5f5;padding:8px;}}
+.ctrl-bar{{
+  position:sticky;top:0;z-index:999;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 12px;background:rgba(255,255,255,0.96);
+  border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.12);
+}}
+.sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
+.reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;}}
+.batch-btn{{padding:7px 14px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:12px;cursor:pointer;}}
+.batch-btn:hover{{opacity:.88;}}
+.desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
+.grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
+.card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s;z-index:1;}}
+.card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);background:rgba(76,175,80,.04);}}
+.card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2);background:rgba(231,60,23,.04);}}
+.card.committed-rej{{border-color:#bbb;opacity:.6;}}
+.img-wrap{{position:relative;cursor:pointer;height:180px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:6px;}}
+.card-img{{width:100%;height:180px;object-fit:contain;border-radius:6px;transition:transform .2s;}}
+.card.committed-rej .card-img{{filter:grayscale(80%);}}
+.card-img.zoomed{{transform:scale(2.3);box-shadow:0 15px 50px rgba(0,0,0,0.6);border:2px solid {O};z-index:9999;position:relative;border-radius:8px;}}
+.zoom-btn{{position:absolute;bottom:6px;left:6px;width:28px;height:28px;background:rgba(255,255,255,.95);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.3);z-index:100;font-size:14px;}}
+.tick{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
+.card.selected .tick{{background:{G};color:#fff;}}
+.card.staged-rej .tick{{background:{R};color:#fff;}}
+.warn-wrap{{position:absolute;top:6px;right:6px;display:flex;flex-direction:column;gap:3px;z-index:5;pointer-events:none;}}
+.warn-badge{{background:rgba(255,193,7,.95);color:#313133;font-size:9px;font-weight:800;padding:3px 7px;border-radius:10px;}}
+.price-badge{{position:absolute;top:6px;left:6px;background:rgba(76,175,80,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 7px;border-radius:10px;z-index:5;pointer-events:none;}}
+.rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:6px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:5px;padding:8px;text-align:center;}}
+.card.committed-rej .rej-overlay{{display:flex;}}
+.card.staged-rej .rej-overlay.staged{{display:flex;}}
+.rej-badge{{background:{R};color:#fff;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;}}
+.rej-badge.pending{{background:{O};}}
+.rej-label{{font-size:10px;color:{R};font-weight:600;max-width:120px;}}
+.undo-btn{{margin-top:8px;padding:6px 12px;background:#313133;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:bold;cursor:pointer;}}
+.meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
+.meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.meta .br{{color:{O};font-weight:700;margin:2px 0;}}
+.meta .ct{{color:#666;font-size:10px;}}
+.meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;}}
+.acts{{display:flex;gap:4px;margin-top:8px;}}
+.act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
+.act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
+</style>
+</head>
+<body>
+<div class="ctrl-bar">
+  <span class="sel-count" id="sel-count">0 pending</span>
+  <select class="reason-sel" id="batch-reason">
+    <option value="REJECT_POOR_IMAGE">Poor Image</option>
+    <option value="REJECT_WRONG_CAT">Wrong Category</option>
+    <option value="REJECT_FAKE">Fake Product</option>
+    <option value="REJECT_BRAND">Restricted Brand</option>
+    <option value="REJECT_WRONG_BRAND">Wrong Brand</option>
+    <option value="REJECT_PROHIBITED">Prohibited</option>
+    <option value="REJECT_COLOR">Missing Color</option>
+  </select>
+  <button class="batch-btn" onclick="doBatchReject()">Batch Reject</button>
+  <button class="desel-btn" onclick="doSelectAll()">Select All</button>
+  <button class="desel-btn" onclick="doDeselAll()">Deselect All</button>
+</div>
+<div class="grid" id="card-grid"></div>
+<script>
+function esc(s){{return(s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
+var CARDS={cards_json};
+var COMMITTED={committed_json};
+window._pqSel=window._pqSel||{{}};
+window._pqStaged=window._pqStaged||{{}};
+var sel=window._pqSel,staged=window._pqStaged;
+function sendMsg(type,payload){{
+  try{{
+    var par=window.parent;
+    var inputs=par.document.querySelectorAll('input[type="text"]');
+    var bridge=null;
+    for(var i=0;i<inputs.length;i++){{
+      if(inputs[i].placeholder==='JTBRIDGE_UNIQUE_DO_NOT_USE'){{bridge=inputs[i];break;}}
+    }}
+    if(!bridge)return;
+    var msg=JSON.stringify({{action:type,payload:payload}});
+    bridge.focus({{preventScroll:true}});
+    Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype,'value').set.call(bridge,msg);
+    bridge.dispatchEvent(new par.Event('input',{{bubbles:true}}));
+    setTimeout(function(){{bridge.blur();bridge.dispatchEvent(new par.KeyboardEvent('keydown',{{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));}},150);
+  }}catch(e){{console.error('bridge error:',e);}}
+}}
+function upd(){{
+  var n=Object.keys(sel).length+Object.keys(staged).length;
+  document.getElementById('sel-count').textContent=n+' pending';
+}}
+function renderCard(c){{
+  var sid=c.sid,img=esc(c.img);
+  var isC=sid in COMMITTED,isS=sid in staged,isSel=!isC&&!isS&&(sid in sel);
+  var cls='card'+(isC?' committed-rej':isS?' staged-rej':isSel?' selected':'');
+  var warns=(c.warnings||[]).map(w=>'<span class="warn-badge">'+esc(w)+'</span>').join('');
+  var price=c.price?'<div class="price-badge">'+esc(c.price)+'</div>':'';
+  var zoom='<div class="zoom-btn" onclick="event.stopPropagation();toggleZoom(\''+sid+'\')">&#128269;</div>';
+  var overlay='',acts='';
+  if(isC){{
+    overlay='<div class="rej-overlay"><div class="rej-badge">REJECTED</div><div class="rej-label">'+esc((COMMITTED[sid]||'').replace(/_/g,' '))+'</div><button class="undo-btn" onclick="event.stopPropagation();undoR(\''+sid+'\')">Undo</button></div>';
+  }}else if(isS){{
+    overlay='<div class="rej-overlay staged"><div class="rej-badge pending">PENDING</div><div class="rej-label">'+esc((staged[sid]||'').replace(/_/g,' '))+'</div><button class="undo-btn" onclick="event.stopPropagation();clrS(\''+sid+'\')">Clear</button></div>';
+  }}else{{
+    acts='<div class="acts"><button class="act-btn" onclick="event.stopPropagation();stageR(\''+sid+'\',\'REJECT_POOR_IMAGE\')">Poor Image</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();stageR(\''+sid+'\',this.value);this.value=\'\'}}"><option value="">More…</option><option value="REJECT_WRONG_CAT">Wrong Category</option><option value="REJECT_FAKE">Fake</option><option value="REJECT_BRAND">Restricted Brand</option><option value="REJECT_PROHIBITED">Prohibited</option><option value="REJECT_COLOR">Missing Color</option><option value="REJECT_WRONG_BRAND">Wrong Brand</option></select></div>';
+  }}
+  var shortName=c.name.length>38?esc(c.name.slice(0,38))+'…':esc(c.name);
+  return '<div class="'+cls+'" id="card-'+sid+'"><div class="img-wrap" onclick="toggleSel(\''+sid+'\',event)">'+price+'<div class="warn-wrap">'+warns+'</div><img class="card-img" src="'+img+'" onerror="this.src=\'https://via.placeholder.com/150?text=No+Image\'">'+zoom+overlay+'<div class="tick">&#10003;</div></div><div class="meta"><div class="nm" title="'+esc(c.name)+'">'+shortName+'</div><div class="br">'+esc(c.brand)+'</div><div class="ct">'+esc(c.cat)+'</div><div class="sl">'+esc(c.seller)+'</div></div>'+acts+'</div>';
+}}
+function repl(sid){{var el=document.getElementById('card-'+sid);if(!el)return;var c=CARDS.find(x=>x.sid===sid);if(c){{var t=document.createElement('div');t.innerHTML=renderCard(c);el.replaceWith(t.firstElementChild);}}}}
+function toggleZoom(sid){{var img=document.querySelector('#card-'+sid+' .card-img');if(!img)return;if(img.classList.contains('zoomed')){{img.classList.remove('zoomed');img.closest('.card').style.zIndex='1';}}else{{document.querySelectorAll('.zoomed').forEach(e=>{{e.classList.remove('zoomed');if(e.closest('.card'))e.closest('.card').style.zIndex='1';}});img.classList.add('zoomed');img.closest('.card').style.zIndex='999';}}}}
+function toggleSel(sid,e){{var img=document.querySelector('#card-'+sid+' .card-img');if(img&&img.classList.contains('zoomed')){{img.classList.remove('zoomed');img.closest('.card').style.zIndex='1';return;}}if(sid in COMMITTED)return;if(sid in staged){{delete staged[sid];}}else if(sid in sel){{delete sel[sid];}}else{{sel[sid]=true;}}repl(sid);upd();}}
+function stageR(sid,r){{if(sid in sel)delete sel[sid];staged[sid]=r;repl(sid);upd();}}
+function clrS(sid){{delete staged[sid];repl(sid);upd();}}
+function undoR(sid){{sendMsg('undo',{{[sid]:true}});delete COMMITTED[sid];repl(sid);upd();}}
+function doBatchReject(){{
+  var br=document.getElementById('batch-reason').value,payload={{}},count=0;
+  for(var s in staged){{payload[s]=staged[s];count++;}}
+  for(var s in sel){{payload[s]=br;count++;}}
+  if(!count)return;
+  for(var s in payload){{COMMITTED[s]=payload[s];delete sel[s];delete staged[s];}}
+  sendMsg('reject',payload);
+  renderAll();upd();
+}}
+function doSelectAll(){{CARDS.forEach(c=>{{if(!(c.sid in COMMITTED)&&!(c.sid in staged))sel[c.sid]=true;}});renderAll();upd();}}
+function doDeselAll(){{for(var k in sel)delete sel[k];for(var k in staged)delete staged[k];renderAll();upd();}}
+function renderAll(){{document.getElementById('card-grid').innerHTML=CARDS.map(renderCard).join('');upd();}}
+renderAll();
+</script>
+</body>
+</html>"""
+
+
+# ------------------------------------------------------------------
+# CALL THE IMAGE GRID
+# Only when validation has run and produced data.
+# ------------------------------------------------------------------
+if not st.session_state.pq_data.empty and not st.session_state.final_report.empty:
+    _render_pq_image_grid()
