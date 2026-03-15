@@ -43,7 +43,6 @@ try:
 except ImportError:
     pass
 
-# Import the full validation pipeline and support helpers from the main app.
 try:
     import importlib as _importlib
     _main_mod = (
@@ -210,11 +209,9 @@ _SS_DEFAULTS = {
     "pq_data":            pd.DataFrame(),
     "pq_last_sig":        None,
     "scraper_enabled":    False,
-    # enrichment state
     "enriched_df":        None,
     "enrichment_summary": {},
     "enrichment_done":    False,
-    # full validation results
     "pq_val_report":      pd.DataFrame(),
     "pq_val_results":     {},
     "pq_val_exports":     {},
@@ -244,41 +241,40 @@ _ALL_FIELDS = [
 ]
 
 # ------------------------------------------------------------------
-# MAPPER & HELPERS
+# COLUMN MAP
 # ------------------------------------------------------------------
 _PQ_COL_MAP = {
-    # Post-QC standard
     "sku":               "PRODUCT_SET_SID",
     "name":              "NAME",
     "brand":             "BRAND",
     "category":          "CATEGORY",
-    "categories":        "CATEGORY",      # Data Grab
+    "categories":        "CATEGORY",
     "price":             "GLOBAL_SALE_PRICE",
-    "newprice":          "GLOBAL_SALE_PRICE", # Data Grab
+    "newprice":          "GLOBAL_SALE_PRICE",
     "old price":         "GLOBAL_PRICE",
-    "oldprice":          "GLOBAL_PRICE",  # Data Grab
+    "oldprice":          "GLOBAL_PRICE",
     "seller":            "SELLER_NAME",
-    "sellername":        "SELLER_NAME",   # Data Grab
+    "sellername":        "SELLER_NAME",
     "seller name":       "SELLER_NAME",
     "image url":         "MAIN_IMAGE",
-    "image":             "MAIN_IMAGE",    # Data Grab
+    "image":             "MAIN_IMAGE",
     "main image":        "MAIN_IMAGE",
-    "url":               "PRODUCT_URL",   # Data Grab
+    "url":               "PRODUCT_URL",
     "product url":       "PRODUCT_URL",
     "stock":             "STOCK_STATUS",
     "stock status":      "STOCK_STATUS",
     "rating":            "RATING",
-    "averagerating":     "RATING",        # Data Grab
+    "averagerating":     "RATING",
     "average rating":    "RATING",
     "total ratings":     "REVIEW_COUNT",
-    "totalratings":      "REVIEW_COUNT",  # Data Grab
+    "totalratings":      "REVIEW_COUNT",
     "review count":      "REVIEW_COUNT",
     "discount":          "DISCOUNT",
     "tags":              "TAGS",
     "jumia express":     "JUMIA_EXPRESS",
-    "isexpress":         "JUMIA_EXPRESS", # Data Grab
+    "isexpress":         "JUMIA_EXPRESS",
     "shop global":       "SHOP_GLOBAL",
-    "isglobal":          "SHOP_GLOBAL",   # Data Grab
+    "isglobal":          "SHOP_GLOBAL",
     "color":             "COLOR",
     "colour":            "COLOR",
     "product warranty":  "PRODUCT_WARRANTY",
@@ -422,6 +418,188 @@ def _parse_lookup_inputs(raw_text: str) -> list[dict]:
     return entries
 
 # ------------------------------------------------------------------
+# NEW HELPERS: data-quality checks
+# ------------------------------------------------------------------
+
+def _derive_official_store_from_tags(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Derive IS_OFFICIAL_STORE from the TAGS column when it is absent.
+    Any product tagged JMALL is an official-store listing.
+    Only writes to IS_OFFICIAL_STORE if the column is fully absent or all-blank.
+    """
+    if "TAGS" not in df.columns:
+        return df
+    col_present = (
+        "IS_OFFICIAL_STORE" in df.columns
+        and df["IS_OFFICIAL_STORE"].astype(str).str.strip()
+            .replace({"nan": "", "None": ""}).ne("").any()
+    )
+    if col_present:
+        return df
+    df = df.copy()
+    df["IS_OFFICIAL_STORE"] = df["TAGS"].str.contains(
+        "JMALL", case=False, na=False
+    ).map({True: "Yes", False: "No"})
+    return df
+
+
+def _calc_discount_if_missing(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    For Data-Grab uploads (and any file missing DISCOUNT), calculate the
+    discount percentage from GLOBAL_PRICE and GLOBAL_SALE_PRICE.
+    Skips rows that already have a value.
+    """
+    if "DISCOUNT" not in df.columns:
+        df = df.copy()
+        df["DISCOUNT"] = ""
+    else:
+        df = df.copy()
+
+    missing = df["DISCOUNT"].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("")
+    if not missing.any():
+        return df
+
+    op = pd.to_numeric(
+        df.get("GLOBAL_PRICE", pd.Series(dtype=float)), errors="coerce"
+    )
+    sp = pd.to_numeric(
+        df.get("GLOBAL_SALE_PRICE", pd.Series(dtype=float)), errors="coerce"
+    )
+    mask = missing & (op > 0) & (sp < op)
+    df.loc[mask, "DISCOUNT"] = (
+        ((op - sp) / op * 100).round(0).astype("Int64").astype(str) + "%"
+    )[mask]
+    return df
+
+
+def _flag_corrupted_old_price(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mark OLD_PRICE_CORRUPTED = True when GLOBAL_PRICE is implausibly large
+    relative to GLOBAL_SALE_PRICE (>500×). This catches concatenated-number
+    artefacts like 82848717 when the real price is ~5000.
+    The flag column is used by the discount-integrity check below.
+    """
+    df = df.copy()
+    op = pd.to_numeric(df.get("GLOBAL_PRICE",  pd.Series(dtype=float)), errors="coerce")
+    sp = pd.to_numeric(df.get("GLOBAL_SALE_PRICE", pd.Series(dtype=float)), errors="coerce")
+    df["_OLD_PRICE_CORRUPTED"] = (op > 0) & (sp > 0) & (op > sp * 500)
+    return df
+
+
+def _flag_discount_mismatch(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mark _DISCOUNT_MISMATCH = True when the stated DISCOUNT diverges from
+    the value calculated from GLOBAL_PRICE / GLOBAL_SALE_PRICE by more than
+    5 percentage points. Rows with corrupted old prices are excluded.
+    """
+    df = df.copy()
+    if "DISCOUNT" not in df.columns:
+        df["_DISCOUNT_MISMATCH"] = False
+        return df
+
+    op  = pd.to_numeric(df.get("GLOBAL_PRICE",      pd.Series(dtype=float)), errors="coerce")
+    sp  = pd.to_numeric(df.get("GLOBAL_SALE_PRICE",  pd.Series(dtype=float)), errors="coerce")
+    stated = pd.to_numeric(
+        df["DISCOUNT"].astype(str).str.replace("%", "", regex=False).str.strip(),
+        errors="coerce",
+    )
+    calc = ((op - sp) / op * 100).where((op > 0) & (sp < op))
+    corrupted = df.get("_OLD_PRICE_CORRUPTED", pd.Series(False, index=df.index))
+    df["_DISCOUNT_MISMATCH"] = (
+        stated.notna() & calc.notna() & ~corrupted & (abs(calc - stated) > 5)
+    )
+    return df
+
+
+def _flag_brand_in_title(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mark _BRAND_IN_TITLE = True when the brand name appears 2+ times in NAME.
+    """
+    df = df.copy()
+    if "BRAND" not in df.columns or "NAME" not in df.columns:
+        df["_BRAND_IN_TITLE"] = False
+        return df
+
+    def _check(row):
+        brand = str(row.get("BRAND", "")).lower().strip()
+        name  = str(row.get("NAME",  "")).lower()
+        return bool(brand) and name.count(brand) >= 2
+
+    df["_BRAND_IN_TITLE"] = df.apply(_check, axis=1)
+    return df
+
+
+def _flag_rating_no_reviews(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mark _RATING_NO_REVIEWS = True when a product has a non-zero RATING but
+    REVIEW_COUNT is 0 or missing.
+    """
+    df = df.copy()
+    rating  = pd.to_numeric(df.get("RATING",       pd.Series(dtype=float)), errors="coerce")
+    reviews = pd.to_numeric(df.get("REVIEW_COUNT",  pd.Series(dtype=float)), errors="coerce")
+    df["_RATING_NO_REVIEWS"] = rating.gt(0) & (reviews.isna() | reviews.eq(0))
+    return df
+
+
+def _render_data_quality_flags(df: pd.DataFrame) -> None:
+    """
+    Render expandable sections for each internal data-quality flag.
+    Called after pipeline processing, before the main validation block.
+    """
+    flag_cfg = [
+        (
+            "_OLD_PRICE_CORRUPTED",
+            "⚠️ Corrupted old price",
+            "Old price is 500× or more the current price — likely two values concatenated by the export system.",
+            ["PRODUCT_SET_SID", "NAME", "GLOBAL_SALE_PRICE", "GLOBAL_PRICE", "DISCOUNT"],
+        ),
+        (
+            "_DISCOUNT_MISMATCH",
+            "⚠️ Discount doesn't match prices",
+            "Stated discount differs from the calculated (old − new) / old by more than 5 percentage points.",
+            ["PRODUCT_SET_SID", "NAME", "GLOBAL_SALE_PRICE", "GLOBAL_PRICE", "DISCOUNT"],
+        ),
+        (
+            "_BRAND_IN_TITLE",
+            "⚠️ Brand repeated in title",
+            "The brand name appears two or more times in the product title.",
+            ["PRODUCT_SET_SID", "NAME", "BRAND"],
+        ),
+        (
+            "_RATING_NO_REVIEWS",
+            "⚠️ Rating with no reviews",
+            "Product has a star rating but zero (or missing) review count.",
+            ["PRODUCT_SET_SID", "NAME", "RATING", "REVIEW_COUNT"],
+        ),
+    ]
+
+    shown_any = False
+    for flag_col, title, desc, show_cols in flag_cfg:
+        if flag_col not in df.columns:
+            continue
+        flagged = df[df[flag_col] == True]  # noqa: E712
+        if flagged.empty:
+            continue
+        shown_any = True
+        display_cols = [c for c in show_cols if c in flagged.columns]
+        with st.expander(f"{title} ({len(flagged)} product{'s' if len(flagged) != 1 else ''})", expanded=False):
+            st.caption(desc)
+            st.dataframe(
+                flagged[display_cols].fillna("").replace("nan", ""),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    if shown_any:
+        st.info(
+            "💡 These data-quality issues were detected in the uploaded file. "
+            "They don't affect the validation pass/fail status but should be "
+            "reviewed before publishing.",
+            icon="ℹ️",
+        )
+
+
+# ------------------------------------------------------------------
 # SIDEBAR
 # ------------------------------------------------------------------
 with st.sidebar:
@@ -533,13 +711,11 @@ if input_mode in ["📁 Upload Post-QC File", "📊 Data Grab Upload"]:
                             buf.seek(0)
                             raw = pd.read_csv(buf, sep=";", encoding="ISO-8859-1", dtype=str)
 
-                # Standardize columns unless it's perfectly native post-qc format
                 _is_pq = _POSTQC_OK and detect_file_type(raw) == "post_qc"
                 if not _is_pq:
                     raw = _standardise_pq(raw)
                 all_dfs.append(raw)
     else:
-        # File uploader cleared
         if st.session_state.pq_last_sig is not None:
             _reset_results()
 
@@ -547,13 +723,13 @@ elif input_mode == "🌐 Paste SKUs / URLs":
     if not _SCRAPER_OK:
         st.error("⚠️ `jumia_scraper.py` is required for this functionality.")
         st.stop()
-        
+
     lookup_input_raw = st.text_area(
         "SKUs or Jumia product URLs (one per line)",
         height=160,
         placeholder="GE840EA6C62GANAFAMZ\nhttps://www.jumia.co.ke/some-product.html"
     )
-    
+
     if lookup_input_raw.strip():
         sig = hashlib.md5(
             (lookup_input_raw + country_code + str(st.session_state.scraper_enabled) + input_mode).encode()
@@ -623,7 +799,6 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
         support_files_pq["country_code"] = country_code
         support_files_pq["country_name"] = pq_country
 
-        # Load Category Map rules dynamically
         import unicodedata as _ud
         def _nk(s: str) -> str:
             s = _ud.normalize("NFKD", str(s)).lower()
@@ -700,7 +875,7 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
             if re.match(r"^\d+$", _existing): return _existing
             return _existing
 
-        # Normalize across all loaded DataFrames
+        # ── Normalise all loaded DataFrames ────────────────────
         norm_dfs = []
         for df in all_dfs:
             if "PRODUCT_SET_SID" in df.columns:
@@ -718,6 +893,10 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
             norm_dfs.append(ndf)
 
         merged = pd.concat(norm_dfs, ignore_index=True)
+        # ── Dedup on SKU (keep first occurrence) ───────────────
+        # Duplicate-SKU validation is intentionally removed from this page.
+        # The dedup still runs so the rest of the pipeline works correctly,
+        # but no flag or warning is surfaced to the user.
         merged_dedup = merged.drop_duplicates(subset=["PRODUCT_SET_SID"], keep="first")
 
         # ── Scraper enrichment ─────────────────────────────────
@@ -756,7 +935,7 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
                     st.toast("No new data found on Jumia.", icon="ℹ️")
             else:
                 st.toast("All enrichable columns already populated — no scraping needed.", icon="ℹ️")
-        
+
         elif input_mode == "🌐 Paste SKUs / URLs":
             st.session_state.enriched_df = merged_dedup.copy()
             st.session_state.enrichment_done = True
@@ -764,7 +943,6 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
         # ── Prepare data for full validation ───────────────────
         ready = merged_dedup.copy()
 
-        # If scraper dumped info into CATEGORY_PATH but CATEGORY is missing, merge them up
         if "CATEGORY_PATH" in ready.columns:
             if "CATEGORY" not in ready.columns:
                 ready["CATEGORY"] = ready["CATEGORY_PATH"]
@@ -783,7 +961,8 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
             if len(_unresolved):
                 st.warning(
                     f"⚠️ **{len(_unresolved)}** category path(s) could not be resolved to a numeric code.\n\n"
-                    + "\n".join(f"- `{c}`" for c in _unresolved[:10]) + ("\n- *(and more…)*" if len(_unresolved) > 10 else ""),
+                    + "\n".join(f"- `{c}`" for c in _unresolved[:10])
+                    + ("\n- *(and more…)*" if len(_unresolved) > 10 else ""),
                     icon="⚠️",
                 )
 
@@ -820,33 +999,65 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
 
         _sp_empty = ready["GLOBAL_SALE_PRICE"].astype(str).str.strip().eq("")
         if "PRICE" in ready.columns and _sp_empty.any():
-            ready.loc[_sp_empty, "GLOBAL_SALE_PRICE"] = ready.loc[_sp_empty, "PRICE"].astype(str).apply(_parse_price_str)
+            ready.loc[_sp_empty, "GLOBAL_SALE_PRICE"] = (
+                ready.loc[_sp_empty, "PRICE"].astype(str).apply(_parse_price_str)
+            )
 
-        if "GLOBAL_PRICE" not in ready.columns or ready["GLOBAL_PRICE"].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("").all():
+        if "GLOBAL_PRICE" not in ready.columns or (
+            ready["GLOBAL_PRICE"].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("").all()
+        ):
             ready["GLOBAL_PRICE"] = ready["GLOBAL_SALE_PRICE"]
 
         if "PARENTSKU" not in ready.columns: ready["PARENTSKU"] = ""
 
-        for _col_needed in ["NAME", "BRAND", "COLOR", "SELLER_NAME", "PRODUCT_WARRANTY", "WARRANTY_DURATION", "COUNT_VARIATIONS", "COLOR_FAMILY"]:
+        for _col_needed in [
+            "NAME", "BRAND", "COLOR", "SELLER_NAME",
+            "PRODUCT_WARRANTY", "WARRANTY_DURATION", "COUNT_VARIATIONS", "COLOR_FAMILY",
+        ]:
             if _col_needed not in ready.columns: ready[_col_needed] = ""
         for _col_str in ["NAME", "BRAND", "COLOR", "SELLER_NAME"]:
-            if _col_str in ready.columns: ready[_col_str] = ready[_col_str].astype(str).fillna("")
+            if _col_str in ready.columns:
+                ready[_col_str] = ready[_col_str].astype(str).fillna("")
+
+        # ── NEW: derive IS_OFFICIAL_STORE from TAGS ────────────
+        ready = _derive_official_store_from_tags(ready)
+
+        # ── NEW: calculate DISCOUNT when missing ───────────────
+        ready = _calc_discount_if_missing(ready)
+
+        # ── NEW: internal quality flags (not pass/fail — advisory) ─
+        ready = _flag_corrupted_old_price(ready)
+        ready = _flag_discount_mismatch(ready)
+        ready = _flag_brand_in_title(ready)
+        ready = _flag_rating_no_reviews(ready)
 
         # ── Run full validation pipeline ───────────────────────
         if _FULL_VALIDATION_OK:
+            # Strip internal flag columns before passing to validator
+            # (validator doesn't know about them and may choke on extras)
+            _internal_flags = [c for c in ready.columns if c.startswith("_")]
+            _ready_for_val  = ready.drop(columns=_internal_flags, errors="ignore")
+
             with st.spinner("Running validations…"):
                 _cv = CountryValidator(pq_country)
-                try: _sf_full = load_all_support_files()
-                except Exception: _sf_full = support_files_pq
-                
-                data_has_warranty = all(c in ready.columns for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"])
-                _val_report, _val_results = validate_products(ready, _sf_full, _cv, data_has_warranty)
-                
+                try:
+                    _sf_full = load_all_support_files()
+                except Exception:
+                    _sf_full = support_files_pq
+
+                data_has_warranty = all(
+                    c in _ready_for_val.columns
+                    for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"]
+                )
+                _val_report, _val_results = validate_products(
+                    _ready_for_val, _sf_full, _cv, data_has_warranty
+                )
+
             st.session_state.pq_val_report  = _val_report
             st.session_state.pq_val_results = _val_results
             st.session_state.pq_flags_init  = False
 
-        st.session_state.pq_data     = ready
+        st.session_state.pq_data     = ready   # keep flags for advisory display
         st.session_state.pq_last_sig = sig
         if not st.session_state.enrichment_done:
             st.session_state.enriched_df = ready.copy()
@@ -863,10 +1074,9 @@ if st.session_state.enrichment_done and st.session_state.enriched_df is not None
     esummary = st.session_state.enrichment_summary
 
     st.markdown("---")
-    
+
     if esummary:
         total_cells_filled = sum(v["filled"] for v in esummary.values())
-        cols_with_data     = [c for c, v in esummary.items() if v["after"] > 0]
         cols_filled        = [c for c, v in esummary.items() if v["filled"] > 0]
 
         st.markdown(
@@ -892,7 +1102,7 @@ if st.session_state.enrichment_done and st.session_state.enriched_df is not None
                     status = "—" if info["after"] == 0 else f'{info["after"]} rows'
                     chip_html += f'<span class="field-chip missing">⬜ {label} ({status})</span>'
             st.markdown(chip_html, unsafe_allow_html=True)
-            
+
     else:
         st.markdown(
             f"### 🌐 Data Generated "
@@ -901,15 +1111,24 @@ if st.session_state.enrichment_done and st.session_state.enriched_df is not None
         )
 
     with st.expander(f"📋 Inline preview — enriched data ({len(edf)} rows)", expanded=False):
-        preview_cols = [c for c in edf.columns if edf[c].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("").any()]
-        st.dataframe(edf[preview_cols].fillna("").replace("nan", ""), use_container_width=True, height=400)
+        _preview_cols = [
+            c for c in edf.columns
+            if not c.startswith("_")
+            and edf[c].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("").any()
+        ]
+        st.dataframe(
+            edf[_preview_cols].fillna("").replace("nan", ""),
+            use_container_width=True, height=400,
+        )
 
     st.markdown("#### ⬇️ Download Enriched Dataset")
     dl_col1, dl_col2 = st.columns(2)
+    # Strip internal flag cols from download
+    _edf_clean = edf[[c for c in edf.columns if not c.startswith("_")]]
     with dl_col1:
         st.download_button(
             label="📥 Download as Excel (.xlsx)",
-            data=_to_excel_bytes(edf),
+            data=_to_excel_bytes(_edf_clean),
             file_name=f"enriched_data_{pq_country.lower()}_{country_code}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True, type="primary",
@@ -917,16 +1136,30 @@ if st.session_state.enrichment_done and st.session_state.enriched_df is not None
     with dl_col2:
         st.download_button(
             label="📄 Download as CSV (.csv)",
-            data=_to_csv_bytes(edf),
+            data=_to_csv_bytes(_edf_clean),
             file_name=f"enriched_data_{pq_country.lower()}_{country_code}.csv",
             mime="text/csv", use_container_width=True,
         )
 
 # ------------------------------------------------------------------
+# DATA QUALITY FLAGS (advisory — shown before validation results)
+# ------------------------------------------------------------------
+_pq_data = st.session_state.pq_data
+if not _pq_data.empty:
+    _has_any_flag = any(
+        c in _pq_data.columns and _pq_data[c].any()
+        for c in ["_OLD_PRICE_CORRUPTED", "_DISCOUNT_MISMATCH",
+                  "_BRAND_IN_TITLE", "_RATING_NO_REVIEWS"]
+    )
+    if _has_any_flag:
+        st.markdown("---")
+        st.subheader("🔎 Data Quality Notices", anchor=False)
+        _render_data_quality_flags(_pq_data)
+
+# ------------------------------------------------------------------
 # FULL VALIDATION RESULTS
 # ------------------------------------------------------------------
 _val_report = st.session_state.get("pq_val_report", pd.DataFrame())
-_pq_data    = st.session_state.pq_data
 
 if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
     _app_df = _val_report[_val_report["Status"] == "Approved"]
@@ -945,11 +1178,13 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
     )
 
     mc1, mc2, mc3, mc4 = st.columns(4)
+    # Use len of pq_data without internal flag cols as "Total Products"
+    _total = len(_pq_data[[c for c in _pq_data.columns if not c.startswith("_")]])
     for _col, _lbl, _val, _color in [
-        (mc1, "Total Products", len(_pq_data),  DARK),
+        (mc1, "Total Products", _total,         DARK),
         (mc2, "Approved",       len(_app_df),   GREEN),
         (mc3, "Rejected",       len(_rej_df),   RED),
-        (mc4, "Rejection Rate", f"{(len(_rej_df)/len(_pq_data)*100) if len(_pq_data)>0 else 0:.1f}%", ORANGE),
+        (mc4, "Rejection Rate", f"{(len(_rej_df)/_total*100) if _total > 0 else 0:.1f}%", ORANGE),
     ]:
         with _col:
             st.markdown(f"<div style='height:4px;background:{_color};border-radius:4px 4px 0 0;'></div>", unsafe_allow_html=True)
@@ -965,7 +1200,7 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
 
         st.session_state.final_report = st.session_state.pq_val_report.copy()
         _data_has_w = all(c in _pq_data.columns for c in ["PRODUCT_WARRANTY", "WARRANTY_DURATION"])
-        
+
         for _flag_title in _rej_df["FLAG"].unique():
             _flag_df = _rej_df[_rej_df["FLAG"] == _flag_title]
             with st.expander(f"{_flag_title} ({len(_flag_df)})", key=f"pqexp_{_flag_title}"):
@@ -986,7 +1221,7 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
         ("Rejected Only", _rej_df,     "Only rejected products"),
         ("Approved Only", _app_df,     "Only approved products"),
     ]
-    
+
     _ecols = st.columns(3)
     for _ei, (_etitle, _edf, _edesc) in enumerate(_export_cfg):
         with _ecols[_ei]:
@@ -1006,8 +1241,14 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
                         _res, _fn, _mime = generate_smart_export(
                             _edf, f"{_fname_base}_{_etitle.replace(' ','_')}", "simple", _reasons_df,
                         )
-                        st.session_state.pq_val_exports[_ekey] = {"data": _res.getvalue(), "fname": _fn, "mime": _mime}
+                        st.session_state.pq_val_exports[_ekey] = {
+                            "data": _res.getvalue(), "fname": _fn, "mime": _mime
+                        }
                         st.rerun()
                 else:
                     _ec = st.session_state.pq_val_exports[_ekey]
-                    st.download_button("📥 Download", data=_ec["data"], file_name=_ec["fname"], mime=_ec["mime"], use_container_width=True, type="primary", key=f"dl_{_ekey}")
+                    st.download_button(
+                        "📥 Download", data=_ec["data"], file_name=_ec["fname"],
+                        mime=_ec["mime"], use_container_width=True, type="primary",
+                        key=f"dl_{_ekey}",
+                    )
