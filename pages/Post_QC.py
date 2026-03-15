@@ -235,7 +235,6 @@ _SS_DEFAULTS = {
     "pq_country":         "Kenya",
     "pq_data":            pd.DataFrame(),
     "pq_last_sig":        None,
-    "scraper_enabled":    False,
     "enriched_df":        None,
     "enrichment_summary": {},
     "enrichment_done":    False,
@@ -673,14 +672,7 @@ with st.sidebar:
     st.markdown("---")
 
     if _SCRAPER_OK:
-        st.subheader("🌐 Jumia Enrichment")
-        st.session_state.scraper_enabled = st.toggle(
-            "Auto-fill missing fields from Jumia",
-            value=st.session_state.scraper_enabled,
-            help="Uses product SKUs to scrape additional data from Jumia. Runs once per file upload.",
-        )
-        if st.session_state.scraper_enabled:
-            st.caption("⏱ ~1–3 s per product row. Runs once on upload.")
+        st.caption("🌐 Jumia enrichment active — missing fields auto-filled on upload.")
     else:
         st.caption("⚠️ `jumia_scraper.py` not found. Auto-enrichment disabled.")
 
@@ -736,7 +728,6 @@ if input_mode in ["📁 Upload Post-QC File", "📊 Data Grab Upload"]:
             (
                 str(sorted(f["name"] + str(len(f["bytes"])) for f in files_data))
                 + country_code
-                + str(st.session_state.scraper_enabled)
                 + input_mode
             ).encode()
         ).hexdigest()
@@ -787,7 +778,7 @@ elif input_mode == "🌐 Paste SKUs / URLs":
 
     if lookup_input_raw.strip():
         sig = hashlib.md5(
-            (lookup_input_raw + country_code + str(st.session_state.scraper_enabled) + input_mode).encode()
+            (lookup_input_raw + country_code + input_mode).encode()
         ).hexdigest()
 
         if st.session_state.pq_last_sig != sig:
@@ -955,7 +946,7 @@ if all_dfs and sig and st.session_state.pq_last_sig != sig:
         merged_dedup = merged.drop_duplicates(subset=["PRODUCT_SET_SID"], keep="first")
 
         # ── Scraper enrichment ─────────────────────────────────
-        if _SCRAPER_OK and st.session_state.scraper_enabled and input_mode != "🌐 Paste SKUs / URLs":
+        if _SCRAPER_OK and input_mode != "🌐 Paste SKUs / URLs":
             _missing_cols = [
                 c for c in SCRAPABLE_FIELDS
                 if c not in merged_dedup.columns
@@ -1244,6 +1235,11 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
         with _col:
             st.markdown(f"<div style='height:4px;background:{_color};border-radius:4px 4px 0 0;'></div>", unsafe_allow_html=True)
             st.metric(_lbl, _val)
+
+    # Always sync final_report so the image grid has data regardless of
+    # whether there are rejections or all products are approved.
+    if st.session_state.final_report.empty:
+        st.session_state.final_report = st.session_state.pq_val_report.copy()
 
     if not _rej_df.empty:
         st.subheader("🚩 Flags Breakdown", anchor=False)
@@ -1745,5 +1741,17 @@ renderAll();
 # CALL THE IMAGE GRID
 # Only when validation has run and produced data.
 # ------------------------------------------------------------------
-if not st.session_state.pq_data.empty and not st.session_state.final_report.empty:
+# ------------------------------------------------------------------
+# CALL THE IMAGE GRID
+# Render whenever product data is available — works with or without
+# validation results, and whether products are approved or rejected.
+# ------------------------------------------------------------------
+_grid_data_ready  = not st.session_state.pq_data.empty
+_grid_report_ready = not st.session_state.pq_val_report.empty or not st.session_state.final_report.empty
+
+if _grid_data_ready and _grid_report_ready:
+    # Ensure final_report is populated even if validation block was skipped
+    # (e.g. _FULL_VALIDATION_OK is False but enrichment ran)
+    if st.session_state.final_report.empty and not st.session_state.pq_val_report.empty:
+        st.session_state.final_report = st.session_state.pq_val_report.copy()
     _render_pq_image_grid()
