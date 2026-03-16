@@ -370,18 +370,29 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
         re.IGNORECASE | re.VERBOSE,
     )
 
+    # Words found in Jumia page furniture (share buttons, social CTAs, promo
+    # text) that must never be treated as variation pill values.
+    _PILL_BLOCKLIST: set[str] = {
+        "share", "this", "product", "add", "cart", "wishlist", "compare",
+        "buy", "now", "view", "more", "details", "description", "reviews",
+        "rating", "sold", "by", "seller", "store", "official", "report",
+        "incorrect", "information", "see", "all", "promotions", "delivery",
+        "returns", "policy", "similar", "products", "from", "brand",
+        "print", "email", "copy", "link", "tweet", "pin", "like",
+        "follow", "followers", "score", "shipping", "express", "fulfilled",
+        "jumia", "verified", "in", "on", "at", "and", "or",
+        "the", "a", "an", "with", "for", "of", "to", "is", "are",
+        "get", "set", "go", "new", "top", "hot", "sale", "free",
+    }
+
     def _is_size(val: str) -> bool:
         return bool(_SIZE_RE.match(val.strip()))
 
     def _collect_pills(selector: str) -> list[str]:
         """
         Return text values of non-empty pill/option elements.
-
-        Filters out spec-attribute rows whether they use ': ' separators
-        (e.g. 'Colour: Red') or label-value concatenation (e.g. 'ColourRed').
-        Jumia renders both in the same ul.-pvs element; the concatenated form
-        has no separator because BeautifulSoup's get_text() strips the span
-        boundary between the two child <span> elements.
+        Filters out spec-attribute rows, page-furniture words, and comma-
+        separated spec strings whether they appear as single or split tokens.
         """
         vals: list[str] = []
         for el in soup.select(selector):
@@ -389,19 +400,27 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
             if inp:
                 v = inp.get("value") or inp.get("data-value", "")
             else:
-                v = el.get_text(strip=True)
+                # Read only the first direct child <span> to avoid concatenating
+                # sibling spans e.g. "EU 40" + "Selected" → "EU 40Selected"
+                first_span = el.find("span", recursive=False)
+                if first_span:
+                    v = first_span.get_text(strip=True)
+                else:
+                    v = el.get_text(strip=True)
             v = v.strip()
             if not v or len(v) >= 50:
                 continue
             # Filter 1: explicit colon-space separator  e.g. "SKU: XYZ123"
             if ": " in v:
                 continue
-            # Filter 2: contains a comma — spec attribute strings, never real pills
+            # Filter 2: contains a comma — spec strings, never real pills
             if "," in v:
                 continue
-            # Filter 3: starts with a known attribute label (with or without
-            # a space/value following it)  e.g. "ColourRed", "Size 750ml"
+            # Filter 3: starts with a known spec-attribute label
             if _SPEC_LABEL_RE.match(v):
+                continue
+            # Filter 4: page-furniture words (share buttons, CTAs, nav links)
+            if v.lower() in _PILL_BLOCKLIST:
                 continue
             vals.append(v)
         return vals
@@ -663,61 +682,100 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
         result["IS_OFFICIAL_STORE"] = "Yes" if any([jmall_badge, official_text, official_img]) else "No"
 
     # SELLER_NAME
-    # Jumia renders the seller as a linked store name in the seller-info section.
-    # Try multiple selectors in priority order, then fall back to URL slug.
+    # Jumia renders the seller name in a dedicated seller-info section.
+    # We use a strict allowlist approach: only trust elements clearly
+    # scoped to seller identity, never general nav/promo links.
     if not result.get("SELLER_NAME"):
         _seller_name = ""
-        # Strategy 1: dedicated seller-info block (most pages)
+
+        # Strategy 1: dedicated seller-info / seller-details block
+        # These selectors target the seller card that appears below the
+        # add-to-cart button on Jumia product pages.
         for _sel in [
-            "div.seller-info a",
-            "a[href*='/mlp-'][href*='-store']",
-            "div.-pvs a[href*='-store']",
-            "div[class*='seller'] a[href]",
+            "div.seller-info a[href]",
+            "div[class*='seller-info'] a[href]",
             "section[class*='seller'] a[href]",
-            "a[class*='seller']",
+            "div[class*='seller-detail'] a[href]",
+            "a[class*='seller-name']",
+            "a[class*='store-name']",
         ]:
             _el = soup.select_one(_sel)
             if _el:
                 _txt = _el.get_text(strip=True)
-                if _txt and 2 <= len(_txt) <= 80 and _txt.lower() not in ("seller", "store", "view"):
-                    _seller_name = _txt
-                    break
+                if _txt and 2 <= len(_txt) <= 60:
+                    _lower = _txt.lower()
+                    if not any(w in _lower for w in (
+                        "seller", "store", "view", "follow", "score",
+                        "performance", "information", "rating", "jumia",
+                    )):
+                        _seller_name = _txt
+                        break
 
-        # Strategy 2: any <a> whose href is a seller slug (e.g. /botongsw-cod/)
-        # Jumia seller URLs are like /seller-name-cod/ or /seller-name/
+        # Strategy 2: <a> whose href matches Jumia seller slug pattern
+        # Seller slugs look like /seller-handle-cod/ or /seller-handle/
+        # They are short, lowercase, hyphenated, end with /
+        # We require the href to end in -cod/ or contain at least 2 hyphens
+        # to distinguish from category/promo pages (/sp-help/, /mlp-.../)
         if not _seller_name:
-            _seller_re = re.compile(r"^/[a-z0-9][a-z0-9\-]{2,50}/$")
+            _seller_slug_re = re.compile(
+                r"^/([a-z0-9][a-z0-9\-]{3,40})(?:-cod)?/$"
+            )
+            _nav_words = {
+                "home", "phone", "tablet", "fashion", "compute", "gaming",
+                "supermarket", "health", "appliance", "beauty", "office",
+                "baby", "jumia", "sell", "help", "warranty", "privacy",
+                "terms", "conditions", "credit", "store", "official",
+                "catalog", "cart", "wishlist", "account", "order",
+                "return", "refund", "delivery", "payment", "sp", "mlp",
+                "category", "electronics", "groceries", "computing",
+            }
             for _a in soup.find_all("a", href=True):
-                _href = _a["href"]
-                if _seller_re.match(_href):
-                    _txt = _a.get_text(strip=True)
-                    if _txt and 2 <= len(_txt) <= 80:
-                        _lower = _txt.lower()
-                        # skip navigation links that match the pattern
-                        if not any(w in _lower for w in (
-                            "home", "phone", "tablet", "fashion", "compute",
-                            "gaming", "supermarket", "health", "appliance",
-                            "beauty", "office", "baby", "jumia", "sell on",
-                        )):
-                            _seller_name = _txt
-                            break
+                _href = str(_a.get("href", ""))
+                _m = _seller_slug_re.match(_href)
+                if not _m:
+                    continue
+                _slug_parts = set(_m.group(1).split("-"))
+                # Skip if any slug segment is a known nav word
+                if _slug_parts & _nav_words:
+                    continue
+                _txt = _a.get_text(strip=True)
+                if not _txt or len(_txt) > 60:
+                    continue
+                _lower = _txt.lower()
+                # Skip if the visible text contains nav/promo language
+                if any(w in _lower for w in (
+                    "terms", "conditions", "credit", "policy", "warranty",
+                    "help", "support", "service", "sell on", "official store",
+                    "jumia express", "fulfilled",
+                )):
+                    continue
+                _seller_name = _txt
+                break
 
-        # Strategy 3: structured data / JSON-LD seller field
+        # Strategy 3: JSON-LD — only use the seller object, never brand
+        # (brand is the product brand, not the marketplace seller)
         if not _seller_name and ld_data:
-            _seller_obj = ld_data.get("seller") or ld_data.get("brand", {})
+            _seller_obj = ld_data.get("seller")
             if isinstance(_seller_obj, dict):
-                _seller_name = str(_seller_obj.get("name", "")).strip()
-            elif isinstance(_seller_obj, str):
+                _s = str(_seller_obj.get("name", "")).strip()
+                if _s and len(_s) <= 60:
+                    _seller_name = _s
+            elif isinstance(_seller_obj, str) and len(_seller_obj.strip()) <= 60:
                 _seller_name = _seller_obj.strip()
 
-        # Strategy 4: full-text regex near "Sold by" / "Seller:"
+        # Strategy 4: "Seller Information" heading → next sibling text
+        # Safer than regex: scope to the actual seller-info section
         if not _seller_name:
-            _sb = re.search(
-                r"(?:sold\s+by|seller\s*[:\-])\s*([^\n\r,]{2,60})",
-                full_text, re.IGNORECASE,
-            )
-            if _sb:
-                _seller_name = _sb.group(1).strip()
+            for _heading in soup.find_all(["h2", "h3", "h4", "b", "strong"]):
+                if re.search(r"seller\s+information", _heading.get_text(), re.IGNORECASE):
+                    _sib = _heading.find_next_sibling()
+                    while _sib:
+                        _txt = _sib.get_text(strip=True)
+                        if _txt and 2 <= len(_txt) <= 60:
+                            _seller_name = _txt
+                            break
+                        _sib = _sib.find_next_sibling()
+                    break
 
         if _seller_name:
             result["SELLER_NAME"] = _seller_name
