@@ -865,8 +865,72 @@ class CountryValidator:
         return df
 
 # -------------------------------------------------
-# DATA PREPROCESSING
+# ENCODING HELPERS
 # -------------------------------------------------
+def _detect_and_read_csv(buf) -> pd.DataFrame:
+    """
+    Read a CSV/TSV with robust encoding detection.
+
+    Tries encodings in this order:
+      1. UTF-8-sig  (UTF-8 with BOM — common in Excel-saved CSVs)
+      2. UTF-8
+      3. CP1252     (Windows Western — most common Jumia export encoding)
+      4. ISO-8859-1 (Latin-1 fallback)
+
+    For each encoding, the separator is auto-detected: if the first parse
+    produces only one column, a semicolon separator is tried next.
+    Returns the first successfully parsed DataFrame with >1 column.
+    """
+    _ENCODINGS = ['utf-8-sig', 'utf-8', 'cp1252', 'iso-8859-1']
+    raw_bytes = buf.read()
+
+    for enc in _ENCODINGS:
+        for sep in [',', ';', '\t']:
+            try:
+                from io import BytesIO as _BIO
+                df = pd.read_csv(_BIO(raw_bytes), sep=sep, encoding=enc, dtype=str)
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+
+    # Absolute last resort — let pandas guess
+    from io import BytesIO as _BIO
+    return pd.read_csv(_BIO(raw_bytes), sep=None, engine='python', encoding='utf-8', dtype=str)
+
+
+def _repair_mojibake(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fix the most common mojibake pattern: UTF-8 bytes that were decoded as
+    CP1252 (Windows Western) or ISO-8859-1 (Latin-1).  Applies only to
+    object (string) columns and only when the round-trip actually produces
+    valid UTF-8 with no replacement characters.
+
+    Repair order tried per value:
+      1. CP1252 → UTF-8   (covers â€" → – , Ã© → é , etc.)
+      2. Latin-1 → UTF-8  (fallback for strict Latin-1 files)
+
+    Examples fixed:
+        â€"   →  –   (en dash U+2013, very common in PARENTSKU)
+        Ã©    →  é   (e-acute, common in seller/brand names)
+        â€™   →  '   (right single quote)
+        Â£    →  £   (pound sign)
+    """
+    def _fix(val):
+        if not isinstance(val, str):
+            return val
+        for enc in ('cp1252', 'latin-1'):
+            try:
+                fixed = val.encode(enc).decode('utf-8')
+                if fixed != val and '\ufffd' not in fixed:
+                    return fixed
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                continue
+        return val
+
+    for col in df.select_dtypes(include='object').columns:
+        df[col] = df[col].apply(_fix)
+    return df
 def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip()
@@ -1573,6 +1637,8 @@ def to_excel_base(df, sheet, cols, writer, format_rules=False):
     for c in cols:
         if c not in df_p.columns: df_p[c] = pd.NA
     df_to_write = df_p[[c for c in cols if c in df_p.columns]]
+    # Final repair pass — catches any mojibake that survived from cached sessions
+    df_to_write = _repair_mojibake(df_to_write.copy())
     df_to_write.to_excel(writer, index=False, sheet_name=sheet)
     if format_rules and 'Status' in df_to_write.columns:
         wb = writer.book
@@ -2336,14 +2402,9 @@ if st.session_state.get('last_processed_files') != process_signature:
                     if uf["name"].endswith('.xlsx'):
                         raw_data = pd.read_excel(_buf, engine='openpyxl', dtype=str)
                     else:
-                        try:
-                            raw_data = pd.read_csv(_buf, dtype=str)
-                            if len(raw_data.columns) <= 1:
-                                _buf.seek(0)
-                                raw_data = pd.read_csv(_buf, sep=';', encoding='ISO-8859-1', dtype=str)
-                        except Exception:
-                            _buf.seek(0)
-                            raw_data = pd.read_csv(_buf, sep=';', encoding='ISO-8859-1', dtype=str)
+                        raw_data = _detect_and_read_csv(_buf)
+                    # Repair mojibake (UTF-8 decoded as Latin-1) on all string columns
+                    raw_data = _repair_mojibake(raw_data)
                     detected_modes.append(detect_file_type(raw_data))
                     all_dfs.append(raw_data)
 
