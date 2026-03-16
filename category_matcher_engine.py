@@ -565,6 +565,10 @@ class CategoryMatcherEngine:
         'smart watch':          'Phones & Tablets / Wearable Technology / Smart Watches',
         'smartwatch':           'Phones & Tablets / Wearable Technology / Smart Watches',
         'fitness tracker':      'Phones & Tablets / Wearable Technology / Smart Watches',
+        # Generic 'watch' / 'wrist watch' — smart/digital watches live in Phones & Tablets
+        # (analogue watches are Fashion but we keep the longer 'smart watch' key winning)
+        'digital watch':        'Phones & Tablets / Wearable Technology / Smart Watches',
+        'smart band':           'Phones & Tablets / Wearable Technology / Smart Watches',
         'bluetooth earmuff':    'Electronics / Portable Audio & Video / Headphones',
         'wireless earmuff':     'Electronics / Portable Audio & Video / Headphones',
         'earmuff headphone':    'Electronics / Portable Audio & Video / Headphones',
@@ -1847,45 +1851,48 @@ def check_wrong_category(
         return re.split(r"\s*/\s*|\s*>\s*", str(path).strip())[0].strip().lower()
 
     def _leaf(path):
-        """Return the last segment of a category path, lowercased."""
         parts = str(path).strip().split("/")
         return parts[-1].strip().lower()
 
     def _is_leaf_only(path):
-        """True when path has no '/' — it's just a bare category name like 'Smart Watches'."""
         return "/" not in str(path).strip()
 
     def _categories_compatible(assigned_full: str, predicted: str) -> bool:
         """
-        Return True when assigned and predicted are compatible — i.e. should NOT
-        be flagged as Wrong Category.
+        Return True when assigned and predicted are compatible
+        and should NOT be flagged as Wrong Category.
 
-        Compatibility rules (any one is sufficient):
-          1. Top-level domains match exactly.
-          2. assigned_full is a bare leaf name (no '/') AND the predicted full
-             path ends with that same leaf — e.g. assigned='Smart Watches',
-             predicted='Phones & Tablets / Wearable Technology / Smart Watches'.
-          3. assigned_full (normalised) appears anywhere inside predicted path —
-             handles cases where the leaf name is a substring of the full path.
-          4. predicted leaf == assigned leaf (both paths point to the same
-             terminal category regardless of the parent hierarchy).
+        Rules (any one sufficient):
+          1. Same top-level domain.
+          2. assigned is a bare leaf AND appears inside predicted path.
+             e.g. 'Smart Watches' in 'Phones & Tablets / ... / Smart Watches'
+          3. Same terminal leaf node.
+          4. Either leaf appears inside the other full path (cross-containment).
         """
         a_norm = assigned_full.strip().lower()
         p_norm = predicted.strip().lower()
 
-        # Rule 1 — same top domain
         if _top_dom(assigned_full) == _top_dom(predicted):
             return True
-
-        # Rule 2 — assigned is a bare leaf and predicted path contains it
         if _is_leaf_only(assigned_full) and a_norm in p_norm:
             return True
-
-        # Rule 3 — assigned leaf matches predicted leaf (same terminal node)
         if _leaf(assigned_full) == _leaf(predicted):
             return True
-
+        a_leaf = _leaf(assigned_full)
+        p_leaf = _leaf(predicted)
+        if a_leaf and p_leaf and (a_leaf in p_norm or p_leaf in a_norm):
+            return True
         return False
+
+    def _code_approved(cat_code: str) -> str | None:
+        """
+        Check if an entire category code was approved by the user.
+        Keys are stored as '__code__<CATEGORY_CODE>' in learning_db.
+        Returns the saved full path if approved, else None.
+        """
+        if not cat_code:
+            return None
+        return engine.learning_db.get(f"__code__{cat_code}")
 
     flagged_rows = []
 
@@ -1897,37 +1904,36 @@ def check_wrong_category(
         if len(name.split()) < 3:
             continue
 
-        # ── 1. Resolve assigned full path via code_to_path ───────────────
+        # ── 1. Category-code approval (fastest, catches ALL products
+        #        with this code regardless of name) ──────────────────────
+        code_approved_path = _code_approved(cat_code)
+        if code_approved_path:
+            continue
+
+        # ── 2. Resolve assigned full path ─────────────────────────────────
         if cat_code and cat_code in code_to_path:
             assigned_full = code_to_path[cat_code]
         else:
-            # code_to_path missing this code — use whatever CATEGORY column says.
-            # This is often just the leaf name e.g. 'Smart Watches'.
-            assigned_full = cat_leaf
+            assigned_full = cat_leaf   # bare leaf e.g. 'Smart Watches'
 
-        # ── 2. Learning DB — honour approved corrections ─────────────────
+        # ── 3. Product-name learning DB lookup ────────────────────────────
         learned = engine.lookup_learning_db(name)
         if learned:
-            # If the learned correction is compatible with the assigned
-            # category, this product was already reviewed → skip it.
             if _categories_compatible(assigned_full, learned):
                 continue
-            # If the learned correction itself IS the assigned category
-            # (exact or leaf match), also skip.
             if _categories_compatible(learned, assigned_full):
                 continue
 
-        # ── 3. Engine prediction ──────────────────────────────────────────
+        # ── 4. Engine prediction ──────────────────────────────────────────
         predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
-
         if not predicted:
             continue
 
-        # ── 4. Compatibility check — skip if they agree ───────────────────
+        # ── 5. Compatibility check ────────────────────────────────────────
         if _categories_compatible(assigned_full, predicted):
             continue
 
-        # ── 5. Build flag comment ─────────────────────────────────────────
+        # ── 6. Build flag row ─────────────────────────────────────────────
         assigned_dom   = _top_dom(assigned_full)
         predicted_dom  = _top_dom(predicted)
         predicted_leaf = predicted.split("/")[-1].strip()
