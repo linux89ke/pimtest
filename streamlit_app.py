@@ -45,7 +45,7 @@ try:
     _CAT_MATCHER_AVAILABLE = True
 except ImportError:
     _CAT_MATCHER_AVAILABLE = False
-    def check_wrong_category(data, categories_list=None, cat_path_to_code=None, confidence_threshold=0.0):
+    def check_wrong_category(data, categories_list=None, cat_path_to_code=None, code_to_path=None, confidence_threshold=0.0):
         """Fallback: flag only 'Miscellaneous' categories when engine unavailable."""
         if 'CATEGORY' not in data.columns:
             return pd.DataFrame(columns=data.columns)
@@ -819,6 +819,8 @@ def load_all_support_files() -> Dict:
         logger.warning("Could not build categories_names_list: %s", _ce)
     support['categories_names_list'] = _cat_names
     support['cat_path_to_code'] = _cat_path_to_code
+    # Reverse lookup: category_code → full Category Path
+    support['code_to_path'] = {v: k for k, v in _cat_path_to_code.items()}
     return support
 
 @st.cache_data(ttl=3600)
@@ -953,37 +955,39 @@ def run_cached_check(func, cache_path, ckwargs):
         logger.warning(f"run_cached_check save failed {cache_path}: {e}")
     return res
 
-def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, cat_path_to_code: dict = None) -> pd.DataFrame:
+def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, cat_path_to_code: dict = None, code_to_path: dict = None) -> pd.DataFrame:
     """
-    Legacy wrapper — now powered by CategoryMatcherEngine.
-    Detects products whose assigned category domain doesn't match what the
-    product name implies (e.g. a phone listed under Fashion, a dress under
-    Electronics).  Falls back to miscellaneous-string detection when the
-    engine is unavailable.
+    Priority validator — powered by CategoryMatcherEngine.
+    Detects products whose CATEGORY_CODE resolves to a domain that doesn't
+    match what the product name implies. Runs first in the validation pipeline.
+    Falls back to miscellaneous-string detection when engine is unavailable.
     """
     if categories_list is None:
         categories_list = []
     if cat_path_to_code is None:
         cat_path_to_code = {}
-    # Try to supplement from session state if caller didn't pass a list
-    if not categories_list:
+    if code_to_path is None:
+        code_to_path = {}
+    if not categories_list or not code_to_path:
         try:
             _sf = st.session_state.get("support_files", {})
-            categories_list = _sf.get("categories_names_list", [])
-            if not cat_path_to_code:
-                cat_path_to_code = _sf.get("cat_path_to_code", {})
+            categories_list = categories_list or _sf.get("categories_names_list", [])
+            cat_path_to_code = cat_path_to_code or _sf.get("cat_path_to_code", {})
+            code_to_path = code_to_path or _sf.get("code_to_path", {})
         except Exception:
             pass
 
-    # Engine path — full 5-priority matching pipeline
     if _CAT_MATCHER_AVAILABLE:
         try:
             _engine = _get_cat_matcher_engine()
             if _engine is not None:
-                # Build index lazily (idempotent — skips if already built)
                 if categories_list and not _engine._tfidf_built:
                     _engine.build_tfidf_index(categories_list)
-                return check_wrong_category(data, categories_list, cat_path_to_code=cat_path_to_code)
+                return check_wrong_category(
+                    data, categories_list,
+                    cat_path_to_code=cat_path_to_code,
+                    code_to_path=code_to_path,
+                )
         except Exception as _e:
             logger.warning("check_wrong_category engine error: %s", _e)
 
@@ -1426,6 +1430,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Wrong Category", check_miscellaneous_category, {
             'categories_list': support_files.get('categories_names_list', []),
             'cat_path_to_code': support_files.get('cat_path_to_code', {}),
+            'code_to_path': support_files.get('code_to_path', {}),
         }),
         ("Restricted brands", check_restricted_brands, {'country_rules': country_restricted_rules}),
         ("Suspected Fake product", check_suspected_fake_products, {'suspected_fake_df': support_files['suspected_fake'], 'fx_rate': FX_RATE}),
