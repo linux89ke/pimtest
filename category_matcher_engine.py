@@ -5065,8 +5065,152 @@ def check_wrong_category(
     data: "pd.DataFrame",
     categories_list: list[str],
     cat_path_to_code: dict[str, str] | None = None,
+    code_to_path: dict[str, str] | None = None,
     confidence_threshold: float = 0.0,
 ) -> "pd.DataFrame":
+    """
+    Priority validator for streamlit_app.validate_products().
+
+    Flags products whose assigned category domain (resolved via CATEGORY_CODE
+    → full path) doesn't match what the engine predicts from the product NAME.
+
+    Resolution order for the assigned domain:
+      1. CATEGORY_CODE column  → code_to_path lookup (most reliable)
+      2. CATEGORY column text  → direct top-level split (fallback)
+
+    Uses the 5-priority matching pipeline:
+      1. Learning DB corrections
+      2. Exact product-type map (468 entries)
+      3. Rule-based v2 engine
+      4. sklearn / TF-IDF cosine similarity
+      5. Global cosine similarity fallback
+
+    Parameters
+    ----------
+    data              : DataFrame with NAME, CATEGORY and optionally CATEGORY_CODE
+    categories_list   : Full list of 'Category Path' strings from category_map.xlsx
+    cat_path_to_code  : Optional dict mapping lowercased Category Path → category_code
+    code_to_path      : Optional dict mapping category_code → Category Path (used to
+                        resolve CATEGORY_CODE to a full path for domain comparison)
+    """
+    if cat_path_to_code is None:
+        cat_path_to_code = {}
+    if code_to_path is None:
+        code_to_path = {}
+
+    if "NAME" not in data.columns or "CATEGORY" not in data.columns:
+        return pd.DataFrame(columns=data.columns)
+
+    d = data.copy()
+    d = d[
+        d["NAME"].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("")
+        & d["CATEGORY"].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("")
+    ]
+    if d.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    engine = get_engine()
+    if categories_list and not engine._tfidf_built:
+        engine.build_tfidf_index(categories_list)
+    kw_map = engine.build_keyword_to_category_mapping()
+
+    # Build valid domains from real category list
+    valid_domains: set[str] = set()
+    for cp in categories_list:
+        dom = cp.split("/")[0].strip().lower()
+        if dom:
+            valid_domains.add(dom)
+
+    # Noise pairs: same commercial vertical, engine often confuses them
+    _noise_pairs: set[tuple] = {
+        ("phones & tablets", "computing"),
+        ("computing", "phones & tablets"),
+    }
+
+    def _top_dom(path: str) -> str:
+        return re.split(r"\s*/\s*|\s*>\s*", str(path).strip())[0].strip().lower()
+
+    stopwords = {
+        "and","the","for","with","new","set","pack","pcs","best","top","pro",
+        "kit","use","per","all","our","high","quality","inch","size","style",
+        "type","mini","large","small","super","ultra","max","plus","big","pair",
+    }
+
+    flagged_rows = []
+
+    for _, row in d.iterrows():
+        name     = str(row["NAME"]).strip()
+        cat_leaf = str(row["CATEGORY"]).strip()
+        cat_code = str(row.get("CATEGORY_CODE", "")).strip().split(".")[0]
+
+        if len(name.split()) < 3:
+            continue
+
+        # Resolve assigned domain — use CATEGORY_CODE → full path when available
+        if cat_code and cat_code in code_to_path:
+            assigned_full = code_to_path[cat_code]
+        else:
+            assigned_full = cat_leaf          # fallback: just the leaf name text
+        assigned_dom = _top_dom(assigned_full)
+
+        # Get predicted best-match category path
+        predicted = engine.get_category_with_fallback(
+            name, kw_map, categories_list
+        ) if categories_list else (engine._map_product_type(name) or "")
+        if not predicted:
+            continue
+
+        predicted_dom = _top_dom(predicted)
+
+        if not predicted_dom or predicted_dom == assigned_dom:
+            continue
+
+        # Skip noise pairs
+        if (assigned_dom, predicted_dom) in _noise_pairs:
+            continue
+
+        # Both must be real domains in the map
+        if assigned_dom not in valid_domains or predicted_dom not in valid_domains:
+            continue
+
+        # Skip if assigned is already Miscellaneous (separate legacy check)
+        if assigned_dom == "miscellaneous" and predicted_dom == "miscellaneous":
+            continue
+
+        # Confidence guard: product name must share a content word with predicted
+        # path, OR a direct product-type map hit fires for the predicted domain
+        name_words = set(re.findall(r"[a-z]{3,}", name.lower())) - stopwords
+        pred_words = set(re.findall(r"[a-z]{3,}", predicted.lower())) - stopwords
+        has_overlap = bool(name_words & pred_words)
+        direct_map  = engine._map_product_type(name)
+        has_direct  = (
+            direct_map is not None
+            and _top_dom(direct_map) == predicted_dom
+        )
+        if not has_overlap and not has_direct:
+            continue
+
+        predicted_leaf = predicted.split("/")[-1].strip()
+        predicted_code = cat_path_to_code.get(predicted.lower(), "")
+        code_str = f" [{predicted_code}]" if predicted_code else ""
+
+        comment = (
+            f"Assigned: {assigned_dom.title()} ({cat_leaf}) | "
+            f"Predicted: {predicted_dom.title()} — "
+            f"{predicted_leaf}{code_str}"
+        )
+
+        row_copy = row.copy()
+        row_copy["Comment_Detail"] = comment
+        flagged_rows.append(row_copy)
+
+    if not flagged_rows:
+        return pd.DataFrame(columns=data.columns)
+
+    result = pd.DataFrame(flagged_rows)
+    if "PRODUCT_SET_SID" in result.columns:
+        result = result.drop_duplicates(subset=["PRODUCT_SET_SID"])
+    return result
     """
     Validator for streamlit_app.validate_products().
 
