@@ -1739,7 +1739,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
-  .meta .ct{{color:#666;font-size:10px;}}
+  .meta .ct{{color:#666;font-size:10px;word-break:break-word;white-space:normal;line-height:1.4;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;}}
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
@@ -2043,11 +2043,26 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if 'LIST_VARIATIONS' in data.columns: current_display_cols.append('LIST_VARIATIONS')
 
     if cache_key not in st.session_state.display_df_cache:
+        # Pull CATEGORY_CODE alongside display cols for full-path resolution
+        _extra_cols = [c for c in current_display_cols if c in data.columns]
+        if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols:
+            _extra_cols = _extra_cols + ['CATEGORY_CODE']
         df_display = pd.merge(
             df_flagged_sids[['ProductSetSid']],
             data,
             left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left'
-        )[[c for c in current_display_cols if c in data.columns]]
+        )[[c for c in _extra_cols if c in data.columns]]
+
+        # ── Resolve CATEGORY_CODE → full hierarchical category path ──────
+        _code_to_path = support_files.get('code_to_path', {})
+        if _code_to_path and 'CATEGORY_CODE' in df_display.columns:
+            df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(
+                lambda c: _code_to_path.get(str(c).strip()) or df_display.get('CATEGORY', pd.Series(dtype=str)).iloc[0] if pd.notna(c) else ''
+            )
+            df_display = df_display.drop(columns=['CATEGORY_CODE'])
+
+        # Keep only the originally-requested display cols (no stray CATEGORY_CODE)
+        df_display = df_display[[c for c in current_display_cols if c in df_display.columns]]
         st.session_state.display_df_cache[cache_key] = df_display
     else:
         df_display = st.session_state.display_df_cache[cache_key]
@@ -2081,6 +2096,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         column_config={
             "PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True),
             "NAME": st.column_config.TextColumn(pinned=True),
+            "CATEGORY": st.column_config.TextColumn("Full Category", width="large"),
             "GLOBAL_SALE_PRICE": st.column_config.NumberColumn("Sale Price (USD)", format="$%.2f"),
             "GLOBAL_PRICE": st.column_config.NumberColumn("Price (USD)", format="$%.2f"),
             "Local Price": st.column_config.TextColumn(f"Local Price ({country_validator.country})"),
@@ -2522,11 +2538,22 @@ def render_image_grid():
 
     if 'MAIN_IMAGE' not in data.columns: data['MAIN_IMAGE'] = ''
     available_cols = [c for c in GRID_COLS if c in data.columns]
+    # Include CATEGORY_CODE so we can resolve the full hierarchical path
+    if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
+        available_cols = available_cols + ['CATEGORY_CODE']
     review_data = pd.merge(
         valid_grid_df[["ProductSetSid"]],
         data[available_cols],
         left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
     )
+
+    # ── Resolve CATEGORY_CODE → full hierarchical category path ──────────
+    _code_to_path = support_files.get('code_to_path', {})
+    if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
+        review_data = review_data.copy()
+        review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(
+            lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ''
+        )
 
     if search_n:
         review_data = review_data[review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)]
