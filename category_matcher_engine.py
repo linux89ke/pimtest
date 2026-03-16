@@ -60,12 +60,16 @@ class CategoryMatcherEngine:
     """
 
     # ── Paths for persisted learning data ────────────────────────────────────
-    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
     _LEARNING_DB_PATH = os.path.join(_BASE_DIR, "learning_db.json")
     _SK_MODEL_PATH    = os.path.join(_BASE_DIR, "sk_model.pkl")
 
     def __init__(self):
         self.learning_db: dict[str, str] = self.load_learning_db()
+        # Create the file on disk immediately if it doesn't exist yet so
+        # it's always visible next to the code from the first run onwards.
+        if not os.path.exists(self._LEARNING_DB_PATH):
+            self.save_learning_db()
         self._last_categories_list: list[str] = []
 
         # TF-IDF / sklearn state
@@ -976,8 +980,43 @@ class CategoryMatcherEngine:
         try:
             with open(self._LEARNING_DB_PATH, 'w', encoding='utf-8') as f:
                 json.dump(self.learning_db, f, ensure_ascii=False, indent=2)
-        except Exception as e:
+        except Exception:
             pass  # silently skip if path is not writable
+
+    def export_learning_db(self) -> str:
+        """
+        Return the full learning DB as a pretty-printed JSON string.
+        Use this to let users download the current corrections file from the
+        Streamlit UI so it can be stored externally and re-imported later.
+        """
+        return json.dumps(self.learning_db, ensure_ascii=False, indent=2)
+
+    def import_learning_db(self, json_str: str, merge: bool = True) -> int:
+        """
+        Load corrections from a JSON string (e.g. content of an uploaded file).
+
+        Parameters
+        ----------
+        json_str : str   Raw JSON — must be a flat {product_name: category} dict.
+        merge    : bool  If True, merge with existing corrections (new wins on
+                         conflict).  If False, replace entirely.
+
+        Returns the number of entries loaded.
+        """
+        try:
+            incoming = json.loads(json_str)
+            if not isinstance(incoming, dict):
+                return 0
+            if merge:
+                self.learning_db.update(incoming)
+            else:
+                self.learning_db = incoming
+            self.save_learning_db()
+            if SKLEARN_AVAILABLE and len(self.learning_db) >= 2:
+                self._retrain_correction_classifier()
+            return len(incoming)
+        except Exception:
+            return 0
 
     def apply_learned_correction(self, product_name, category):
         """
