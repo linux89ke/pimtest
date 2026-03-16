@@ -3551,13 +3551,1158 @@ class CategoryMatcherEngine:
             'full cream': 'Grocery / Coffee / Coffee Creamers',
             'chocolate bar': 'Grocery / Confectionery / Chocolate / Chocolate Bars',
             'toaster': 'Home & Office / Home & Kitchen / Kitchen & Dining / Small Appliances / Toasters',
-            'bread toaster': 'Home & Office / Home &
+            'ip camera': "Electronics / Cameras / Security & Surveillance Cameras",
+            'surveillance camera': "Electronics / Cameras / Security & Surveillance Cameras",
+            'dvd player': "Electronics / Television & Video / DVD Players",
+            'projector': "Electronics / Television & Video / Video Projectors",
+            'streaming device': "Electronics / Television & Video",
+            'android tv box': "Electronics / Television & Video",
+            'gps device': "Electronics / GPS & Navigation",
+            'gps tracker': "Electronics / GPS & Navigation",
+            'two way radio': "Electronics / Radios & Transceivers",
+            'walkie talkie': "Electronics / Radios & Transceivers",
+            'drone': "Electronics / Camera & Photo / Drones",
+            'vr headset': "Electronics / Wearable Technology",
+            'action camera': "Electronics / Cameras / Video Cameras",
+            'sofa': "Home & Office / Home & Furniture / Sofas & Armchairs",
+            'couch': "Home & Office / Home & Furniture / Sofas & Armchairs",
+            'sofa set': "Home & Office / Home & Furniture / Sofas & Armchairs",
+            'bed frame': "Home & Office / Home & Furniture / Beds",
+            'bunk bed': "Home & Office / Home & Furniture / Beds",
+            'wardrobe': "Home & Office / Home & Furniture / Armoires & Wardrobes",
+            'dressing table': "Home & Office / Home & Furniture / Vanities",
+            'vanity table': "Home & Office / Home & Furniture / Vanities",
+            'coffee table': "Home & Office / Home & Furniture / Coffee & End Tables",
+            'side table': "Home & Office / Home & Furniture / Coffee & End Tables",
+            'dining table': "Home & Office / Home & Furniture / Kitchen & Dining Room Furniture / Kitchen & Dining Room Tables",
+            'tv stand': "Home & Office / Home & Furniture / TV & Media Furniture",
+            'mirror': "Home & Office / Home & Furniture / Mirrors",
+            'wall art': "Home & Office / Home & Furniture / Wall Art",
+            'canvas art': "Home & Office / Home & Furniture / Wall Art",
+            'wall clock': "Home & Office / Home & Kitchen / Home Décor / Clocks",
+            'desk clock': "Home & Office / Home & Kitchen / Home Décor / Clocks",
+            'vase': "Home & Office / Home & Kitchen / Home Décor / Vases",
+            'flower vase': "Home & Office / Home & Kitchen / Home Décor / Vases",
+            'photo frame': "Home & Office / Home & Kitchen / Home Décor / Picture Frames",
+            'picture frame': "Home & Office / Home & Kitchen / Home Décor / Picture Frames",
+            'curtain': "Home & Office / Home & Furniture / Window Treatments / Curtains & Drapes",
+            'window blind': "Home & Office / Home & Furniture / Window Treatments",
+            'blackout curtain': "Home & Office / Home & Furniture / Window Treatments / Curtains & Drapes",
+            'tablecloth': "Home & Office / Home & Kitchen / Kitchen & Dining / Table Linens",
+            'table cloth': "Home & Office / Home & Kitchen / Kitchen & Dining / Table Linens",
+            'table runner': "Home & Office / Home & Kitchen / Kitchen & Dining / Table Linens",
+            'led strip': "Home & Office / Tools & Home Improvement / Lighting & Ceiling Fans",
+            'led strip light': "Home & Office / Tools & Home Improvement / Lighting & Ceiling Fans",
+            'ceiling light': "Home & Office / Tools & Home Improvement / Lighting & Ceiling Fans",
+            'pendant light': "Home & Office / Tools & Home Improvement / Lighting & Ceiling Fans",
+            'chandelier': "Home & Office / Tools & Home Improvement / Lighting & Ceiling Fans",
+            'solar panel': "Home & Office / Home & Kitchen",
+            'inverter': "Home & Office / Home & Kitchen",
+            'vacuum cleaner': "Home & Office / Appliances / Small Appliances / Vacuum Cleaners",
+            'cordless vacuum': "Home & Office / Appliances / Small Appliances / Vacuum Cleaners",
+            'steam iron': "Home & Office / Appliances / Small Appliances / Ironing & Laundry",
+            'clothes iron': "Home & Office / Appliances / Small Appliances / Ironing & Laundry",
+            'sewing machine': "Home & Office / Arts, Crafts & Sewing / Sewing",
+            'paper shredder': "Home & Office / Office Products / Office Supplies & Equipment",
+            'laminator': "Home & Office / Office Products / Office Supplies & Equipment",
+            'hair extension': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'hair weave': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'bundle hair': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'lace front wig': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'human hair wig': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'wig': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'braiding hair': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'hair attachment': "Health & Beauty / Beauty & Personal Care / Hair Care / Extensions, Wigs & Accessories",
+            'hair dryer': "Health & Beauty / Beauty & Personal Care / Hair Care / Hair Cutting Tools",
+            'blow dryer': "Health & Beauty / Beauty & Personal Care / Hair Care / Hair Cutting Tools",
+            'flat iron hair': "Health & Beauty / Beauty & Personal Care / Hair Care / Styling Tools & Appliances",
+            'hair straightener': "Health & Beauty / Beauty & Personal Care / Hair Care / Styling Tools & Appliances",
+            'curling iron': "Health & Beauty / Beauty & Personal Care / Hair Care / Styling Tools & Appliances",
+            'curling wand': "Health & Beauty / Beauty & Personal Care / Hair Care / Styling Tools & Appliances",
+            'nail polish': "Health & Beauty / Beauty & Personal Care / Makeup / Nails",
+            'nail gel': "Health & Beauty / Beauty & Personal Care / Makeup / Nails",
+            'nail drill': "Health & Beauty / Beauty & Personal Care / Makeup / Nails",
+            'lipstick': "Health & Beauty / Beauty & Personal Care / Makeup / Lips",
+            'lip gloss': "Health & Beauty / Beauty & Personal Care / Makeup / Lips",
+            'lip liner': "Health & Beauty / Beauty & Personal Care / Makeup / Lips",
+            'lip balm': "Health & Beauty / Beauty & Personal Care / Makeup / Lips",
+            'foundation': "Health & Beauty / Beauty & Personal Care / Makeup / Face",
+            'bb cream': "Health & Beauty / Beauty & Personal Care / Makeup / Face",
+            'concealer': "Health & Beauty / Beauty & Personal Care / Makeup / Face",
+            'eyeliner': "Health & Beauty / Beauty & Personal Care / Makeup / Eyes",
+            'mascara': "Health & Beauty / Beauty & Personal Care / Makeup / Eyes",
+            'eyeshadow': "Health & Beauty / Beauty & Personal Care / Makeup / Eyes",
+            'eyeshadow palette': "Health & Beauty / Beauty & Personal Care / Makeup / Eyes",
+            'blush': "Health & Beauty / Beauty & Personal Care / Makeup / Cheeks",
+            'makeup brush': "Health & Beauty / Beauty & Personal Care / Makeup / Makeup Brushes",
+            'blending sponge': "Health & Beauty / Beauty & Personal Care / Makeup / Makeup Brushes",
+            'makeup kit': "Health & Beauty / Beauty & Personal Care / Makeup",
+            'deodorant': "Health & Beauty / Beauty & Personal Care / Personal Care / Deodorants & Antiperspirants",
+            'roll on': "Health & Beauty / Beauty & Personal Care / Personal Care / Deodorants & Antiperspirants",
+            'body spray': "Health & Beauty / Beauty & Personal Care / Fragrance",
+            'cologne': "Health & Beauty / Beauty & Personal Care / Fragrance / Men's",
+            'hair clipper': "Health & Beauty / Beauty & Personal Care / Hair Care / Hair Cutting Tools",
+            'barbering clipper': "Health & Beauty / Beauty & Personal Care / Hair Care / Hair Cutting Tools",
+            'trimmer': "Health & Beauty / Beauty & Personal Care / Hair Care / Hair Cutting Tools",
+            'electric shaver': "Health & Beauty / Beauty & Personal Care / Shaving & Hair Removal",
+            'electric razor': "Health & Beauty / Beauty & Personal Care / Shaving & Hair Removal",
+            'blood pressure monitor': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'bp monitor': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'glucometer': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'glucose monitor': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'pulse oximeter': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'digital thermometer': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'infrared thermometer': "Health & Beauty / Medical Supplies & Equipment / Diagnostic, Monitoring & Test Equipment",
+            'back brace': "Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports / Back, Neck & Shoulder Supports",
+            'lumbar support': "Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports / Back, Neck & Shoulder Supports",
+            'compression socks': "Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports / Compression Socks",
+            'sanitary pad': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'menstrual pad': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'feminine wash': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'intimate wash': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'condom': "Health & Beauty / Sexual Wellness",
+            'massage gun': "Health & Beauty / Wellness & Relaxation / Massage Equipment",
+            'percussion massager': "Health & Beauty / Wellness & Relaxation / Massage Equipment",
+            'electric massager': "Health & Beauty / Wellness & Relaxation / Massage Equipment",
+            'massage chair': "Health & Beauty / Wellness & Relaxation / Massage Equipment",
+            'weight loss supplement': "Health & Beauty / Vitamins & Dietary Supplements / Supplements",
+            'slimming tea': "Health & Beauty / Vitamins & Dietary Supplements / Supplements",
+            'detox tea': "Health & Beauty / Vitamins & Dietary Supplements / Supplements",
+            'whey protein': "Health & Beauty / Sports Nutrition",
+            'creatine': "Health & Beauty / Sports Nutrition",
+            'omega 3': "Health & Beauty / Vitamins & Dietary Supplements / Supplements / Fish Oil",
+            'fish oil': "Health & Beauty / Vitamins & Dietary Supplements / Supplements / Fish Oil",
+            'collagen': "Health & Beauty / Vitamins & Dietary Supplements / Supplements",
+            'glutathione': "Health & Beauty / Vitamins & Dietary Supplements / Supplements",
+            'baby formula': "Baby Products / Feeding / Formula",
+            'infant formula': "Baby Products / Feeding / Formula",
+            'baby food': "Baby Products / Feeding",
+            'baby oil': "Baby Products / Bathing & Skin Care / Baby Lotion & Cream",
+            'infant oil': "Baby Products / Bathing & Skin Care / Baby Lotion & Cream",
+            'baby lotion': "Baby Products / Bathing & Skin Care / Baby Lotion & Cream",
+            'baby powder': "Baby Products / Bathing & Skin Care",
+            'baby soap': "Baby Products / Bathing & Skin Care",
+            'baby bath': "Baby Products / Bathing & Skin Care",
+            'baby shampoo': "Baby Products / Bathing & Skin Care",
+            'baby monitor': "Baby Products / Safety",
+            'baby bouncer': "Baby Products / Gear",
+            'baby swing': "Baby Products / Gear",
+            'high chair': "Baby Products / Feeding / Booster Seats & Highchairs",
+            'feeding chair': "Baby Products / Feeding / Booster Seats & Highchairs",
+            'baby crib': "Baby Products / Nursery / Cribs",
+            'baby cot': "Baby Products / Nursery / Cribs",
+            'baby walker': "Baby Products / Gear",
+            'walking ring': "Baby Products / Gear",
+            'baby rocker': "Baby Products / Gear",
+            'kids scooter': "Baby Products / Gear",
+            'teether': "Baby Products / Baby & Toddler Toys / Teethers",
+            'baby rattle': "Baby Products / Baby & Toddler Toys / Rattles",
+            'baby blanket': "Baby Products / Nursery",
+            'swaddle': "Baby Products / Nursery",
+            'smartphone': "Phones & Tablets / Mobile Phones / Smartphones",
+            'android phone': "Phones & Tablets / Mobile Phones / Smartphones",
+            'mobile phone': "Phones & Tablets / Mobile Phones",
+            'iphone': "Phones & Tablets / Mobile Phones / Smartphones",
+            'phone case': "Phones & Tablets / Accessories / Cases & Sleeves",
+            'phone cover': "Phones & Tablets / Accessories / Cases & Sleeves",
+            'tablet case': "Phones & Tablets / Tablet Accessories",
+            'ipad case': "Phones & Tablets / Tablet Accessories",
+            'screen protector': "Phones & Tablets / Accessories / Screen Protectors",
+            'tempered glass': "Phones & Tablets / Accessories / Screen Protectors",
+            'screen guard': "Phones & Tablets / Accessories / Screen Protectors",
+            'wireless charger': "Phones & Tablets / Accessories / Cables",
+            'qi charger': "Phones & Tablets / Accessories / Cables",
+            'phone holder': "Phones & Tablets / Accessories / Accessory Combo Packs",
+            'car phone holder': "Phones & Tablets / Accessories / Accessory Combo Packs",
+            'phone mount': "Phones & Tablets / Accessories / Accessory Combo Packs",
+            'sim card': "Phones & Tablets / Accessories / SIM-related Accessories",
+            'charging cable': "Phones & Tablets / Accessories / Cables",
+            'type c cable': "Phones & Tablets / Accessories / Cables",
+            'lightning cable': "Phones & Tablets / Accessories / Cables",
+            'data cable': "Phones & Tablets / Accessories / Cables",
+            'landline phone': "Phones & Tablets / Phone & Fax",
+            'cordless phone': "Phones & Tablets / Phone & Fax",
+            'laptop': "Computing / Computers & Accessories / Laptops",
+            'chromebook': "Computing / Computers & Accessories / Laptops",
+            'desktop computer': "Computing / Computers & Accessories",
+            'all in one computer': "Computing / Computers & Accessories",
+            'computer monitor': "Computing / Computers & Accessories / Monitors",
+            'laptop bag': "Computing / Computer Accessories",
+            'laptop sleeve': "Computing / Computer Accessories",
+            'external hdd': "Computing / Computers & Accessories / Data Storage / External Hard Drives",
+            'portable hard drive': "Computing / Computers & Accessories / Data Storage / External Hard Drives",
+            'usb drive': "Computing / Computers & Accessories / Data Storage / USB Flash Drives",
+            'memory stick': "Computing / Computers & Accessories / Data Storage / USB Flash Drives",
+            'memory card': "Computing / Computer Accessories / Memory Cards",
+            'sd card': "Computing / Computer Accessories / Memory Cards",
+            'micro sd': "Computing / Computer Accessories / Memory Cards",
+            'wifi router': "Computing / Computer Accessories / Networking Accessories",
+            'wireless router': "Computing / Computer Accessories / Networking Accessories",
+            'internet router': "Computing / Computer Accessories / Networking Accessories",
+            'usb hub': "Computing / Computer Accessories",
+            'hdmi cable': "Computing / Computer Accessories / Cables & Interconnects",
+            'vga cable': "Computing / Computer Accessories / Cables & Interconnects",
+            'cooling pad': "Computing / Computer Accessories",
+            'laptop cooler': "Computing / Computer Accessories",
+            'docking station': "Computing / Computer Accessories",
+            'ups battery': "Computing / Computer Accessories",
+            'computer headset': "Computing / Computer Accessories / Audio & Video Accessories / Computer Headsets",
+            'computer speaker': "Computing / Computer Accessories / Audio & Video Accessories / Computer Speakers",
+            'computer microphone': "Computing / Computer Accessories / Audio & Video Accessories / Computer Microphones",
+            'webcam': "Computing / Computer Accessories / Audio & Video Accessories / Webcams",
+            'car wash': "Automobile / Car Care / Exterior Care / Car Wash Equipment",
+            'car shampoo': "Automobile / Car Care / Exterior Care / Car Wash Equipment",
+            'car wax': "Automobile / Car Care / Exterior Care / Car Polishes & Waxes",
+            'car polish': "Automobile / Car Care / Exterior Care / Car Polishes & Waxes",
+            'car seat cover': "Automobile / Interior Accessories",
+            'auto seat cover': "Automobile / Interior Accessories",
+            'car floor mat': "Automobile / Interior Accessories",
+            'car cover': "Automobile / Exterior Accessories",
+            'car air freshener': "Automobile / Interior Accessories / Air Fresheners",
+            'car charger': "Automobile / Car Electronics & Accessories",
+            'dash cam': "Automobile / Car Electronics & Accessories",
+            'dashboard camera': "Automobile / Car Electronics & Accessories",
+            'tyre': "Automobile / Tyre & Rim",
+            'tire': "Automobile / Tyre & Rim",
+            'wheel cover': "Automobile / Exterior Accessories",
+            'hub cap': "Automobile / Exterior Accessories",
+            'brake pad': "Automobile / Replacement Parts",
+            'brake disc': "Automobile / Replacement Parts",
+            'transmission fluid': "Automobile / Oils & Fluids",
+            'gear oil': "Automobile / Oils & Fluids",
+            'car battery': "Automobile / Power & Battery",
+            'car radio': "Automobile / Car Electronics & Accessories",
+            'head unit': "Automobile / Car Electronics & Accessories",
+            'car stereo': "Automobile / Car Electronics & Accessories",
+            'car light': "Automobile / Lights & Lighting Accessories",
+            'headlight': "Automobile / Lights & Lighting Accessories",
+            'taillight': "Automobile / Lights & Lighting Accessories",
+            'headlamp': "Automobile / Lights & Lighting Accessories",
+            'parking sensor': "Automobile / Car Electronics & Accessories",
+            'reverse sensor': "Automobile / Car Electronics & Accessories",
+            'car jack': "Automobile / Tools & Equipment",
+            'hydraulic jack': "Automobile / Tools & Equipment",
+            'tire inflator': "Automobile / Tools & Equipment",
+            'air compressor': "Automobile / Tools & Equipment",
+            'car alarm': "Automobile / Car Electronics & Accessories",
+            'steering lock': "Automobile / Car Electronics & Accessories",
+            'motorcycle': "Automobile / Motorcycle & Powersports",
+            'motorbike': "Automobile / Motorcycle & Powersports",
+            'car sun shade': "Automobile / Interior Accessories",
+            'windshield shade': "Automobile / Interior Accessories",
+            'motorcycle helmet': "Automobile / Motorcycle & Powersports",
+            'sanitary pad': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'menstrual pad': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'panty liner': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'menstrual cup': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'menstrual disc': "Health & Beauty / Beauty & Personal Care / Personal Care / Feminine Hygiene",
+            'welding machine': "Industrial & Scientific / Industrial Electrical",
+            'welding rod': "Industrial & Scientific / Raw Materials",
+            'angle grinder': "Industrial & Scientific / Industrial Power & Hand Tools",
+            'circular saw': "Industrial & Scientific / Cutting Tools / Metal Cutting Circular Saws",
+            'jigsaw machine': "Industrial & Scientific / Cutting Tools",
+            'electric drill': "Home & Office / Tools & Home Improvement / Power Tools / Drills",
+            'cordless drill': "Home & Office / Tools & Home Improvement / Power Tools / Drills",
+            'power drill': "Home & Office / Tools & Home Improvement / Power Tools / Drills",
+            'impact drill': "Home & Office / Tools & Home Improvement / Power Tools / Drills",
+            'hammer drill': "Home & Office / Tools & Home Improvement / Power Tools / Drills",
+            'screwdriver set': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'hex key': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'allen key': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'adjustable wrench': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'pipe wrench': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'bolt cutter': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'hacksaw': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'sandpaper': "Home & Office / Tools & Home Improvement / Building Supplies",
+            'paint brush': "Home & Office / Tools & Home Improvement / Paint, Wall Treatments & Supplies",
+            'paint roller': "Home & Office / Tools & Home Improvement / Paint, Wall Treatments & Supplies",
+            'wall paint': "Home & Office / Tools & Home Improvement / Paint, Wall Treatments & Supplies",
+            'wall putty': "Home & Office / Tools & Home Improvement / Paint, Wall Treatments & Supplies",
+            'cable tie': "Industrial & Scientific / Industrial Hardware",
+            'zip tie': "Industrial & Scientific / Industrial Hardware",
+            'safety vest': "Industrial & Scientific / Occupational Health & Safety Products",
+            'reflective vest': "Industrial & Scientific / Occupational Health & Safety Products",
+            'hard hat': "Industrial & Scientific / Occupational Health & Safety Products",
+            'safety helmet': "Industrial & Scientific / Occupational Health & Safety Products",
+            'work gloves': "Industrial & Scientific / Occupational Health & Safety Products",
+            'safety gloves': "Industrial & Scientific / Occupational Health & Safety Products",
+            'safety boots': "Industrial & Scientific / Occupational Health & Safety Products",
+            'fire extinguisher': "Industrial & Scientific / Occupational Health & Safety Products",
+            'first aid': "Health & Beauty / Medical Supplies & Equipment / First Aid",
+            'duct tape': "Industrial & Scientific / Tapes, Adhesives & Sealants",
+            'masking tape': "Industrial & Scientific / Tapes, Adhesives & Sealants",
+            'measuring tape': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'tape measure': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'spirit level': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'toolbox': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'tool kit': "Home & Office / Tools & Home Improvement / Hand Tools",
+            'extension cord': "Home & Office / Tools & Home Improvement / Electrical",
+            'electrical wire': "Home & Office / Tools & Home Improvement / Electrical",
+            'circuit breaker': "Home & Office / Tools & Home Improvement / Electrical",
+            'socket': "Home & Office / Tools & Home Improvement / Electrical",
+            'water pump': "Garden & Outdoors / Gardening & Lawn Care",
+            'submersible pump': "Garden & Outdoors / Gardening & Lawn Care",
+            'water dispenser': "Home & Office / Appliances / Small Appliances",
+            'standing fan': "Home & Office / Appliances / Small Appliances",
+            'ceiling fan': "Home & Office / Appliances / Small Appliances",
+            'exhaust fan': "Home & Office / Appliances / Small Appliances",
+            'air cooler': "Home & Office / Appliances / Small Appliances",
+            'women shoes': "Fashion / Womens Fashion / Shoes",
+            'ladies shoes': "Fashion / Womens Fashion / Shoes",
+            'women heels': "Fashion / Womens Fashion / Shoes / Heels",
+            'ladies heels': "Fashion / Womens Fashion / Shoes / Heels",
+            'women wedge': "Fashion / Womens Fashion / Shoes / Wedges",
+            'ladies wedge': "Fashion / Womens Fashion / Shoes / Wedges",
+            'women flats': "Fashion / Womens Fashion / Shoes / Flats",
+            'ladies flats': "Fashion / Womens Fashion / Shoes / Flats",
+            'women boots': "Fashion / Womens Fashion / Shoes / Boots",
+            'ladies boots': "Fashion / Womens Fashion / Shoes / Boots",
+            'women sneakers': "Fashion / Womens Fashion / Shoes / Sneakers",
+            'ladies sneakers': "Fashion / Womens Fashion / Shoes / Sneakers",
+            'women sandals': "Fashion / Womens Fashion / Shoes / Sandals",
+            'ladies sandals': "Fashion / Womens Fashion / Shoes / Sandals",
+            'women slippers': "Fashion / Womens Fashion / Shoes / Slippers",
+            'ladies slippers': "Fashion / Womens Fashion / Shoes / Slippers",
+            'ladies belt': "Fashion / Womens Fashion / Accessories / Belts",
+            'women belt': "Fashion / Womens Fashion / Accessories / Belts",
+            'ladies hat': "Fashion / Womens Fashion / Accessories / Hats & Caps",
+            'women hat': "Fashion / Womens Fashion / Accessories / Hats & Caps",
+            'ladies scarf': "Fashion / Womens Fashion / Accessories / Scarves & Wraps",
+            'women scarf': "Fashion / Womens Fashion / Accessories / Scarves & Wraps",
+            'ladies wallet': "Fashion / Womens Fashion / Accessories / Wallets, Card Cases & Money Organizers",
+            'women wallet': "Fashion / Womens Fashion / Accessories / Wallets, Card Cases & Money Organizers",
+            'ladies sunglasses': "Fashion / Womens Fashion / Accessories / Sunglasses & Eyewear Accessories",
+            'women sunglasses': "Fashion / Womens Fashion / Accessories / Sunglasses & Eyewear Accessories",
+            'women watch': "Fashion / Watches & Sunglasses / Women's Watches",
+            'ladies watch': "Fashion / Watches & Sunglasses / Women's Watches",
+            'martial arts': "Sporting Goods / Sports & Fitness / Exercise & Fitness",
+            'boxing bag': "Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment",
+            'punching bag': "Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment",
+            'boxing gloves': "Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment",
+            'gym bag': "Sporting Goods / Sports & Fitness / Exercise & Fitness",
+            'sport bottle': "Sporting Goods / Outdoor Recreation / Accessories / Sports Water Bottles",
+            'water bottle sport': "Sporting Goods / Outdoor Recreation / Accessories / Sports Water Bottles",
+            'running shoe': "Fashion / Men's Fashion / Shoes / Athletic",
+            'football boot': "Sporting Goods / Sports & Fitness / Team Sports / Football / Footwear",
+            'jersey': "Sporting Goods / Sports & Fitness / Team Sports / Football / Clothing",
+            'fitness tracker': "Electronics / Wearable Technology",
+            'smart band': "Electronics / Wearable Technology",
+            'step counter': "Electronics / Wearable Technology",
+            'pedometer': "Electronics / Wearable Technology",
+            'book': 'Books, Movies and Music / Bestselling Books',
+            'self help': 'Books, Movies and Music / Motivational & Self-Help',
+            'law of power': 'Books, Movies and Music / Motivational & Self-Help',
+            'coaches pad': "Sporting Goods / Sports & Fitness / Team Sports / Wrestling / Singlets",
+            'yoga mat': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Accessories',
+            'exercise mat': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Accessories',
+            'dumbbell': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Dumbbells',
+            'dumbbells': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Dumbbells',
+            'barbell': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'treadmill': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Cardio Training',
+            'exercise bike': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Cardio Training',
+            'spin bike': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Cardio Training',
+            'stationary bike': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Cardio Training',
+            'jump rope': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Accessories',
+            'skipping rope': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Accessories',
+            'pull-up bar': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'chin-up bar': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'ab roller': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Core & Abdominal Trainers',
+            'ab wheel': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Core & Abdominal Trainers',
+            'resistance band': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'exercise band': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'kettlebell': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Kettlebells',
+            'gym gloves': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Clothing',
+            'weightlifting gloves': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Clothing',
+            'soccer ball': 'Sporting Goods / Sports & Fitness / Team Sports / Soccer / Balls',
+            'football boots': 'Sporting Goods / Sports & Fitness / Team Sports / Football / Footwear',
+            'football jersey': 'Sporting Goods / Sports & Fitness / Team Sports / Football / Clothing',
+            'basketball hoop': 'Sporting Goods / Sports & Fitness / Team Sports / Basketball / Accessories',
+            'basketball jersey': 'Sporting Goods / Sports & Fitness / Team Sports / Basketball / Clothing',
+            'volleyball': 'Sporting Goods / Sports & Fitness / Team Sports / Volleyball',
+            'tennis racket': 'Sporting Goods / Racquet Sports',
+            'badminton racket': 'Sporting Goods / Racquet Sports / Badminton / Kit',
+            'badminton set': 'Sporting Goods / Racquet Sports / Badminton / Kit',
+            'table tennis': 'Sporting Goods / Sports & Fitness / Team Sports / Table Tennis',
+            'ping pong': 'Sporting Goods / Sports & Fitness / Team Sports / Table Tennis',
+            'boxing gloves': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'punching bag': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment',
+            'swimming goggles': 'Sporting Goods / Sports & Fitness / Team Sports / Swimming / Goggles',
+            'swim goggles': 'Sporting Goods / Sports & Fitness / Team Sports / Swimming / Goggles',
+            'swimsuit': 'Sporting Goods / Sports & Fitness / Team Sports / Swimming / Swimwear',
+            'bikini': 'Sporting Goods / Sports & Fitness / Team Sports / Swimming / Swimwear',
+            'cycling helmet': 'Sporting Goods / Outdoor & Adventure / Cycling',
+            'bike helmet': 'Sporting Goods / Outdoor & Adventure / Cycling',
+            'bicycle': 'Sporting Goods / Outdoor & Adventure / Cycling',
+            'skateboard': 'Sporting Goods / Outdoor Recreation',
+            'scooter': 'Sporting Goods / Outdoor Recreation',
+            'golf club': 'Sporting Goods / Sports & Fitness / Individual Sports / Golf',
+            'golf ball': 'Sporting Goods / Sports & Fitness / Individual Sports / Golf',
+            'fishing rod': 'Sporting Goods / Outdoor Recreation',
+            'fishing reel': 'Sporting Goods / Outdoor Recreation',
+            'camping tent': 'Sporting Goods / Outdoor Recreation',
+            'sleeping bag': 'Sporting Goods / Outdoor Recreation',
+            'knee pad': 'Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports',
+            'knee brace': 'Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports',
+            'knee support': 'Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports',
+            'ankle support': 'Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports',
+            'wrist support': 'Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports',
+            'elbow support': 'Health & Beauty / Medical Supplies & Equipment / Braces, Splints & Supports',
+            'sports jersey': 'Sporting Goods / Sports & Fitness / Team Sports / Football / Clothing',
+            'acoustic guitar': 'Musical Instruments / Guitars / Acoustic Guitars',
+            'electric guitar': 'Musical Instruments / Guitars',
+            'guitar': 'Musical Instruments / Guitars',
+            'guitar string': 'Musical Instruments / Instrument Accessories / Strings',
+            'guitar pick': 'Musical Instruments / Instrument Accessories',
+            'digital piano': 'Musical Instruments / Keyboards & MIDI / Pianos',
+            'piano': 'Musical Instruments / Keyboards & MIDI / Pianos',
+            'keyboard piano': 'Musical Instruments / Keyboards & MIDI',
+            'organ': 'Musical Instruments / Keyboards & MIDI / Organs',
+            'drum set': 'Musical Instruments / Drums & Percussion',
+            'drum kit': 'Musical Instruments / Drums & Percussion',
+            'drums': 'Musical Instruments / Drums & Percussion',
+            'violin': 'Musical Instruments / Stringed Instruments',
+            'flute': 'Musical Instruments / Wind & Woodwind Instruments',
+            'trumpet': 'Musical Instruments / Band & Orchestra',
+            'saxophone': 'Musical Instruments / Wind & Woodwind Instruments',
+            'trombone': 'Musical Instruments / Band & Orchestra',
+            'microphone stand': 'Musical Instruments / Microphones & Accessories',
+            'guitar amplifier': 'Musical Instruments / Amplifiers & Effects',
+            'ukulele': 'Musical Instruments / Ukuleles, Mandolins & Banjos',
+            'djembe': 'Musical Instruments / Drums & Percussion',
+            'cajon': 'Musical Instruments / Drums & Percussion',
+            'music stand': 'Musical Instruments / Instrument Accessories',
+            'dj controller': 'Musical Instruments / Electronic Music, DJ & Karaoke',
+            'karaoke machine': 'Musical Instruments / Electronic Music, DJ & Karaoke',
+            'bass guitar': 'Musical Instruments / Bass Guitars',
+            'playstation 5': 'Gaming / Playstation / PlayStation 5',
+            'ps5': 'Gaming / Playstation / PlayStation 5',
+            'ps4': 'Gaming / Playstation / PlayStation 4',
+            'playstation 4': 'Gaming / Playstation / PlayStation 4',
+            'ps3': 'Gaming / Playstation / PlayStation 3',
+            'xbox series x': 'Gaming / Xbox',
+            'xbox one': 'Gaming / Xbox / Xbox One',
+            'xbox 360': 'Gaming / Xbox / Xbox 360',
+            'nintendo switch': 'Gaming / Nintendo / Nintendo Switch',
+            'nintendo 3ds': 'Gaming / Nintendo / Nintendo 3DS',
+            'gaming console': 'Gaming / Other Gaming Systems',
+            'game controller': 'Gaming / PC Gaming / Accessories / Controllers',
+            'gaming controller': 'Gaming / PC Gaming / Accessories / Controllers',
+            'joystick': 'Gaming / PC Gaming / Accessories / Controllers',
+            'gaming keyboard': 'Gaming / PC Gaming / Accessories / Gaming Keyboards',
+            'gaming mouse': 'Gaming / PC Gaming / Accessories / Gaming Mice',
+            'gaming headset': 'Gaming / PC Gaming / Accessories',
+            'gaming chair': 'Gaming / PC Gaming / Accessories',
+            'pc game': 'Gaming / PC Gaming / Games',
+            'video game': 'Gaming / PC Gaming / Games',
+            'dog food': 'Pet Supplies / Dogs / Food',
+            'dry dog food': 'Pet Supplies / Dogs / Food / Dry',
+            'cat food': 'Pet Supplies / Cats / Food',
+            'dog treat': 'Pet Supplies / Dogs / Treats',
+            'cat treat': 'Pet Supplies / Cats / Treats',
+            'dog collar': 'Pet Supplies / Dogs / Collars & Tags',
+            'pet collar': 'Pet Supplies / Dogs / Collars & Tags',
+            'dog leash': 'Pet Supplies / Dogs / Leashes & Tethers',
+            'pet leash': 'Pet Supplies / Dogs / Leashes & Tethers',
+            'pet bed': 'Pet Supplies / Dogs / Beds & Furniture',
+            'dog bed': 'Pet Supplies / Dogs / Beds & Furniture',
+            'cat bed': 'Pet Supplies / Cats / Beds & Furniture',
+            'cat litter': 'Pet Supplies / Cats / Litter & Housebreaking',
+            'aquarium': 'Pet Supplies / Fish & Aquatic Pets / Aquarium Lights',
+            'fish tank': 'Pet Supplies / Fish & Aquatic Pets',
+            'bird cage': 'Pet Supplies / Birds / Cages',
+            'pet shampoo': 'Pet Supplies / Dogs / Grooming',
+            'dog shampoo': 'Pet Supplies / Dogs / Grooming',
+            'pet toy': 'Pet Supplies / Dogs / Toys',
+            'dog toy': 'Pet Supplies / Dogs / Toys',
+            'cat toy': 'Pet Supplies / Cats / Toys',
+            'cat litter box': 'Pet Supplies / Cats / Litter & Housebreaking',
+            'pet carrier': 'Pet Supplies / Dogs / Travel',
+            'dog carrier': 'Pet Supplies / Dogs / Travel',
+            'bird food': 'Pet Supplies / Birds / Food',
+            'hamster cage': 'Pet Supplies / Small Animals',
+            'reptile': 'Pet Supplies / Reptiles & Amphibians',
+            'garden hose': 'Garden & Outdoors / Gardening & Lawn Care',
+            'water hose': 'Garden & Outdoors / Gardening & Lawn Care',
+            'lawn mower': 'Garden & Outdoors / Outdoor Power Tools',
+            'grass cutter': 'Garden & Outdoors / Outdoor Power Tools',
+            'flower pot': 'Garden & Outdoors / Gardening & Lawn Care',
+            'plant pot': 'Garden & Outdoors / Gardening & Lawn Care',
+            'planter': 'Garden & Outdoors / Gardening & Lawn Care',
+            'watering can': 'Garden & Outdoors / Gardening & Lawn Care',
+            'garden sprayer': 'Garden & Outdoors / Gardening & Lawn Care',
+            'garden fork': 'Garden & Outdoors / Gardening & Lawn Care',
+            'garden shovel': 'Garden & Outdoors / Gardening & Lawn Care',
+            'garden gloves': 'Garden & Outdoors / Gardening & Lawn Care',
+            'patio chair': 'Garden & Outdoors / Patio Furniture & Accessories',
+            'garden chair': 'Garden & Outdoors / Patio Furniture & Accessories',
+            'outdoor chair': 'Garden & Outdoors / Patio Furniture & Accessories',
+            'patio table': 'Garden & Outdoors / Patio Furniture & Accessories',
+            'garden table': 'Garden & Outdoors / Patio Furniture & Accessories',
+            'bbq grill': 'Garden & Outdoors / Grills & Outdoor Cooking / Grills',
+            'charcoal grill': 'Garden & Outdoors / Grills & Outdoor Cooking / Grills / Charcoal Grills',
+            'gas grill': 'Garden & Outdoors / Grills & Outdoor Cooking / Grills',
+            'generator': 'Garden & Outdoors / Generators & Portable Power / Generators',
+            'portable generator': 'Garden & Outdoors / Generators & Portable Power / Generators',
+            'swimming pool': 'Garden & Outdoors / Pools, Hot Tubs & Supplies',
+            'inflatable pool': 'Garden & Outdoors / Pools, Hot Tubs & Supplies',
+            'hammock': 'Garden & Outdoors / Patio Furniture & Accessories',
+            'gazebo': 'Garden & Outdoors / Patio Furniture & Accessories / Canopies, Gazebos & Pergolas',
+            'canopy': 'Garden & Outdoors / Patio Furniture & Accessories / Canopies, Gazebos & Pergolas',
+            'fertilizer': 'Garden & Outdoors / Farm & Ranch',
+            'compost': 'Garden & Outdoors / Farm & Ranch',
+            'insecticide': 'Garden & Outdoors / Farm & Ranch',
+            'pesticide': 'Garden & Outdoors / Farm & Ranch',
+            'outdoor storage': 'Garden & Outdoors / Outdoor Storage',
+            'garden light': 'Garden & Outdoors / Outdoor Décor',
+            'solar light': 'Garden & Outdoors / Outdoor Décor',
+            'snow blower': 'Garden & Outdoors / Snow Removal',
+            'laundry powder': 'Grocery / Household Cleaning',
+            'washing powder': 'Grocery / Household Cleaning',
+            'dishwashing liquid': 'Grocery / Dishwashing / Scouring Pads',
+            'dish soap': 'Grocery / Dishwashing',
+            'scouring pad': 'Grocery / Dishwashing / Scouring Pads',
+            'scrubber': 'Grocery / Dishwashing / Scouring Pads',
+            'floor cleaner': 'Grocery / Household Cleaning',
+            'toilet cleaner': 'Grocery / Household Cleaning',
+            'disinfectant': 'Grocery / Household Cleaning',
+            'bleach': 'Grocery / Household Cleaning',
+            'air freshener spray': 'Grocery / Air Fresheners / Spray',
+            'electric air freshener': 'Grocery / Air Fresheners / Electric',
+            'garbage bag': 'Grocery / Paper & Plastic',
+            'trash bag': 'Grocery / Paper & Plastic',
+            'disposable napkin': 'Grocery / Paper & Plastic / Disposable Napkins',
+            'paper towel': 'Grocery / Paper & Plastic',
+            'cigar': 'Grocery / Tobacco-Related Products',
+            'cigarette': 'Grocery / Tobacco-Related Products',
+            'ashtray': 'Grocery / Tobacco-Related Products / Ashtrays',
+            'novel': 'Books, Movies and Music / Fiction / Adult Fiction',
+            'fiction book': 'Books, Movies and Music / Fiction / Adult Fiction',
+            'comic book': 'Books, Movies and Music / Fiction / Comics & Graphic Novels',
+            'bible': 'Books, Movies and Music / Religion / Christian Books & Bibles',
+            'quran': 'Books, Movies and Music / Religion / Islamic Books',
+            'islamic book': 'Books, Movies and Music / Religion / Islamic Books',
+            'christian book': 'Books, Movies and Music / Religion / Christian Books & Bibles',
+            'motivational book': 'Books, Movies and Music / Motivational & Self-Help',
+            'textbook': 'Books, Movies and Music / Education & Learning',
+            "children's book": 'Books, Movies and Music / Fiction / Children & Teens',
+            'kids book': 'Books, Movies and Music / Fiction / Children & Teens',
+            'dvd movie': 'Books, Movies and Music / DVDs / Comedy',
+            'notebook': 'Books, Movies and Music / Journals & Planners',
+            'journal': 'Books, Movies and Music / Journals & Planners',
+            'planner': 'Books, Movies and Music / Journals & Planners',
+            'diary': 'Books, Movies and Music / Journals & Planners',
+            'magazine': 'Books, Movies and Music / Magazines',
+            'school supplies': 'Books, Movies and Music / Stationery / School Supplies',
+            'soldering iron': 'Industrial & Scientific / Industrial Electrical',
+            'multimeter': 'Industrial & Scientific / Test, Measure & Inspect',
+            'voltmeter': 'Industrial & Scientific / Test, Measure & Inspect',
+            'cable tie': 'Industrial & Scientific / Industrial Hardware',
+            'zip tie': 'Industrial & Scientific / Industrial Hardware',
+            'safety vest': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'reflective vest': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'hard hat': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'safety helmet': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'work gloves': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'safety gloves': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'safety boots': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'fire extinguisher': 'Industrial & Scientific / Occupational Health & Safety Products',
+            'duct tape': 'Industrial & Scientific / Tapes, Adhesives & Sealants',
+            'masking tape': 'Industrial & Scientific / Tapes, Adhesives & Sealants',
+            'measuring tape': 'Industrial & Scientific / Test, Measure & Inspect',
+            'spirit level': 'Industrial & Scientific / Industrial Power & Hand Tools',
+            'hand drill': 'Home & Office / Tools & Home Improvement / Power Tools',
+            'electric drill': 'Home & Office / Tools & Home Improvement / Power Tools',
+            'cordless drill': 'Home & Office / Tools & Home Improvement / Power Tools',
+            'screwdriver set': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            'spanner': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            'wrench': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            'hammer': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            'saw blade': 'Industrial & Scientific / Cutting Tools / Band Saw Blades',
+            'pliers': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            'tool box': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            'tool kit': 'Home & Office / Tools & Home Improvement / Hand Tools',
+            '3d printer': 'Industrial & Scientific / Additive Manufacturing Products / 3D Printers',
+            '3d scanner': 'Industrial & Scientific / Additive Manufacturing Products / 3D Scanners',
+            'lab coat': 'Fashion / Uniforms, Work & Safety / Clothing / Medical',
+            'lab equipment': 'Industrial & Scientific / Lab & Scientific Products',
+            'beaker': 'Industrial & Scientific / Lab & Scientific Products / Glassware & Labware / Beakers',
+            'test tube': 'Industrial & Scientific / Lab & Scientific Products / Glassware & Labware',
+            'pipette': 'Industrial & Scientific / Lab & Scientific Products',
+            'android phone': 'Phones & Tablets / Mobile Phones / Smartphones / Android Phones',
+            'ios phone': 'Phones & Tablets / Mobile Phones / Smartphones / iOS Phones',
+            'sim card': 'Phones & Tablets / Mobile Phones / Cell Phones / SIM Cards',
+            'ipad': 'Phones & Tablets / Tablets',
+            'screen protector': 'Phones & Tablets / Accessories / Screen Protectors',
+            'tempered glass': 'Phones & Tablets / Accessories / Screen Protectors',
+            'screen guard': 'Phones & Tablets / Accessories / Screen Protectors',
+            'phone holder': 'Phones & Tablets / Accessories',
+            'car phone mount': 'Phones & Tablets / Accessories',
+            'phone stand': 'Phones & Tablets / Accessories',
+            'bluetooth headset': 'Phones & Tablets / Accessories / Bluetooth Headsets',
+            'phone cable': 'Phones & Tablets / Accessories / Cables',
+            'type c cable': 'Phones & Tablets / Accessories / Cables',
+            'lightning cable': 'Phones & Tablets / Accessories / Cables',
+            'armband phone': 'Phones & Tablets / Accessories / Armband',
+            'caller id': 'Phones & Tablets / Accessories / Caller ID Displays',
+            'laptop bag': 'Computing / Computer Accessories',
+            'laptop sleeve': 'Computing / Computer Accessories',
+            'laptop stand': 'Computing / Computer Accessories',
+            'monitor arm': 'Computing / Computer Accessories',
+            'network switch': 'Computing / Computer Accessories / Networking Accessories',
+            'ethernet cable': 'Computing / Computer Accessories / Networking Accessories',
+            'wifi adapter': 'Computing / Computer Accessories / Networking Accessories',
+            'desktop computer': 'Computing / Computers & Accessories',
+            'all in one pc': 'Computing / Computers & Accessories',
+            'server rack': 'Computing / Computers & Accessories / Servers',
+            'graphics card': 'Computing / Computers & Accessories / Computer Components',
+            'cpu processor': 'Computing / Computers & Accessories / Computer Components / CPU Processors',
+            'ram memory': 'Computing / Computers & Accessories / Computer Components',
+            'computer case': 'Computing / Computers & Accessories / Computer Components / Computer Cases',
+            'computer speaker': 'Computing / Computer Accessories / Audio & Video Accessories / Computer Speakers',
+            'computer headset': 'Computing / Computer Accessories / Audio & Video Accessories / Computer Headsets',
+            'car charger': 'Automobile / Car Electronics & Accessories',
+            'car seat cover': 'Automobile / Interior Accessories',
+            'car floor mat': 'Automobile / Interior Accessories',
+            'tire': 'Automobile / Tyre & Rim',
+            'tyre': 'Automobile / Tyre & Rim',
+            'rim': 'Automobile / Tyre & Rim',
+            'car battery': 'Automobile / Power & Battery',
+            'car wax': 'Automobile / Car Care',
+            'car polish': 'Automobile / Car Care',
+            'car jack': 'Automobile / Tools & Equipment',
+            'hydraulic jack': 'Automobile / Tools & Equipment',
+            'parking sensor': 'Automobile / Car Electronics & Accessories',
+            'car stereo': 'Automobile / Car Electronics & Accessories',
+            'car radio': 'Automobile / Car Electronics & Accessories',
+            'head unit': 'Automobile / Car Electronics & Accessories',
+            'headlight': 'Automobile / Lights & Lighting Accessories',
+            'taillight': 'Automobile / Lights & Lighting Accessories',
+            'led car light': 'Automobile / Lights & Lighting Accessories',
+            'car spoiler': 'Automobile / Exterior Accessories',
+            'side mirror': 'Automobile / Exterior Accessories',
+            'windshield': 'Automobile / Replacement Parts',
+            'brake pad': 'Automobile / Replacement Parts',
+            'clutch': 'Automobile / Replacement Parts',
+            'motorcycle helmet': 'Automobile / Motorcycle & Powersports',
+            'motorcycle': 'Automobile / Motorcycle & Powersports',
+            'rv accessory': 'Automobile / RV Parts & Accessories',
+            'stuffed animal': 'Toys & Games / Stuffed Animals & Plush Toys',
+            'plush toy': 'Toys & Games / Stuffed Animals & Plush Toys / Plush Figures',
+            'teddy bear': 'Toys & Games / Stuffed Animals & Plush Toys',
+            'plushie': 'Toys & Games / Stuffed Animals & Plush Toys',
+            'rc car': 'Toys & Games / Toy Remote Control & Play Vehicles',
+            'remote control car': 'Toys & Games / Toy Remote Control & Play Vehicles',
+            'toy car': 'Toys & Games / Toy Remote Control & Play Vehicles',
+            'die-cast car': 'Toys & Games / Toy Remote Control & Play Vehicles',
+            'slime': 'Toys & Games / Arts & Crafts',
+            'kinetic sand': 'Toys & Games / Arts & Crafts',
+            'water gun': 'Toys & Games / Sports & Outdoor Play',
+            'nerf gun': 'Toys & Games / Sports & Outdoor Play',
+            'jigsaw puzzle': 'Toys & Games / Puzzles',
+            'card game': 'Toys & Games / Games / Card Games',
+            'board game': 'Toys & Games / Games / Board Games',
+            'chess': 'Toys & Games / Games',
+            'checkers': 'Toys & Games / Games / Board Games',
+            'ludo': 'Toys & Games / Games / Board Games',
+            'scrabble': 'Toys & Games / Games / Board Games',
+            'dollhouse': 'Toys & Games / Dolls & Accessories / Dollhouses',
+            'barbie': 'Toys & Games / Dolls & Accessories / Dolls',
+            'action figure': 'Toys & Games / Action Figures & Statues / Action Figures',
+            'kids drawing': 'Toys & Games / Arts & Crafts',
+            'art set': 'Toys & Games / Arts & Crafts / Art & Craft Sets',
+            'educational toy': 'Toys & Games / Learning & Education',
+            'learning toy': 'Toys & Games / Learning & Education',
+            'play tent': 'Toys & Games / Dress Up & Pretend Play',
+            'dress up costume': 'Toys & Games / Dress Up & Pretend Play',
+            'party supplies': 'Toys & Games / Party Supplies',
+            'balloon': 'Toys & Games / Party Supplies',
+            'men jeans': "Fashion / Men's Fashion / Clothing / Jeans",
+            'men shirt': "Fashion / Men's Fashion / Clothing / Shirts",
+            'men shorts': "Fashion / Men's Fashion / Clothing / Shorts",
+            'men trouser': "Fashion / Men's Fashion / Clothing / Trousers",
+            'men suit': "Fashion / Men's Fashion / Clothing / Suits",
+            'men jacket': "Fashion / Men's Fashion / Clothing / Jackets & Coats",
+            'men hoodie': "Fashion / Men's Fashion / Clothing / Hoodies & Sweatshirts",
+            'men sweatshirt': "Fashion / Men's Fashion / Clothing / Hoodies & Sweatshirts",
+            'men cap': "Fashion / Men's Fashion / Accessories / Hats & Caps",
+            'men hat': "Fashion / Men's Fashion / Accessories / Hats & Caps",
+            'men belt': "Fashion / Men's Fashion / Accessories / Belts",
+            'men tie': "Fashion / Men's Fashion / Accessories / Ties",
+            'men boxer': "Fashion / Men's Fashion / Underwear / Boxers",
+            'men underwear': "Fashion / Men's Fashion / Underwear",
+            'men socks': "Fashion / Men's Fashion / Socks & Hosiery",
+            'girls dress': "Fashion / Kids Fashion / Girls / Clothing",
+            'boys shirt': "Fashion / Kids Fashion / Boys / Clothing",
+            'kids clothing': "Fashion / Kids Fashion / Boys / Clothing",
+            'children clothing': "Fashion / Kids Fashion / Boys / Clothing",
+            'kids cap': "Fashion / Kids Fashion / Boys / Accessories",
+            'school uniform': "Fashion / Kids Fashion / Boys / School Uniforms",
+            'traditional wear': "Fashion / Traditional & Cultural Wear / African",
+            'african wear': "Fashion / Traditional & Cultural Wear / African",
+            'agbada': "Fashion / Traditional & Cultural Wear / African",
+            'ankara fabric': "Fashion / Fabrics / Women's Fabric / Fabrics",
+            'aso-oke': "Fashion / Fabrics / Women's Fabric / Aso oke",
+            'mens fabric': "Fashion / Fabrics / Men's Fabric",
+            'scrub': "Fashion / Uniforms, Work & Safety / Clothing / Medical",
+            'nurse uniform': "Fashion / Uniforms, Work & Safety / Clothing / Medical",
+            'medical uniform': "Fashion / Uniforms, Work & Safety / Clothing / Medical",
+            'chef uniform': "Fashion / Uniforms, Work & Safety / Clothing / Food Service",
+            'military uniform': "Fashion / Uniforms, Work & Safety / Clothing / Military",
+            'women bundle': "Fashion / Multi-Pack / Women's Bundles / Women's Clothing Bundle",
+            'men bundle': "Fashion / Multi-Pack / Men's Bundles / Men's Clothing Bundle",
+        }
+        
+        brand_mappings = {
+            'eucerin': 'Health & Beauty / Beauty & Personal Care / Personal Care / Skin Care / Face / Cleansers / Creams & Lotions / Creams',
+            'bardefu': 'Home & Office / Home & Kitchen / Kitchen & Dining / Small Appliances / Blenders',
+            'samsu': 'Health & Beauty / Vitamins & Dietary Supplements / Supplements / Fish Oil',
+            'maxman': 'Health & Beauty / Sexual Wellness / Sexual Enhancers',
+            'vigor': 'Health & Beauty / Sexual Wellness / Sexual Enhancers',
+            'pigeon': 'Fashion / Watches / Wrist Watches',
+            'tre-en-en': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Kettlebells',
+            'tianshi': 'Health & Beauty / Sports Nutrition / Multivitamins',
+            'shine': 'Automobile / Paint & Paint Supplies / Car Wax & Polish',
+            'iron': 'Sporting Goods / Exercise & Fitness / Strength Training / Ab Equipment',
+            'apple': 'Phones & Tablets / Accessories / Cases & Sleeves',
+            'galaxy': 'Phones & Tablets / Accessories / Cases & Sleeves',
+            'iphone': 'Phones & Tablets / Accessories / Cases & Sleeves',
+            'nova': 'Health & Beauty / Beauty & Personal Care / Personal Care / Hair Care / Hair Styling Tools',
+            'pop': 'Phones & Tablets / Cell Phones / Smartphones',
+            'sriracha': 'Grocery / Condiments / Sauces / Hot Sauces',
+            'olamat': 'Grocery / Snacks / Nuts & Seeds',
+            'kuli': 'Grocery / Snacks / Nuts & Seeds',
+            'ab roller': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Core & Abdominal Trainers',
+            'ab-wheel': 'Sporting Goods / Sports & Fitness / Exercise & Fitness / Strength Training Equipment / Core & Abdominal Trainers',
+            'domino': 'Toys & Games / Board Games / Dominoes',
+            'tapis': 'Home & Office / Home & Kitchen / Home Decor / Area Rugs, Runners & Pads',
+        }
+        
+        keyword_mapping.update(product_type_mappings)
+        keyword_mapping.update(brand_mappings)
+        
+        return keyword_mapping
+    
+    def get_category_for_product(self, product_name, keyword_mapping, categories_list):
+        if pd.isna(product_name) or not isinstance(product_name, str):
+            return categories_list[0] if categories_list else "Uncategorized"
+        
+        product_lower = product_name.lower()
+        keywords = self.extract_keywords(product_name)
+        
+        for keyword, mapped_category in keyword_mapping.items():
+            if keyword in product_lower:
+                mapped_lower = mapped_category.lower()
+                
+                for cat in categories_list:
+                    cat_lower = cat.lower()
+                    if mapped_lower == cat_lower:
+                        return cat
+                
+                parts = mapped_lower.split('/')
+                last_part = parts[-1].strip() if parts else ''
+                
+                if last_part and len(last_part) > 3:
+                    for cat in categories_list:
+                        cat_lower = cat.lower()
+                        if last_part in cat_lower and mapped_lower.split('/')[0] in cat_lower:
+                            return cat
+                    last_part_words = [w.strip() for w in last_part.split('&') if len(w.strip()) > 3]
+                    for word in last_part_words:
+                        if word in cat_lower and len(word) > 3:
+                            if word in ['carpet', 'rug', 'mat', 'flooring', 'blender', 'juicer', 'kettle', 'ginseng', 'vitamin', 'supplement', 'pot', 'pan', 'cookware']:
+                                return cat
+        
+        priority_mappings = [
+            {
+                'patterns': [r'pot', r'pots', r'pan', r'pans', r'cookware', r'cooking.*pot', r'pot.*set', r'non.?stick.*pot',
+                            r'die.?cast.*pot', r'granite.*pot', r'fry.?pan', r'sauce.?pan', r'stock.?pot', r'aluminum.*pot', r'cast.*pot', r'fry pan'],
+                'target_keywords': ['stockpots', 'steamers, stock & pasta pots', 'cookware', 'pots & pans'],
+                'exclude_keywords': ['toy', 'vehicle', 'dental', 'die-cast', 'potty', 'toilet', 'training', 'baby', 'infant', 'child', 'potting', 'garden', 'lawn', 'outdoor', 'automobile', 'car', 'spoiler', 'wing', 'roll pan', 'exterior', 'interior', 'accessory', 'potassium', 'mineral', 'supplement', 'diaper', 'caddies', 'pretend', 'dress up'],
+                'score': 20
+            },
+            {
+                'patterns': [r'kettle', r'electric.?kettle', r'cordless.?kettle'],
+                'target_keywords': ['kettle', 'kettles'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'blender', r'juicer'],
+                'target_keywords': ['blender', 'blenders', 'juicer', 'juicers'],
+                'exclude_keywords': ['mixing', 'mixer', 'stand mixer', 'hand mixer', 'maker'],
+                'score': 20
+            },
+            {
+                'patterns': [r'chopper', r'slicer', r'dicer', r'fry.?cutter', r'vegetable.*cutter', r'potato.*cutter', r'multi.?chopper'],
+                'target_keywords': ['chopper', 'slicer', 'cutter', 'food chopper', 'food slicer', 'kitchen tool'],
+                'exclude_keywords': ['industrial', 'scientific', 'deburring', 'cutting tool', 'abrasive', 'metalworking', 'printer', 'computing', 'computer', 'printer accessory'],
+                'score': 20
+            },
+            {
+                'patterns': [r'skin.*care', r'skincare', r'eucerin'],
+                'target_keywords': ['skin care', 'skincare'],
+                'exclude_keywords': ['baby'],
+                'score': 20
+            },
+            {
+                'patterns': [r'anti.?age', r'anti.?aging'],
+                'target_keywords': ['anti-aging'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'sun.*fluid', r'spf'],
+                'target_keywords': ['sunscreen', 'sun'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'urea', r'moistur'],
+                'target_keywords': ['moisturizer', 'moisturising', 'lotion'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'derma.?roller', r'microneedling'],
+                'target_keywords': ['roller', 'tools'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'straightener', r'curler', r'flat.?iron'],
+                'target_keywords': ['straightener', 'curler', 'styling'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'gumm[yies]*', r'vitamin', r'supplement'],
+                'target_keywords': ['vitamin', 'supplement', 'gummy'],
+                'exclude_keywords': ['phone', 'tablet'],
+                'score': 20
+            },
+            {
+                'patterns': [r'testosterone'],
+                'target_keywords': ['testosterone'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'libido', r' enhancer', r' aphrodisiac', r'penis', r'vigrx', r'vigra'],
+                'target_keywords': ['sexual wellness', 'sexual enhancer', 'sexual health'],
+                'exclude_keywords': ['book', 'music', 'movie', 'toy', 'game', 'clock', 'baby', 'toddler', 'fetish'],
+                'score': 20
+            },
+            {
+                'patterns': [r'calcium'],
+                'target_keywords': ['multivitamin', 'calcium'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'ginseng', r'ginseng.*coffee', r'night.*ginseng', r'7.*night.*ginseng', r'sex.*coffee', r'sexmen.*coffee', r'rocket.*night'],
+                'target_keywords': ['ginseng'],
+                'exclude_keywords': ['usb', 'gadget', 'warmer', 'computing', 'computer', 'printer', 'accessory', 'maker', 'machine', 'server', 'pot', 'pottery'],
+                'score': 25
+            },
+            {
+                'patterns': [r'detox', r'\btea\b', r'cappuccino', r'latte', r'espresso'],
+                'target_keywords': ['tea', 'coffee', 'beverage', 'beverages', 'green tea'],
+                'exclude_keywords': ['bag', 'clothing', 'filter', 'maker', 'machine', 'teaching', 'clock', 'teaching clock', 'timer', 'usb', 'gadget', 'warmer', 'computing', 'computer', 'pot', 'pottery', 'teapot', 'server', 'set', 'kettle', 'table', 'patio', 'furniture', 'outdoor'],
+                'score': 20
+            },
+            {
+                'patterns': [r'probiotic'],
+                'target_keywords': ['probiotic', 'digestive'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'headphone', r'earbud'],
+                'target_keywords': ['headphone', 'earbud', 'headphones'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'ring.?light'],
+                'target_keywords': ['ring light', 'photography lighting'],
+                'exclude_keywords': [],
+                'score': 25
+            },
+            {
+                'patterns': [r'photography.?light', r'led.?light', r'video.?light'],
+                'target_keywords': ['lighting', 'light'],
+                'exclude_keywords': ['dental', 'dental supplies', 'car', 'vehicle', 'automobile', 'lens'],
+                'score': 20
+            },
+            {
+                'patterns': [r'tripod'],
+                'target_keywords': ['tripod & monopod accessories', 'tripod'],
+                'exclude_keywords': ['industrial', 'hardware'],
+                'score': 20
+            },
+            {
+                'patterns': [r'power.?adapter', r'usb.?adapter', r'20w.*adapter', r'usb.?c.*adapter', r'usb-c.*adapter', r'charger.*adapter'],
+                'target_keywords': ['adapter', 'power adapter', 'usb adapter', 'charger'],
+                'exclude_keywords': ['automobile', 'motorcycle', 'motorsport', 'vehicle', 'car', 'truck', 'bike', 'scooter'],
+                'score': 20
+            },
+            {
+                'patterns': [r'phone.?case', r'case.*phone', r'galaxy.*case', r'iphone.*case', r'phone case', r'galaxy.?z.?flip', r'galaxy.?fold', r'z.?flip', r'z.?fold'],
+                'target_keywords': ['phone case', 'cases', 'phones & tablets'],
+                'exclude_keywords': [],
+                'score': 25
+            },
+            {
+                'patterns': [r'smart.?phone', r'phone.*smart', r'pop.*phone'],
+                'target_keywords': ['phone', 'smartphone', 'cell phone'],
+                'exclude_keywords': ['accessory', 'case', 'cookware', 'kitchen', 'pot', 'pan'],
+                'score': 20
+            },
+            {
+                'patterns': [r'weighing.?scale', r'digital.?scale', r'battery.*scale'],
+                'target_keywords': ['scale', 'scales'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'blood.?pressure.*monitor', r'pressure.?monitor'],
+                'target_keywords': ['blood pressure', 'monitor', 'medical'],
+                'exclude_keywords': ['computer', 'baby', 'safety', 'nursery'],
+                'score': 20
+            },
+            {
+                'patterns': [r'car.?coating', r'ceramic.?coating', r'coat.*spray', r'shine'],
+                'target_keywords': ['car wax', 'coating', 'car care'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'roof.?rack'],
+                'target_keywords': ['roof rack', 'cargo'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'anti.?vibration.*pad', r'vibration.?pad', r'washing.?machine.*pad'],
+                'target_keywords': ['washing machine', 'pad', 'vibration'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'pillowcase'],
+                'target_keywords': ['pillowcase', 'pillowcases'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'carpet', r'\brug\b', r'carpet.?runner', r'area.?rug', r'minimalist.*carpet', r'living.*room.*carpet'],
+                'target_keywords': ['carpet', 'rug', 'rugs', 'mat', 'flooring'],
+                'exclude_keywords': ['medical', 'health', 'baby', 'bathing', 'skin care', 'aromatherapy', 'therapy', 'bath', 'book', 'tapis'],
+                'score': 20
+            },
+            {
+                'patterns': [r'gripper', r'anti.?slip', r'mattress.*gripper', r'carpet.*gripper', r'bedsheet.*gripper'],
+                'target_keywords': ['gripper', 'anti-slip', 'laundry accessory'],
+                'exclude_keywords': [],
+                'score': 25
+            },
+            {
+                'patterns': [r'diaper\b', r'\bdiapers\b'],
+                'target_keywords': ['diaper', 'diapers', 'diaper bag'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'lunch.?bag', r'\blunch.?bag\b'],
+                'target_keywords': ['lunch bag', 'diaper bag'],
+                'exclude_keywords': [],
+                'score': 25
+            },
+            {
+                'patterns': [r'ab.?roller', r'ab roller', r'abdominal.*roller'],
+                'target_keywords': ['ab roller', 'ab equipment', 'ab', 'strength training'],
+                'exclude_keywords': ['baby', 'stroller', 'car', 'vehicle', 'automobile', 'grab', 'handle'],
+                'score': 25
+            },
+            {
+                'patterns': [r'pull.?up'],
+                'target_keywords': ['pull-up', 'pull up'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'sneaker\b', r'athletic\b', r'\bsneakers\b'],
+                'target_keywords': ['sneakers', 'athletic', 'shoes', 'footwear'],
+                'exclude_keywords': ['toy', 'children', 'kids', 'educational'],
+                'score': 25
+            },
+            {
+                'patterns': [r'stain.?remover', r'fabric.?stain'],
+                'target_keywords': ['stain remover', 'laundry'],
+                'exclude_keywords': ['pet'],
+                'score': 20
+            },
+            {
+                'patterns': [r'slingshot', r'catapult'],
+                'target_keywords': ['slingshot', 'outdoor play', 'balance board'],
+                'exclude_keywords': ['industrial', 'abrasive'],
+                'score': 20
+            },
+            {
+                'patterns': [r'remote.?control.*car', r'rc.?car', r'drift.?car'],
+                'target_keywords': ['remote control', 'rc car'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'domino'],
+                'target_keywords': ['domino', 'board game', 'game'],
+                'exclude_keywords': [],
+                'score': 25
+            },
+            {
+                'patterns': [r'bag', r'handbag', r'hand.?bag', r'shoulder.?bag', r'tote.?bag', 
+                            r'purse', r'satchel', r'hobo', r'mini.?bag', r'lady.*bag', r'women.*bag'],
+                'target_keywords': ['/ handbags', 'handbags /', 'women fashion / handbags'],
+                'exclude_keywords': ['cross-body', 'cross body', 'messenger', 'travel', 'tool', 'diaper', 'gym', 'shopping', 'lunch', 'waist', 'athletic', 'sport', 'sneaker', 'running', 'shoe', 'fabric', 'aso oke', 'cloth', 'material', 'textile', 'bundle', 'multi-pack', 'pack', 'fashion multi', 'accessory', 'accessories', 'evening', 'wristlet', 'clutch'],
+                'score': 20
+            },
+            {
+                'patterns': [r'bracelet'],
+                'target_keywords': ['bracelet', 'jewelry'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'necklace'],
+                'target_keywords': ['necklace', 'jewelry'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'waist.?pack', r'waist.*bag'],
+                'target_keywords': ['waist pack', 'waist bag'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'water.?heater', r'instant.?heater'],
+                'target_keywords': ['heater', 'space heater'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'humidifier', r'aroma.*diffuser'],
+                'target_keywords': ['humidifier', 'aroma'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'tarpaulin', r'canvas'],
+                'target_keywords': ['tarpaulin', 'cargo cover'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'kuli.?kuli', r'groundnut.*cake'],
+                'target_keywords': ['snack', 'nut'],
+                'exclude_keywords': ['baby', 'stroller'],
+                'score': 20
+            },
+            {
+                'patterns': [r'sriracha'],
+                'target_keywords': ['sriracha', 'sauce', 'hot sauce'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+            {
+                'patterns': [r'fridge', r'car.?fridge', r'car fridge'],
+                'target_keywords': ['refrigerator', 'fridge', 'cooler'],
+                'exclude_keywords': [],
+                'score': 20
+            },
+        ]
+        
+        best_score = 0
+        best_category = None
+        
+        for mapping in priority_mappings:
+            for pattern in mapping['patterns']:
+                if re.search(pattern, product_lower, re.IGNORECASE):
+                    should_exclude = False
+                    for exclude_kw in mapping['exclude_keywords']:
+                        if exclude_kw in product_lower:
+                            should_exclude = True
+                            break
+                    
+                    if not should_exclude:
+                        for cat in categories_list:
+                            cat_lower = cat.lower()
+                            matches_target = any(tk in cat_lower for tk in mapping['target_keywords'])
+                            
+                            if matches_target:
+                                excludes_in_cat = any(ex in cat_lower for ex in mapping['exclude_keywords']) if mapping['exclude_keywords'] else False
+                                if not excludes_in_cat:
+                                    if mapping['score'] > best_score:
+                                        best_score = mapping['score']
+                                        best_category = cat
+                        
+                        if best_category and best_score >= 15:
+                            return best_category
+        
+        for kw in keywords:
+            for cat in categories_list:
+                if kw in cat.lower() and ('pots & pans' in cat.lower() or 'pots and pans' in cat.lower() or 'pot' in cat.lower()):
+                    return cat
+                if kw in cat.lower() and 'kettle' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'blender' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'skincare' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'vitamin' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'headphone' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'tripod' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'phone case' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'pillowcase' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'carpet' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'diaper' in cat.lower():
+                    return cat
+                if kw in cat.lower() and 'sneaker' in cat.lower():
+                    return cat
+        
+        for keyword in keywords:
+            if keyword in keyword_mapping:
+                mapped_category = keyword_mapping[keyword]
+                mapped_lower = mapped_category.lower()
+                for cat in categories_list:
+                    cat_lower = cat.lower()
+                    if mapped_lower in cat_lower:
+                        return cat
+                parts = mapped_lower.split('/')
+                for part in parts:
+                    part = part.strip()
+                    if len(part) > 3 and part in cat_lower:
+                        return cat
+                if keyword in ['pot', 'pots', 'pan', 'pans'] and ('pot' in cat_lower and ('pan' in cat_lower or 'cookware' in cat_lower)):
+                    return cat
+                if keyword in ['bag', 'handbag', 'hand bag', 'hand bags'] and ('handbag' in cat_lower or 'women' in cat_lower):
+                    return cat
+        
+        return categories_list[0] if categories_list else "Uncategorized"
 
 
 # ── Singleton accessor (Streamlit-safe) ──────────────────────────────────────
-_ENGINE_INSTANCE: CategoryMatcherEngine | None = None
 
-def get_engine() -> CategoryMatcherEngine:
+_ENGINE_INSTANCE = None
+
+def get_engine():
     """Return a module-level singleton engine."""
     global _ENGINE_INSTANCE
     if _ENGINE_INSTANCE is None:
@@ -3567,16 +4712,10 @@ def get_engine() -> CategoryMatcherEngine:
 
 # ── Streamlit validator function ──────────────────────────────────────────────
 
-def check_wrong_category(
-    data: "pd.DataFrame",
-    categories_list: list[str],
-    cat_path_to_code: dict[str, str] | None = None,
-    code_to_path: dict[str, str] | None = None,
-    confidence_threshold: float = 0.0,
-) -> "pd.DataFrame":
-    """
-    Validator for streamlit_app.validate_products().
-    """
+def check_wrong_category(data, categories_list, cat_path_to_code=None, code_to_path=None, confidence_threshold=0.0):
+    import pandas as pd
+    import re
+    
     if cat_path_to_code is None:
         cat_path_to_code = {}
     if code_to_path is None:
@@ -3598,20 +4737,7 @@ def check_wrong_category(
         engine.build_tfidf_index(categories_list)
     kw_map = engine.build_keyword_to_category_mapping()
 
-    valid_domains: set[str] = set()
-    for cp in categories_list:
-        dom = cp.split("/")[0].strip().lower()
-        if dom:
-            valid_domains.add(dom)
-
-    _noise_pairs: set[tuple] = {
-        ("phones & tablets", "computing"),
-        ("computing", "phones & tablets"),
-        ("home & office", "automobile"),
-        ("automobile", "home & office"),
-    }
-
-    def _top_dom(path: str) -> str:
+    def _top_dom(path):
         return re.split(r"\s*/\s*|\s*>\s*", str(path).strip())[0].strip().lower()
 
     flagged_rows = []
@@ -3628,11 +4754,9 @@ def check_wrong_category(
             assigned_full = code_to_path[cat_code]
         else:
             assigned_full = cat_leaf
+            
         assigned_dom = _top_dom(assigned_full)
-
-        predicted = engine.get_category_with_fallback(
-            name, kw_map, categories_list
-        )
+        predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
         
         if not predicted: continue
         predicted_dom = _top_dom(predicted)
@@ -3640,17 +4764,11 @@ def check_wrong_category(
         if not predicted_dom or predicted_dom == assigned_dom:
             continue
 
-        if (assigned_dom, predicted_dom) in _noise_pairs:
-            continue
-
         predicted_leaf = predicted.split("/")[-1].strip()
         predicted_code = cat_path_to_code.get(predicted.lower(), "")
         code_str = f" [{predicted_code}]" if predicted_code else ""
 
-        comment = (
-            f"Assigned: {assigned_dom.title()} | "
-            f"Predicted: {predicted_dom.title()} — {predicted_leaf}{code_str}"
-        )
+        comment = f"Assigned: {assigned_dom.title()} | Predicted: {predicted_dom.title()} — {predicted_leaf}{code_str}"
 
         row_copy = row.copy()
         row_copy["Comment_Detail"] = comment
