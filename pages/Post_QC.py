@@ -1406,7 +1406,8 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
 
         if not st.session_state.pq_flags_init:
             _top = _rej_df["FLAG"].value_counts().index[0]
-            st.session_state[f"pqexp_{_top}"] = True
+            _top_key = "pqexp_" + re.sub(r"[^a-zA-Z0-9]", "_", _top)
+            st.session_state[_top_key] = True
             st.session_state.pq_flags_init = True
 
         st.session_state.final_report = st.session_state.pq_val_report.copy()
@@ -1414,7 +1415,8 @@ if _FULL_VALIDATION_OK and not _val_report.empty and not _pq_data.empty:
 
         for _flag_title in _rej_df["FLAG"].unique():
             _flag_df = _rej_df[_rej_df["FLAG"] == _flag_title]
-            with st.expander(f"{_flag_title} ({len(_flag_df)})", key=f"pqexp_{_flag_title}"):
+            _flag_key = "pqexp_" + re.sub(r"[^a-zA-Z0-9]", "_", _flag_title)
+            with st.expander(f"{_flag_title} ({len(_flag_df)})", key=_flag_key):
                 render_flag_expander(_flag_title, _flag_df, _pq_data, _data_has_w, _sf, _cv)
 
         st.session_state.pq_val_report = st.session_state.final_report.copy()
