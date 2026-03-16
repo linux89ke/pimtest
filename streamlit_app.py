@@ -1999,6 +1999,32 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     new_flag = str(new_row.iloc[0]['FLAG'])
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
+
+            # ── Learning hook: engine flagged this as Wrong Category but user
+            # approved it → the assigned category IS correct.  Teach the engine
+            # so it stops flagging these products in future runs.
+            if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE and msg_approved > 0:
+                try:
+                    _engine = _get_cat_matcher_engine()
+                    if _engine is not None:
+                        learned_count = 0
+                        for sid in sids_to_process:
+                            # Only teach for items that were actually approved (not moved to another flag)
+                            row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
+                            if row.empty:
+                                continue
+                            name     = str(row.iloc[0].get('NAME', '')).strip()
+                            category = str(row.iloc[0].get('CATEGORY', '')).strip()
+                            if name and category and category.lower() not in ('nan', 'none', ''):
+                                _engine.apply_learned_correction(name, category)
+                                learned_count += 1
+                        if learned_count:
+                            st.session_state.main_toasts.append(
+                                f"🧠 Engine learned {learned_count} correction(s) from your approvals."
+                            )
+                except Exception as _le:
+                    logger.warning("Wrong Category approval learning failed: %s", _le)
+
             if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
             st.session_state.exports_cache.clear()
@@ -2110,6 +2136,38 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
+
+                    # ── Learning hook: user manually tagged items as Wrong Category
+                    # from a tab the engine did NOT already flag (missed detections).
+                    # Ask the engine what it would predict and save that as the
+                    # correction so it catches these automatically next time.
+                    if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
+                        try:
+                            _engine = _get_cat_matcher_engine()
+                            _cats   = support_files.get('categories_names_list', [])
+                            if _engine is not None and _cats:
+                                if not _engine._tfidf_built:
+                                    _engine.build_tfidf_index(_cats)
+                                _kw_map = _engine.build_keyword_to_category_mapping()
+                                learned_count = 0
+                                for sid in to_reject:
+                                    prod_row = data[data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
+                                    if prod_row.empty:
+                                        continue
+                                    name = str(prod_row.iloc[0].get('NAME', '')).strip()
+                                    if not name:
+                                        continue
+                                    predicted = _engine.get_category_with_fallback(name, _kw_map, _cats)
+                                    if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
+                                        _engine.apply_learned_correction(name, predicted)
+                                        learned_count += 1
+                                if learned_count:
+                                    st.session_state.main_toasts.append(
+                                        f"🧠 Engine noted {learned_count} missed Wrong Category item(s) for future runs."
+                                    )
+                        except Exception as _le:
+                            logger.warning("Wrong Category manual rejection learning failed: %s", _le)
+
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
