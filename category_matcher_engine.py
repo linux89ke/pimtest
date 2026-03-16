@@ -1452,6 +1452,12 @@ class CategoryMatcherEngine:
             for cat in categories_list:
                 if cat.lower() == ll:
                     return cat
+            # NEW: If it's a short category name, try to find the full path!
+            for cat in categories_list:
+                if cat.lower().endswith(ll) or ll in cat.lower():
+                    return cat
+            # NEW: If all else fails, just return exactly what we saved
+            return learned
 
         # ── 2. Exact product-type map ─────────────────────────────────────
         mapped = self._map_product_type(product_name)
