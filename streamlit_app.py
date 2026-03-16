@@ -39,6 +39,34 @@ try:
 except ImportError:
     _SCRAPER_AVAILABLE = False
 
+# ── Category Matcher Engine ───────────────────────────────────────────────────
+try:
+    from category_matcher_engine import CategoryMatcherEngine, check_wrong_category
+    _CAT_MATCHER_AVAILABLE = True
+except ImportError:
+    _CAT_MATCHER_AVAILABLE = False
+    def check_wrong_category(data, categories_list=None, cat_path_to_code=None, confidence_threshold=0.0):
+        """Fallback: flag only 'Miscellaneous' categories when engine unavailable."""
+        if 'CATEGORY' not in data.columns:
+            return pd.DataFrame(columns=data.columns)
+        flagged = data[data['CATEGORY'].astype(str).str.contains(
+            "miscellaneous", case=False, na=False
+        )].copy()
+        if not flagged.empty:
+            flagged['Comment_Detail'] = "Category contains 'Miscellaneous'"
+        return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
+
+@st.cache_resource(show_spinner=False)
+def _get_cat_matcher_engine():
+    """Singleton engine — built once per Streamlit worker process."""
+    if not _CAT_MATCHER_AVAILABLE:
+        return None
+    try:
+        return CategoryMatcherEngine()
+    except Exception as e:
+        logger.warning("CategoryMatcherEngine init failed: %s", e)
+        return None
+
 # Fallback stub so load_all_support_files never crashes if postqc isn't importable
 if 'load_category_map' not in dir():
     def load_category_map(filename: str = "category_map.xlsx") -> dict:
@@ -728,7 +756,7 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
 @st.cache_data(ttl=3600)
 def load_all_support_files() -> Dict:
     def safe_load_txt(f): return load_txt_file(f) if os.path.exists(f) else []
-    return {
+    support = {
         'blacklisted_words': safe_load_txt('blacklisted.txt'),
         'book_category_codes': safe_load_txt('Books_cat.txt'),
         'books_data': load_books_data_from_local(),
@@ -756,6 +784,42 @@ def load_all_support_files() -> Dict:
         'refurb_data': load_refurb_data_from_local(),
         'category_map': load_category_map(),
     }
+    # Build a flat list of category path strings for the matcher engine,
+    # and a path→code lookup for enriching validation results.
+    # category_map.xlsx columns: category_name | category_code | Category Path
+    _cat_names: list[str] = []
+    _cat_path_to_code: dict[str, str] = {}
+    try:
+        _cm_path = "category_map.xlsx"
+        if os.path.exists(_cm_path):
+            _cm_df = pd.read_excel(_cm_path, engine="openpyxl", dtype=str)
+            # Normalise column names
+            _cm_df.columns = [c.strip() for c in _cm_df.columns]
+            # Prefer 'Category Path' (full hierarchical path) as the names list
+            _path_col = next(
+                (c for c in _cm_df.columns if c.lower() == "category path"),
+                next((c for c in _cm_df.columns if "path" in c.lower()), None)
+            )
+            _code_col = next(
+                (c for c in _cm_df.columns if "code" in c.lower()), None
+            )
+            if _path_col:
+                _valid = _cm_df[_path_col].dropna().astype(str)
+                _valid = _valid[_valid.str.strip().ne("")]
+                _cat_names = _valid.tolist()
+                if _code_col:
+                    for _, _row in _cm_df[[_path_col, _code_col]].dropna().iterrows():
+                        _p = str(_row[_path_col]).strip()
+                        _c = str(_row[_code_col]).strip().split(".")[0]
+                        if _p and _c:
+                            _cat_path_to_code[_p.lower()] = _c
+        if not _cat_names and support['category_map']:
+            _cat_names = list(support['category_map'].keys())
+    except Exception as _ce:
+        logger.warning("Could not build categories_names_list: %s", _ce)
+    support['categories_names_list'] = _cat_names
+    support['cat_path_to_code'] = _cat_path_to_code
+    return support
 
 @st.cache_data(ttl=3600)
 def load_support_files_lazy(): return load_all_support_files()
@@ -849,7 +913,7 @@ FLAG_RELEVANT_COLS = {
     "Seller Approved to Sell Perfume": ["CATEGORY_CODE", "SELLER_NAME", "BRAND", "NAME"],
     "Counterfeit Sneakers": ["CATEGORY_CODE", "NAME", "BRAND"],
     "Suspected counterfeit Jerseys": ["CATEGORY_CODE", "NAME", "SELLER_NAME"],
-    "Prohibited products": ["NAME", "CATEGORY_CODE"],
+    "Wrong Category": ["NAME", "CATEGORY", "CATEGORY_CODE"],
     "Unnecessary words in NAME": ["NAME"],
     "Single-word NAME": ["CATEGORY_CODE", "NAME"],
     "Generic BRAND Issues": ["CATEGORY_CODE", "BRAND"],
@@ -889,10 +953,48 @@ def run_cached_check(func, cache_path, ckwargs):
         logger.warning(f"run_cached_check save failed {cache_path}: {e}")
     return res
 
-def check_miscellaneous_category(data: pd.DataFrame) -> pd.DataFrame:
-    if 'CATEGORY' not in data.columns: return pd.DataFrame(columns=data.columns)
-    flagged = data[data['CATEGORY'].astype(str).str.contains("miscellaneous", case=False, na=False)].copy()
-    if not flagged.empty: flagged['Comment_Detail'] = "Category contains 'Miscellaneous'"
+def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, cat_path_to_code: dict = None) -> pd.DataFrame:
+    """
+    Legacy wrapper — now powered by CategoryMatcherEngine.
+    Detects products whose assigned category domain doesn't match what the
+    product name implies (e.g. a phone listed under Fashion, a dress under
+    Electronics).  Falls back to miscellaneous-string detection when the
+    engine is unavailable.
+    """
+    if categories_list is None:
+        categories_list = []
+    if cat_path_to_code is None:
+        cat_path_to_code = {}
+    # Try to supplement from session state if caller didn't pass a list
+    if not categories_list:
+        try:
+            _sf = st.session_state.get("support_files", {})
+            categories_list = _sf.get("categories_names_list", [])
+            if not cat_path_to_code:
+                cat_path_to_code = _sf.get("cat_path_to_code", {})
+        except Exception:
+            pass
+
+    # Engine path — full 5-priority matching pipeline
+    if _CAT_MATCHER_AVAILABLE:
+        try:
+            _engine = _get_cat_matcher_engine()
+            if _engine is not None:
+                # Build index lazily (idempotent — skips if already built)
+                if categories_list and not _engine._tfidf_built:
+                    _engine.build_tfidf_index(categories_list)
+                return check_wrong_category(data, categories_list, cat_path_to_code=cat_path_to_code)
+        except Exception as _e:
+            logger.warning("check_wrong_category engine error: %s", _e)
+
+    # Fallback — simple miscellaneous string check
+    if 'CATEGORY' not in data.columns:
+        return pd.DataFrame(columns=data.columns)
+    flagged = data[data['CATEGORY'].astype(str).str.contains(
+        "miscellaneous", case=False, na=False
+    )].copy()
+    if not flagged.empty:
+        flagged['Comment_Detail'] = "Category contains 'Miscellaneous'"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_restricted_brands(data: pd.DataFrame, country_rules: List[Dict]) -> pd.DataFrame:
@@ -1321,7 +1423,10 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     country_restricted_rules = support_files.get('restricted_brands_all', {}).get(country_validator.country, [])
     country_prohibited_words = support_files.get('prohibited_words_all', {}).get(country_validator.code, [])
     validations = [
-        ("Wrong Category", check_miscellaneous_category, {}),
+        ("Wrong Category", check_miscellaneous_category, {
+            'categories_list': support_files.get('categories_names_list', []),
+            'cat_path_to_code': support_files.get('cat_path_to_code', {}),
+        }),
         ("Restricted brands", check_restricted_brands, {'country_rules': country_restricted_rules}),
         ("Suspected Fake product", check_suspected_fake_products, {'suspected_fake_df': support_files['suspected_fake'], 'fx_rate': FX_RATE}),
         ("Seller Not approved to sell Refurb", check_refurb_seller_approval, {'refurb_data': support_files.get('refurb_data', {}), 'country_code': country_validator.code}),
