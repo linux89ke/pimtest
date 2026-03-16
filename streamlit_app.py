@@ -589,7 +589,7 @@ def load_refurb_data_from_local() -> dict:
                 df.columns = [str(c).strip() for c in df.columns]
                 phones_set = set(df.iloc[:, 0].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "phones"}
                 laptops_set = set(df.iloc[:, 1].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "laptops"}
-                result["sellers"][tab] = {"Phones": phones_set, "Laptops": laptops_set}
+                result["sellers"][tab] = {"Phones": set(), "Laptops": laptops_set}
         except Exception as e:
             logger.warning(f"load_refurb_data tab={tab}: {e}")
             result["sellers"][tab] = {"Phones": set(), "Laptops": set()}
@@ -2066,25 +2066,28 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
 
-            # ── Learning hook: engine flagged this as Wrong Category but user
-            # approved it → the assigned category IS correct.  Teach the engine
-            # so it stops flagging these products in future runs.
             if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE and msg_approved > 0:
                 try:
                     _engine = _get_cat_matcher_engine()
                     if _engine is not None:
                         learned_count = 0
                         for sid in sids_to_process:
-                            # Only teach for items that were actually approved (not moved to another flag)
                             row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
                             if row.empty:
                                 continue
                             name     = str(row.iloc[0].get('NAME', '')).strip()
                             category = str(row.iloc[0].get('CATEGORY', '')).strip()
                             if name and category and category.lower() not in ('nan', 'none', ''):
-                                _engine.apply_learned_correction(name, category)
+                                # ADDED: auto_save=False so we don't hit the Firebase speed limit!
+                                _engine.apply_learned_correction(name, category, auto_save=False)
                                 learned_count += 1
                         if learned_count:
+                            # SAVE ONCE AT THE VERY END
+                            _engine.save_learning_db()
+                            if _CAT_MATCHER_AVAILABLE and hasattr(_engine, '_retrain_correction_classifier'):
+                                try: _engine._retrain_correction_classifier()
+                                except: pass
+                                
                             st.session_state.main_toasts.append(
                                 f"🧠 Engine learned {learned_count} correction(s) from your approvals."
                             )
@@ -2220,9 +2223,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
 
                     # ── Learning hook: user manually tagged items as Wrong Category
-                    # from a tab the engine did NOT already flag (missed detections).
-                    # Ask the engine what it would predict and save that as the
-                    # correction so it catches these automatically next time.
                     if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                         try:
                             _engine = _get_cat_matcher_engine()
@@ -2241,9 +2241,16 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                         continue
                                     predicted = _engine.get_category_with_fallback(name, _kw_map, _cats)
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
-                                        _engine.apply_learned_correction(name, predicted)
+                                        # ADDED: auto_save=False
+                                        _engine.apply_learned_correction(name, predicted, auto_save=False)
                                         learned_count += 1
                                 if learned_count:
+                                    # SAVE ONCE AT THE VERY END
+                                    _engine.save_learning_db()
+                                    if _CAT_MATCHER_AVAILABLE and hasattr(_engine, '_retrain_correction_classifier'):
+                                        try: _engine._retrain_correction_classifier()
+                                        except: pass
+
                                     st.session_state.main_toasts.append(
                                         f"🧠 Engine noted {learned_count} missed Wrong Category item(s) for future runs."
                                     )
@@ -2537,10 +2544,10 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            (_t("total_prod"),  len(data),                                                                                             JUMIA_COLORS['dark_gray']),
-            (_t("approved"),    len(app_df),                                                                                           JUMIA_COLORS['success_green']),
-            (_t("rejected"),    len(rej_df),                                                                                           JUMIA_COLORS['jumia_red']),
-            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                           JUMIA_COLORS['primary_orange']),
+            (_t("total_prod"),  len(data),                                                                                               JUMIA_COLORS['dark_gray']),
+            (_t("approved"),    len(app_df),                                                                                             JUMIA_COLORS['success_green']),
+            (_t("rejected"),    len(rej_df),                                                                                             JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                             JUMIA_COLORS['primary_orange']),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
