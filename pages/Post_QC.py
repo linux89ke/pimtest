@@ -1781,7 +1781,16 @@ def _build_pq_grid_html(page_data, page_warnings, rejected_state, cols_per_row):
         if img_url.startswith("http://"):
             img_url = img_url.replace("http://", "https://")
         if not img_url.startswith("http"):
-            img_url = "https://via.placeholder.com/150?text=No+Image"
+            img_url = ""
+
+        # Detect offline: scraper found nothing — all key content fields blank
+        def _blank(v):
+            return not str(v).strip() or str(v).strip().lower() in ("nan", "none", "")
+        is_offline = all(_blank(row.get(f)) for f in ["NAME", "BRAND", "MAIN_IMAGE", "GLOBAL_SALE_PRICE"])
+
+        if not img_url:
+            img_url = "https://via.placeholder.com/150?text=Offline" if is_offline else "https://via.placeholder.com/150?text=No+Image"
+
         try:
             sp   = row.get("GLOBAL_SALE_PRICE")
             rp   = row.get("GLOBAL_PRICE")
@@ -1789,17 +1798,25 @@ def _build_pq_grid_html(page_data, page_warnings, rejected_state, cols_per_row):
             price_str = f"KSh {float(str(uval).replace(',','')):.0f}" if pd.notna(uval) else ""
         except Exception:
             price_str = ""
+
+        name   = str(row.get("NAME",  "")).strip()
+        brand  = str(row.get("BRAND", "")).strip()
+        seller = str(row.get("SELLER_NAME", "")).strip()
+
         cards_data.append({
             "sid":      sid,
             "img":      img_url,
-            "name":     str(row.get("NAME",  "")),
-            "brand":    str(row.get("BRAND", "Unknown Brand")),
-            "cat":      str(row.get("CATEGORY", "Unknown Category")),
-            "seller":   str(row.get("SELLER_NAME", "Unknown Seller")),
+            "name":     name if name and name.lower() not in ("nan", "none") else "",
+            "brand":    brand if brand and brand.lower() not in ("nan", "none") else "",
+            "cat":      str(row.get("CATEGORY", "")).strip(),
+            "seller":   seller if seller and seller.lower() not in ("nan", "none") else "",
             "warnings": page_warnings.get(sid, []),
             "price":    price_str,
+            "offline":  is_offline,
         })
     cards_json = _json.dumps(cards_data)
+
+
 
     return f"""<!DOCTYPE html>
 <html>
