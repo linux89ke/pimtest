@@ -1975,8 +1975,9 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             #           full category path resolved via code_to_path ────────────
             if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE and msg_approved > 0:
                 try:
-                    _engine       = _get_cat_matcher_engine()
-                    _code_to_path = support_files.get('code_to_path', {})
+                    _engine        = _get_cat_matcher_engine()
+                    _code_to_path  = support_files.get('code_to_path', {})
+                    _cats_list     = support_files.get('categories_names_list', [])
                     if _engine is not None:
                         corrections_to_learn: dict = {}
                         for sid in sids_to_process:
@@ -1994,10 +1995,25 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                                 .strip()
                                 .split('.')[0]
                             )
-                            category = (
-                                _code_to_path.get(cat_code.lower())
-                                or str(row.iloc[0].get('CATEGORY', '')).strip()
-                            )
+                            category = _code_to_path.get(cat_code.lower(), '')
+
+                            # If code_to_path missed it, search categories_list
+                            # for a path that ends with the leaf category name
+                            if not category:
+                                leaf = str(row.iloc[0].get('CATEGORY', '')).strip().lower()
+                                if leaf and leaf not in ('nan', 'none', ''):
+                                    # Find the most specific path ending with this leaf
+                                    matches = [
+                                        c for c in _cats_list
+                                        if c.strip().lower().endswith(leaf)
+                                    ]
+                                    if matches:
+                                        # Prefer the longest (most specific) match
+                                        category = max(matches, key=len)
+                                    else:
+                                        # Fall back to the raw leaf name
+                                        category = str(row.iloc[0].get('CATEGORY', '')).strip()
+
                             if category and category.lower() not in ('nan', 'none', ''):
                                 corrections_to_learn[name] = category
 
@@ -2135,9 +2151,9 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     # ── FIX 4: Manual Wrong Category rejection — batch write + full path ──
                     if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                         try:
-                            _engine       = _get_cat_matcher_engine()
-                            _cats         = support_files.get('categories_names_list', [])
-                            _code_to_path = support_files.get('code_to_path', {})
+                            _engine        = _get_cat_matcher_engine()
+                            _cats          = support_files.get('categories_names_list', [])
+                            _code_to_path  = support_files.get('code_to_path', {})
                             if _engine is not None and _cats:
                                 if not _engine._tfidf_built:
                                     _engine.build_tfidf_index(_cats)
@@ -2158,10 +2174,22 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                         .strip()
                                         .split('.')[0]
                                     )
-                                    predicted = (
-                                        _code_to_path.get(cat_code.lower())
-                                        or _engine.get_category_with_fallback(name, _kw_map, _cats)
-                                    )
+                                    predicted = _code_to_path.get(cat_code.lower(), '')
+
+                                    # If code_to_path missed it, search categories_list
+                                    if not predicted:
+                                        leaf = str(prod_row.iloc[0].get('CATEGORY', '')).strip().lower()
+                                        if leaf and leaf not in ('nan', 'none', ''):
+                                            matches = [
+                                                c for c in _cats
+                                                if c.strip().lower().endswith(leaf)
+                                            ]
+                                            predicted = max(matches, key=len) if matches else (
+                                                _engine.get_category_with_fallback(name, _kw_map, _cats)
+                                            )
+                                        else:
+                                            predicted = _engine.get_category_with_fallback(name, _kw_map, _cats)
+
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
                                         corrections_to_learn[name] = predicted
                                 if corrections_to_learn:
