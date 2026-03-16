@@ -689,8 +689,9 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
         _seller_name = ""
 
         # Strategy 1: dedicated seller-info / seller-details block
-        # These selectors target the seller card that appears below the
-        # add-to-cart button on Jumia product pages.
+        # Jumia renders a seller card below the add-to-cart button.
+        # Try explicit class selectors first, then look for a "Seller
+        # Information" heading and grab the first link beneath it.
         for _sel in [
             "div.seller-info a[href]",
             "div[class*='seller-info'] a[href]",
@@ -711,42 +712,84 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
                         _seller_name = _txt
                         break
 
-        # Strategy 2: <a> whose href matches Jumia seller slug pattern
-        # Seller slugs look like /seller-handle-cod/ or /seller-handle/
-        # They are short, lowercase, hyphenated, end with /
-        # We require the href to end in -cod/ or contain at least 2 hyphens
-        # to distinguish from category/promo pages (/sp-help/, /mlp-.../)
+        # Try the "Seller Information" section link as part of strategy 1
         if not _seller_name:
+            for _h in soup.find_all(["h2", "h3", "h4", "b", "strong", "div", "section"]):
+                _ht = _h.get_text(strip=True)
+                if not re.search(r"seller\s+information", _ht, re.IGNORECASE):
+                    continue
+                # Found the seller section — grab first <a> link inside it
+                for _a in _h.find_all_next("a", href=True, limit=5):
+                    _txt = _a.get_text(strip=True)
+                    if _txt and 2 <= len(_txt) <= 60:
+                        _lower = _txt.lower()
+                        if not any(w in _lower for w in (
+                            "follow", "score", "performance", "rating",
+                            "jumia", "sell on", "contact",
+                        )):
+                            _seller_name = _txt
+                            break
+                if _seller_name:
+                    break
+
+        # Strategy 2: seller slug link — ONLY search within a scoped
+        # container near the seller section, not all <a> tags in the doc.
+        # Jumia seller URLs end in -cod/ (third-party) or are a plain slug.
+        # We require the link to appear after the price/add-to-cart area.
+        if not _seller_name:
+            # Comprehensive set of Jumia category/nav slug words (singular + plural)
+            _nav_words = {
+                "home", "phone", "phones", "tablet", "tablets",
+                "fashion", "compute", "computing", "gaming", "games",
+                "supermarket", "groceries", "grocery",
+                "health", "beauty", "appliance", "appliances",
+                "office", "baby", "jumia", "sell", "selling",
+                "help", "warranty", "warranties", "privacy",
+                "terms", "conditions", "credit", "store", "official",
+                "catalog", "cart", "wishlist", "account", "orders",
+                "order", "return", "returns", "refund", "refunds",
+                "delivery", "payment", "payments", "sp", "mlp",
+                "category", "categories", "electronics", "electronic",
+                "television", "televisions", "video", "audio",
+                "refrigerator", "refrigerators", "washing",
+                "smartphone", "smartphones", "laptop", "laptops",
+                "accessories", "accessory", "clothing", "shoes",
+                "sports", "sport", "outdoor", "garden", "toys",
+                "books", "music", "movies", "automotive", "tools",
+                "industrial", "furniture", "kitchen", "dining",
+                "bedroom", "bathroom", "lighting", "security",
+                "networking", "software", "printers", "cameras",
+                "smart", "wearables", "wearable", "watches",
+            }
             _seller_slug_re = re.compile(
                 r"^/([a-z0-9][a-z0-9\-]{3,40})(?:-cod)?/$"
             )
-            _nav_words = {
-                "home", "phone", "tablet", "fashion", "compute", "gaming",
-                "supermarket", "health", "appliance", "beauty", "office",
-                "baby", "jumia", "sell", "help", "warranty", "privacy",
-                "terms", "conditions", "credit", "store", "official",
-                "catalog", "cart", "wishlist", "account", "order",
-                "return", "refund", "delivery", "payment", "sp", "mlp",
-                "category", "electronics", "groceries", "computing",
-            }
-            for _a in soup.find_all("a", href=True):
+            # Only scan <a> tags that appear after the price section
+            # by finding the price element and walking siblings/children
+            _price_anchor = (
+                soup.select_one("span.-b.-ltr.-tal.-fs24")
+                or soup.select_one("span.prc")
+                or soup.select_one("div.-prc-w")
+            )
+            _search_root = _price_anchor.parent if _price_anchor else soup
+            for _a in _search_root.find_all_next("a", href=True, limit=60):
                 _href = str(_a.get("href", ""))
                 _m = _seller_slug_re.match(_href)
                 if not _m:
                     continue
-                _slug_parts = set(_m.group(1).split("-"))
-                # Skip if any slug segment is a known nav word
+                _slug_parts = set(_m.group(1).replace("-cod", "").split("-"))
+                # Skip if any slug segment is a nav/category word
                 if _slug_parts & _nav_words:
                     continue
                 _txt = _a.get_text(strip=True)
                 if not _txt or len(_txt) > 60:
                     continue
                 _lower = _txt.lower()
-                # Skip if the visible text contains nav/promo language
                 if any(w in _lower for w in (
                     "terms", "conditions", "credit", "policy", "warranty",
                     "help", "support", "service", "sell on", "official store",
-                    "jumia express", "fulfilled",
+                    "jumia express", "fulfilled", "promotions", "delivery",
+                    "returns", "similar", "from", "brand", "follow",
                 )):
                     continue
                 _seller_name = _txt
