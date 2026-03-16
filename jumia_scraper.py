@@ -385,7 +385,14 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
             if inp:
                 v = inp.get("value") or inp.get("data-value", "")
             else:
-                v = el.get_text(strip=True)
+                # Read only the first direct child <span> to avoid concatenating
+                # sibling spans like "EU 40" + "Selected" → "EU 40Selected", or
+                # "EU 40" + "Some variations with low stock" etc.
+                first_span = el.find("span", recursive=False)
+                if first_span:
+                    v = first_span.get_text(strip=True)
+                else:
+                    v = el.get_text(strip=True)
             v = v.strip()
             if not v or len(v) >= 50:
                 continue
@@ -492,22 +499,15 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
                         if _is_size(tok): sizes.append(tok)
                         else: colors.append(tok)
 
-    # Strategy E: title colour extraction (only when all above gave nothing)
-    if not colors and not sizes:
-        title_el = soup.select_one("h1, title")
-        if title_el:
-            COLOR_WORDS = re.compile(
-                r"\b(black|white|silver|gold|blue|red|green|purple|pink|"
-                r"grey|gray|titanium|midnight|starlight|ivory|champagne|"
-                r"rose|copper|yellow|orange|violet|navy|cream|brown|coral|"
-                r"aqua|cyan|teal|lilac|maroon|beige|olive|turquoise)\b",
-                re.IGNORECASE,
-            )
-            found = COLOR_WORDS.findall(title_el.get_text())
-            if found:
-                colors = list(dict.fromkeys(c.title() for c in found))
+    # NOTE: Strategy E (title colour extraction) has been intentionally removed.
+    # Extracting a colour word from the product title does NOT mean the product
+    # has multiple selectable colour variants — it just describes this one SKU.
+    # Keeping it caused single-SKU products (e.g. "Xiaomi … Black") to get a
+    # spurious COLOR and COUNT_VARIATIONS=1 that is misleading.
 
     # Write variation results
+    # COUNT_VARIATIONS always reflects the actual pill count found on the page.
+    # No pills found → no variation data written (seller left it blank; that's fine).
     if sizes and colors:
         result["SIZES_AVAILABLE"]  = ", ".join(sizes)
         result["COLOR"]            = ", ".join(colors)
@@ -518,6 +518,7 @@ def _scrape_product_page(url: str, base_url: str) -> dict[str, str]:
     elif colors:
         result["COLOR"]            = ", ".join(colors)
         result["COUNT_VARIATIONS"] = str(len(colors))
+    # else: no pills at all → leave COUNT_VARIATIONS blank (1 SKU, seller didn't fill variations)
 
     # COLOR_IN_TITLE
     _COLOR_WORDS = re.compile(
