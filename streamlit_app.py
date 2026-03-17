@@ -41,7 +41,8 @@ except ImportError:
 
 # ── Category Matcher Engine ───────────────────────────────────────────────────
 try:
-    from category_matcher_engine import CategoryMatcherEngine, check_wrong_category
+    # CHANGED: Added get_engine so both parts of the app share the EXACT same brain
+    from category_matcher_engine import CategoryMatcherEngine, check_wrong_category, get_engine
     _CAT_MATCHER_AVAILABLE = True
 except ImportError:
     _CAT_MATCHER_AVAILABLE = False
@@ -58,22 +59,12 @@ except ImportError:
 
 @st.cache_resource(show_spinner=False)
 def _get_cat_matcher_engine():
-    """
-    Singleton engine — built once per Streamlit worker process.
-
-    CRITICAL: after creation we immediately inject this instance into the
-    category_matcher_engine module via set_engine() so that
-    check_wrong_category() (which calls get_engine() internally) uses the
-    exact same object that the Streamlit UI teaches via approve buttons.
-    Without this, approvals teach Brain A but the validator uses Brain B.
-    """
+    """Singleton engine — built once per Streamlit worker process."""
     if not _CAT_MATCHER_AVAILABLE:
         return None
     try:
-        from category_matcher_engine import set_engine as _set_engine
-        instance = CategoryMatcherEngine()
-        _set_engine(instance)   # ← wire Brain A = Brain B
-        return instance
+        # CHANGED: Now it shares the exact same brain as the validator!
+        return get_engine()
     except Exception as e:
         logger.warning("CategoryMatcherEngine init failed: %s", e)
         return None
@@ -83,6 +74,7 @@ if 'load_category_map' not in dir():
     def load_category_map(filename: str = "category_map.xlsx") -> dict:
         return {}
 
+# CHANGE 12: Logger defined early so every function can use it
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
@@ -93,6 +85,7 @@ FLAG_CACHE_DIR = "app_cache_flags"
 os.makedirs(PARQUET_CACHE_DIR, exist_ok=True)
 os.makedirs(FLAG_CACHE_DIR, exist_ok=True)
 
+# CHANGE 10: Prune old pkl files so the cache dir never grows unbounded
 def prune_cache_dir(directory: str, max_files: int = 500):
     try:
         files = sorted(Path(directory).glob("*.pkl"), key=os.path.getmtime)
@@ -106,6 +99,11 @@ def prune_cache_dir(directory: str, max_files: int = 500):
 
 prune_cache_dir(FLAG_CACHE_DIR)
 
+# Evict any cached Wrong Category results — this validator now uses the ML
+# engine and must never serve stale empty results from before the engine was wired up.
+# We identify them by recomputing what their hash prefix would look like, but
+# the safest approach is simply to delete all cache files whose pickled content
+# is an empty DataFrame (size < 500 bytes, which real flag results never are).
 try:
     for _cf in Path(FLAG_CACHE_DIR).glob("*.pkl"):
         if _cf.stat().st_size < 500:
@@ -274,6 +272,7 @@ if _pre_country == "Morocco":
     st.session_state.ui_lang = "fr"
 elif st.session_state.get("ui_lang") == "fr":
     st.session_state.ui_lang = "en"
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _t(key):
     return get_translation(st.session_state.ui_lang, key)
@@ -415,6 +414,7 @@ def create_match_key(row: pd.Series) -> str:
     color = normalize_text(row.get('COLOR', ''))
     return f"{brand}|{name}|{color}"
 
+# CHANGE 13: Fix weak fallback — same shape + same columns should not collide
 def df_hash(df: pd.DataFrame) -> str:
     try:
         return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
@@ -591,7 +591,7 @@ def load_refurb_data_from_local() -> dict:
                 df.columns = [str(c).strip() for c in df.columns]
                 phones_set = set(df.iloc[:, 0].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "phones"}
                 laptops_set = set(df.iloc[:, 1].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "laptops"}
-                result["sellers"][tab] = {"Phones": phones_set, "Laptops": laptops_set}
+                result["sellers"][tab] = {"Phones": set(), "Laptops": laptops_set}
         except Exception as e:
             logger.warning(f"load_refurb_data tab={tab}: {e}")
             result["sellers"][tab] = {"Phones": set(), "Laptops": set()}
@@ -709,6 +709,9 @@ def load_suspected_fake_from_local() -> pd.DataFrame:
         logger.warning(f"load_suspected_fake: {e}")
     return pd.DataFrame()
 
+# -------------------------------------------------
+# LOAD FLAGS MAPPING (WITH MULTI-LINGUAL SUPPORT)
+# -------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
     raw_default = {
@@ -736,9 +739,11 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
         'Poor images': ('1000042 - Kindly follow our product image upload guideline.', "Poor Image Quality"),
         'Perfume Tester': ('1000007 - Other Reason', "Sale of perfume testers is not permitted on Jumia."),
     }
+
     default_mapping = {}
     for k, v in raw_default.items():
         default_mapping[k] = {'reason': v[0], 'en': v[1], 'fr': v[1], 'ar': v[1]}
+
     try:
         if os.path.exists(filename):
             df = pd.read_excel(filename, engine='openpyxl', dtype=str)
@@ -759,6 +764,7 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
                     return custom_mapping
     except Exception as e:
         logger.warning(f"load_flags_mapping({filename}): {e}")
+
     return default_mapping
 
 @st.cache_data(ttl=3600)
@@ -792,13 +798,18 @@ def load_all_support_files() -> Dict:
         'refurb_data': load_refurb_data_from_local(),
         'category_map': load_category_map(),
     }
+    # Build a flat list of category path strings for the matcher engine,
+    # and a path→code lookup for enriching validation results.
+    # category_map.xlsx columns: category_name | category_code | Category Path
     _cat_names: list[str] = []
     _cat_path_to_code: dict[str, str] = {}
     try:
         _cm_path = "category_map.xlsx"
         if os.path.exists(_cm_path):
             _cm_df = pd.read_excel(_cm_path, engine="openpyxl", dtype=str)
+            # Normalise column names
             _cm_df.columns = [c.strip() for c in _cm_df.columns]
+            # Prefer 'Category Path' (full hierarchical path) as the names list
             _path_col = next(
                 (c for c in _cm_df.columns if c.lower() == "category path"),
                 next((c for c in _cm_df.columns if "path" in c.lower()), None)
@@ -822,6 +833,7 @@ def load_all_support_files() -> Dict:
         logger.warning("Could not build categories_names_list: %s", _ce)
     support['categories_names_list'] = _cat_names
     support['cat_path_to_code'] = _cat_path_to_code
+    # Reverse lookup: category_code → full Category Path
     support['code_to_path'] = {v: k for k, v in _cat_path_to_code.items()}
     return support
 
@@ -842,11 +854,13 @@ class CountryValidator:
         "Ghana": {"code": "GH", "skip_validations": []},
         "Morocco": {"code": "MA", "skip_validations": []}
     }
+
     def __init__(self, country: str):
         self.country = country
         self.config = self.COUNTRY_CONFIG.get(country, self.COUNTRY_CONFIG["Kenya"])
         self.code = self.config["code"]
         self.skip_validations = self.config["skip_validations"]
+
     def should_skip_validation(self, validation_name: str) -> bool: return validation_name in self.skip_validations
     def ensure_status_column(self, df: pd.DataFrame) -> pd.DataFrame:
         if not df.empty and 'Status' not in df.columns: df['Status'] = 'Approved'
@@ -856,8 +870,22 @@ class CountryValidator:
 # ENCODING HELPERS
 # -------------------------------------------------
 def _detect_and_read_csv(buf) -> pd.DataFrame:
+    """
+    Read a CSV/TSV with robust encoding detection.
+
+    Tries encodings in this order:
+      1. UTF-8-sig  (UTF-8 with BOM — common in Excel-saved CSVs)
+      2. UTF-8
+      3. CP1252     (Windows Western — most common Jumia export encoding)
+      4. ISO-8859-1 (Latin-1 fallback)
+
+    For each encoding, the separator is auto-detected: if the first parse
+    produces only one column, a semicolon separator is tried next.
+    Returns the first successfully parsed DataFrame with >1 column.
+    """
     _ENCODINGS = ['utf-8-sig', 'utf-8', 'cp1252', 'iso-8859-1']
     raw_bytes = buf.read()
+
     for enc in _ENCODINGS:
         for sep in [',', ';', '\t']:
             try:
@@ -867,10 +895,29 @@ def _detect_and_read_csv(buf) -> pd.DataFrame:
                     return df
             except Exception:
                 continue
+
+    # Absolute last resort — let pandas guess
     from io import BytesIO as _BIO
     return pd.read_csv(_BIO(raw_bytes), sep=None, engine='python', encoding='utf-8', dtype=str)
 
+
 def _repair_mojibake(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fix the most common mojibake pattern: UTF-8 bytes that were decoded as
+    CP1252 (Windows Western) or ISO-8859-1 (Latin-1).  Applies only to
+    object (string) columns and only when the round-trip actually produces
+    valid UTF-8 with no replacement characters.
+
+    Repair order tried per value:
+      1. CP1252 → UTF-8   (covers â€" → – , Ã© → é , etc.)
+      2. Latin-1 → UTF-8  (fallback for strict Latin-1 files)
+
+    Examples fixed:
+        â€"   →  –   (en dash U+2013, very common in PARENTSKU)
+        Ã©    →  é   (e-acute, common in seller/brand names)
+        â€™   →  '   (right single quote)
+        Â£    →  £   (pound sign)
+    """
     def _fix(val):
         if not isinstance(val, str):
             return val
@@ -882,10 +929,10 @@ def _repair_mojibake(df: pd.DataFrame) -> pd.DataFrame:
             except (UnicodeDecodeError, UnicodeEncodeError):
                 continue
         return val
+
     for col in df.select_dtypes(include='object').columns:
         df[col] = df[col].apply(_fix)
     return df
-
 def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip()
@@ -966,6 +1013,8 @@ def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) ->
     if not available_cols: return "empty"
     df_hash_str = df_hash(data[available_cols])
     kwargs_repr = ""
+    # Skip large category lookup dicts — they don't change between runs and
+    # would make the repr huge, causing unnecessary cache misses or hits on stale data
     _skip_keys = {'categories_list', 'cat_path_to_code', 'code_to_path'}
     for k, v in kwargs.items():
         if k == 'data' or k in _skip_keys: continue
@@ -974,6 +1023,7 @@ def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) ->
     return hashlib.md5((df_hash_str + kwargs_repr).encode()).hexdigest()
 
 def run_cached_check(func, cache_path, ckwargs):
+    # Wrong Category uses the ML engine — always run fresh, never use disk cache
     if func is check_miscellaneous_category:
         return func(**ckwargs)
     if os.path.exists(cache_path):
@@ -989,9 +1039,18 @@ def run_cached_check(func, cache_path, ckwargs):
     return res
 
 def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, cat_path_to_code: dict = None, code_to_path: dict = None) -> pd.DataFrame:
-    if categories_list is None: categories_list = []
-    if cat_path_to_code is None: cat_path_to_code = {}
-    if code_to_path is None: code_to_path = {}
+    """
+    Priority validator — powered by CategoryMatcherEngine.
+    Detects products whose CATEGORY_CODE resolves to a domain that doesn't
+    match what the product name implies. Runs first in the validation pipeline.
+    Falls back to miscellaneous-string detection when engine is unavailable.
+    """
+    if categories_list is None:
+        categories_list = []
+    if cat_path_to_code is None:
+        cat_path_to_code = {}
+    if code_to_path is None:
+        code_to_path = {}
     if not categories_list or not code_to_path:
         try:
             _sf = st.session_state.get("support_files", {})
@@ -1000,6 +1059,7 @@ def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = Non
             code_to_path = code_to_path or _sf.get("code_to_path", {})
         except Exception:
             pass
+
     if _CAT_MATCHER_AVAILABLE:
         try:
             _engine = _get_cat_matcher_engine()
@@ -1013,9 +1073,13 @@ def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = Non
                 )
         except Exception as _e:
             logger.warning("check_wrong_category engine error: %s", _e)
+
+    # Fallback — simple miscellaneous string check
     if 'CATEGORY' not in data.columns:
         return pd.DataFrame(columns=data.columns)
-    flagged = data[data['CATEGORY'].astype(str).str.contains("miscellaneous", case=False, na=False)].copy()
+    flagged = data[data['CATEGORY'].astype(str).str.contains(
+        "miscellaneous", case=False, na=False
+    )].copy()
     if not flagged.empty:
         flagged['Comment_Detail'] = "Category contains 'Miscellaneous'"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
@@ -1216,6 +1280,7 @@ def check_seller_approved_for_perfume(data: pd.DataFrame, perfume_category_codes
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_perfume_tester(data: pd.DataFrame, perfume_category_codes: List[str], perfume_data: Dict) -> pd.DataFrame:
+    """Flag any perfume product that has 'tester' in the name as prohibited."""
     if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
     sheet_cat_codes = perfume_data.get('category_codes')
@@ -1352,10 +1417,15 @@ def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[
         r"|tea\s*bags?|teabags?|bags?"
         r"|pieces?|pcs|pack|packs"
         r"|dozens?|pairs?|rolls?|sheets?|wipes?|pods?|softgels?|lozenges?|gummies|gummy|units?|serves?|servings?|vegan\s+pieces?)"
+        # "30s" / "30's" / "30\u2019s" / "60'S" — straight and curly apostrophes
         r"|\b\d+[\u0027\u2019]?s\b"
+        # standalone "dozen / a dozen"
         r"|\b(?:a\s+)?dozen\b"
+        # reversed: "pack of 24", "box of 10", "set of 6"
         r"|\b(?:pack|box|set|bundle|lot)\s+of\s+\d+\b"
+        # "per kg", "per g", "per ml" etc — e.g. "Chickpeas per Kg"
         r"|\bper\s+(?:kg|kgs?|g|gm|grams?|mg|mcg|ml|l|ltr|oz|lb)\b"
+        # broken UTF-8 µg/μg encoding variants: Âµg, Î¼g, µg, μg
         r"|\d+\s*(?:\xc2\xb5g|\xce\xbcg|\xb5g|\u00b5g|\u03bcg|mcg|µg|μg)",
         re.IGNORECASE
     )
@@ -1370,19 +1440,24 @@ def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_cod
     if not flagged.empty: flagged['Comment_Detail'] = "Name missing Storage/Memory spec (e.g., 64GB)"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
+# CHANGE 9: Vectorized duplicate detection — replaces slow iterrows loop
 def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = None, similarity_threshold: float = 0.70, known_colors: List[str] = None, **kwargs) -> pd.DataFrame:
     if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     d = data.copy()
     if exempt_categories and 'CATEGORY_CODE' in d.columns:
         d = d[~d['CATEGORY_CODE'].apply(clean_category_code).isin(set(clean_category_code(c) for c in exempt_categories))]
     if d.empty: return pd.DataFrame(columns=data.columns)
+
     d['_norm_name']   = d['NAME'].astype(str).apply(lambda x: re.sub(r'\s+', '', normalize_text(x)))
     d['_norm_brand']  = d['BRAND'].astype(str).str.lower().str.strip()
     d['_norm_seller'] = d['SELLER_NAME'].astype(str).str.lower().str.strip()
     d['_dedup_key']   = d['_norm_seller'] + '|' + d['_norm_brand'] + '|' + d['_norm_name']
+
     first_seen_mask = ~d.duplicated(subset=['_dedup_key'], keep='first')
     dup_mask        = d.duplicated(subset=['_dedup_key'], keep='first')
+
     if not dup_mask.any(): return pd.DataFrame(columns=data.columns)
+
     first_occurrence = d[first_seen_mask].set_index('_dedup_key')['NAME']
     rdf = d[dup_mask].copy()
     rdf['Comment_Detail'] = rdf['_dedup_key'].map(
@@ -1392,8 +1467,11 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
 
+
 # -------------------------------------------------
 # REGISTER CHECK FUNCTIONS FOR postqc.py
+# Must come after all check functions are defined.
+# postqc reads this registry to avoid circular imports.
 # -------------------------------------------------
 if _reg is not None:
     _reg.REGISTRY.update({
@@ -1516,6 +1594,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             results[fname] = pd.concat([results.get(fname, pd.DataFrame()), extra]).drop_duplicates(subset=['PRODUCT_SET_SID'])
 
     target_lang = 'fr' if country_validator.country == "Morocco" else 'en'
+
     rows = []
     processed = set()
     for name, _, _ in validations:
@@ -1560,6 +1639,7 @@ def to_excel_base(df, sheet, cols, writer, format_rules=False):
     for c in cols:
         if c not in df_p.columns: df_p[c] = pd.NA
     df_to_write = df_p[[c for c in cols if c in df_p.columns]]
+    # Final repair pass — catches any mojibake that survived from cached sessions
     df_to_write = _repair_mojibake(df_to_write.copy())
     df_to_write.to_excel(writer, index=False, sheet_name=sheet)
     if format_rules and 'Status' in df_to_write.columns:
@@ -1609,7 +1689,6 @@ def prepare_full_data_merged(data_df, final_report_df):
         d_cp['PRODUCT_SET_SID'] = d_cp['PRODUCT_SET_SID'].astype(str).str.strip()
         r_cp['ProductSetSid'] = r_cp['ProductSetSid'].astype(str).str.strip()
         merged = pd.merge(d_cp, r_cp[["ProductSetSid", "Status", "Reason", "Comment", "FLAG", "SellerName"]], left_on="PRODUCT_SET_SID", right_on="ProductSetSid", how='left')
-        if 'ProjectSetSid' in merged.columns: merged.drop(columns=['ProjectSetSid'], inplace=True)
         if 'ProductSetSid' in merged.columns: merged.drop(columns=['ProductSetSid'], inplace=True)
         return merged
     except Exception as e:
@@ -1650,8 +1729,10 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
+
     committed_json = json.dumps(rejected_state)
     html_dir = "rtl" if st.session_state.ui_lang == "ar" else "ltr"
+
     cards_data = []
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
@@ -1672,6 +1753,8 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
             "price": price_str
         })
     cards_json = json.dumps(cards_data)
+
+    # CHANGE 6: Safe upper() — guard against None translation value
     rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
     return f"""<!DOCTYPE html>
@@ -1943,6 +2026,7 @@ renderAll();
 # -------------------------------------------------
 # UI COMPONENTS
 # -------------------------------------------------
+# CHANGE 8: Reduced timeout from 2s to 1s to prevent page blocking on slow CDNs
 @st.cache_data(ttl=86400, show_spinner=False)
 def analyze_image_quality_cached(url: str) -> List[str]:
     if not url or not str(url).startswith("http"): return []
@@ -1961,8 +2045,10 @@ def analyze_image_quality_cached(url: str) -> List[str]:
     return warnings
 
 def _clear_flag_df_selection(title: str):
+    """Helper: wipe the st.dataframe widget selection state for a given flag tab."""
     if f"df_{title}" in st.session_state:
         del st.session_state[f"df_{title}"]
+
 
 @st.dialog("Confirm Bulk Approval")
 def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator):
@@ -1982,78 +2068,39 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
 
-            # ── FIX 3: Learning hook — batch corrections, single Firestore write,
-            #           full category path resolved via code_to_path ────────────
             if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE and msg_approved > 0:
                 try:
-                    _engine        = _get_cat_matcher_engine()
-                    _code_to_path  = support_files.get('code_to_path', {})
-                    _cats_list     = support_files.get('categories_names_list', [])
+                    _engine = _get_cat_matcher_engine()
                     if _engine is not None:
-                        corrections_to_learn: dict = {}
-                        codes_learned: set = set()
+                        learned_count = 0
                         for sid in sids_to_process:
-                            row = subset_data[
-                                subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)
-                            ]
+                            row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
                             if row.empty:
                                 continue
-                            name = str(row.iloc[0].get('NAME', '')).strip()
-                            if not name:
-                                continue
-
-                            cat_code = (
-                                str(row.iloc[0].get('CATEGORY_CODE', ''))
-                                .strip()
-                                .split('.')[0]
-                            )
-
-                            # Resolve full category path
-                            category = _code_to_path.get(cat_code.lower(), '')
-                            if not category:
-                                leaf = str(row.iloc[0].get('CATEGORY', '')).strip().lower()
-                                if leaf and leaf not in ('nan', 'none', ''):
-                                    matches = [
-                                        c for c in _cats_list
-                                        if c.strip().lower().endswith(leaf)
-                                    ]
-                                    category = max(matches, key=len) if matches else leaf
-                                else:
-                                    category = str(row.iloc[0].get('CATEGORY', '')).strip()
-
-                            if category and category.lower() not in ('nan', 'none', ''):
-                                corrections_to_learn[name] = category
-                                if cat_code:
-                                    corrections_to_learn[f"__code__{cat_code}"] = category
-                                    codes_learned.add(cat_code)
-
-                        if corrections_to_learn:
-                            _engine.apply_learned_corrections_bulk(corrections_to_learn)
-                            real_count = sum(
-                                1 for k in corrections_to_learn
-                                if not k.startswith('__code__')
-                            )
+                            name     = str(row.iloc[0].get('NAME', '')).strip()
+                            category = str(row.iloc[0].get('CATEGORY', '')).strip()
+                            if name and category and category.lower() not in ('nan', 'none', ''):
+                                # ADDED: auto_save=False so we don't hit the Firebase speed limit!
+                                _engine.apply_learned_correction(name, category, auto_save=False)
+                                learned_count += 1
+                        if learned_count:
+                            # SAVE ONCE AT THE VERY END
+                            _engine.save_learning_db()
+                            if _CAT_MATCHER_AVAILABLE and hasattr(_engine, '_retrain_correction_classifier'):
+                                try: _engine._retrain_correction_classifier()
+                                except: pass
+                                
                             st.session_state.main_toasts.append(
-                                f"🧠 Engine learned {real_count} name(s) + "
-                                f"{len(codes_learned)} category code(s): "
-                                f"{', '.join(codes_learned)}"
-                            )
-                        else:
-                            # Debug: nothing was saved — tell the user why
-                            st.session_state.main_toasts.append(
-                                "⚠️ No corrections saved — check that products "
-                                "have NAME and CATEGORY_CODE columns."
+                                f"🧠 Engine learned {learned_count} correction(s) from your approvals."
                             )
                 except Exception as _le:
                     logger.warning("Wrong Category approval learning failed: %s", _le)
-                    st.session_state.main_toasts.append(
-                        f"⚠️ Learning failed: {str(_le)[:80]}"
-                    )
 
             if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
+            # Keep expander open and clear selection after approval
             st.session_state[f"exp_{title}"] = True
             _clear_flag_df_selection(title)
         st.rerun()
@@ -2067,6 +2114,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if 'LIST_VARIATIONS' in data.columns: current_display_cols.append('LIST_VARIATIONS')
 
     if cache_key not in st.session_state.display_df_cache:
+        # Pull CATEGORY_CODE alongside display cols for full-path resolution
         _extra_cols = [c for c in current_display_cols if c in data.columns]
         if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols:
             _extra_cols = _extra_cols + ['CATEGORY_CODE']
@@ -2076,6 +2124,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left'
         )[[c for c in _extra_cols if c in data.columns]]
 
+        # ── Resolve CATEGORY_CODE → full hierarchical category path ──────
         _code_to_path = support_files.get('code_to_path', {})
         if _code_to_path and 'CATEGORY_CODE' in df_display.columns:
             df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(
@@ -2083,6 +2132,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             )
             df_display = df_display.drop(columns=['CATEGORY_CODE'])
 
+        # Keep only the originally-requested display cols (no stray CATEGORY_CODE)
         df_display = df_display[[c for c in current_display_cols if c in df_display.columns]]
         st.session_state.display_df_cache[cache_key] = df_display
     else:
@@ -2143,6 +2193,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
+            # Clear selection before opening the dialog so rows are deselected on return
             _clear_flag_df_selection(title)
             bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
 
@@ -2159,6 +2210,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
+                    # Clear selection so table shows fresh after reject
                     _clear_flag_df_selection(title)
                     st.rerun()
             else:
@@ -2172,55 +2224,37 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
 
-                    # ── FIX 4: Manual Wrong Category rejection — batch write + full path ──
+                    # ── Learning hook: user manually tagged items as Wrong Category
                     if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                         try:
-                            _engine        = _get_cat_matcher_engine()
-                            _cats          = support_files.get('categories_names_list', [])
-                            _code_to_path  = support_files.get('code_to_path', {})
+                            _engine = _get_cat_matcher_engine()
+                            _cats   = support_files.get('categories_names_list', [])
                             if _engine is not None and _cats:
                                 if not _engine._tfidf_built:
                                     _engine.build_tfidf_index(_cats)
                                 _kw_map = _engine.build_keyword_to_category_mapping()
-                                corrections_to_learn: dict = {}
+                                learned_count = 0
                                 for sid in to_reject:
-                                    prod_row = data[
-                                        data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)
-                                    ]
+                                    prod_row = data[data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
                                     if prod_row.empty:
                                         continue
                                     name = str(prod_row.iloc[0].get('NAME', '')).strip()
                                     if not name:
                                         continue
-                                    # Resolve full path via code_to_path first
-                                    cat_code = (
-                                        str(prod_row.iloc[0].get('CATEGORY_CODE', ''))
-                                        .strip()
-                                        .split('.')[0]
-                                    )
-                                    predicted = _code_to_path.get(cat_code.lower(), '')
-
-                                    # If code_to_path missed it, search categories_list
-                                    if not predicted:
-                                        leaf = str(prod_row.iloc[0].get('CATEGORY', '')).strip().lower()
-                                        if leaf and leaf not in ('nan', 'none', ''):
-                                            matches = [
-                                                c for c in _cats
-                                                if c.strip().lower().endswith(leaf)
-                                            ]
-                                            predicted = max(matches, key=len) if matches else (
-                                                _engine.get_category_with_fallback(name, _kw_map, _cats)
-                                            )
-                                        else:
-                                            predicted = _engine.get_category_with_fallback(name, _kw_map, _cats)
-
+                                    predicted = _engine.get_category_with_fallback(name, _kw_map, _cats)
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
-                                        corrections_to_learn[name] = predicted
-                                if corrections_to_learn:
-                                    # Single Firestore write for ALL corrections
-                                    _engine.apply_learned_corrections_bulk(corrections_to_learn)
+                                        # ADDED: auto_save=False
+                                        _engine.apply_learned_correction(name, predicted, auto_save=False)
+                                        learned_count += 1
+                                if learned_count:
+                                    # SAVE ONCE AT THE VERY END
+                                    _engine.save_learning_db()
+                                    if _CAT_MATCHER_AVAILABLE and hasattr(_engine, '_retrain_correction_classifier'):
+                                        try: _engine._retrain_correction_classifier()
+                                        except: pass
+
                                     st.session_state.main_toasts.append(
-                                        f"🧠 Engine noted {len(corrections_to_learn)} missed Wrong Category item(s) for future runs."
+                                        f"🧠 Engine noted {learned_count} missed Wrong Category item(s) for future runs."
                                     )
                         except Exception as _le:
                             logger.warning("Wrong Category manual rejection learning failed: %s", _le)
@@ -2228,6 +2262,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
+                    # Clear selection so table shows fresh after reject
                     _clear_flag_df_selection(title)
                     st.rerun()
 
@@ -2262,20 +2297,17 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     st.header(_t("system_status"))
-
-    # ── FIX 1: Also clear cache_resource so engine reloads fresh from Firestore ──
     if st.button(_t("clear_cache"), use_container_width=True, type="secondary"):
         st.cache_data.clear()
-        st.cache_resource.clear()          # ← evicts engine singleton, forces Firestore reload
         st.session_state.display_df_cache = {}
         if os.path.exists(PARQUET_CACHE_DIR): shutil.rmtree(PARQUET_CACHE_DIR)
         if os.path.exists(FLAG_CACHE_DIR): shutil.rmtree(FLAG_CACHE_DIR)
         st.rerun()
-
     st.markdown("---")
     st.header(_t("display_settings"))
     new_mode = "wide" if "Wide" in st.radio("Layout Mode", ["Centered", "Wide"], index=1 if st.session_state.layout_mode == "wide" else 0) else "centered"
     if new_mode != st.session_state.layout_mode: st.session_state.layout_mode = new_mode; st.rerun()
+
 
 # ==========================================
 # SECTION 1: UPLOAD & VALIDATION
@@ -2359,27 +2391,7 @@ if st.session_state.get('last_processed_files') != process_signature:
     if process_signature == "empty":
         st.session_state.last_processed_files = "empty"
     else:
-        # ── FIX 2: Mix learning_db hash into cache key so approvals
-        #           invalidate old parquet results ─────────────────────────
-        _engine_for_hash = _get_cat_matcher_engine()
-        if _engine_for_hash is not None and _engine_for_hash.learning_db:
-            try:
-                _ldb_hash = hashlib.md5(
-                    json.dumps(
-                        sorted(_engine_for_hash.learning_db.items()),
-                        ensure_ascii=False,
-                    ).encode()
-                ).hexdigest()[:8]
-            except Exception:
-                _ldb_hash = "ldb_err"
-        else:
-            _ldb_hash = "noengine"
-
-        sig_hash = hashlib.md5(
-            (process_signature + _ldb_hash).encode()
-        ).hexdigest()
-        # ─────────────────────────────────────────────────────────────────
-
+        sig_hash = hashlib.md5(process_signature.encode()).hexdigest()
         cached_data = load_df_parquet(f"{sig_hash}_data.parquet")
         cached_report = load_df_parquet(f"{sig_hash}_report.parquet")
 
@@ -2400,6 +2412,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                         raw_data = pd.read_excel(_buf, engine='openpyxl', dtype=str)
                     else:
                         raw_data = _detect_and_read_csv(_buf)
+                    # Repair mojibake (UTF-8 decoded as Latin-1) on all string columns
                     raw_data = _repair_mojibake(raw_data)
                     detected_modes.append(detect_file_type(raw_data))
                     all_dfs.append(raw_data)
@@ -2497,6 +2510,7 @@ if _bridge_val:
                 st.session_state.display_df_cache.clear()
                 st.session_state.main_toasts.append((f"Rejected {_total} product(s)", ":material/block:"))
                 st.session_state.main_bridge_counter += 1
+                # CHANGE 16: Reset scroll flag on bridge-triggered reruns
                 st.session_state.do_scroll_top = False
                 st.rerun()
 
@@ -2509,7 +2523,7 @@ if _bridge_val:
                     _total_restored += 1
             if _total_restored > 0:
                 st.session_state.main_bridge_counter += 1
-                st.session_state.do_scroll_top = False
+                st.session_state.do_scroll_top = False  # CHANGE 16
                 st.rerun()
 
     except Exception as _e:
@@ -2532,10 +2546,10 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            (_t("total_prod"),  len(data),                                                                                             JUMIA_COLORS['dark_gray']),
-            (_t("approved"),    len(app_df),                                                                                           JUMIA_COLORS['success_green']),
-            (_t("rejected"),    len(rej_df),                                                                                           JUMIA_COLORS['jumia_red']),
-            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                           JUMIA_COLORS['primary_orange']),
+            (_t("total_prod"),  len(data),                                                                                               JUMIA_COLORS['dark_gray']),
+            (_t("approved"),    len(app_df),                                                                                             JUMIA_COLORS['success_green']),
+            (_t("rejected"),    len(rej_df),                                                                                             JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                             JUMIA_COLORS['primary_orange']),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
@@ -2594,6 +2608,7 @@ def render_image_grid():
 
     if 'MAIN_IMAGE' not in data.columns: data['MAIN_IMAGE'] = ''
     available_cols = [c for c in GRID_COLS if c in data.columns]
+    # Include CATEGORY_CODE so we can resolve the full hierarchical path
     if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
         available_cols = available_cols + ['CATEGORY_CODE']
     review_data = pd.merge(
@@ -2602,6 +2617,7 @@ def render_image_grid():
         left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
     )
 
+    # ── Resolve CATEGORY_CODE → full hierarchical category path ──────────
     _code_to_path = support_files.get('code_to_path', {})
     if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
         review_data = review_data.copy()
@@ -2669,6 +2685,7 @@ def render_image_grid():
     )
     components.html(grid_html, height=800, scrolling=True)
 
+    # CHANGE 16: Only scroll on explicit page navigation
     if st.session_state.get("do_scroll_top", False):
         components.html(
             "<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>",
@@ -2705,6 +2722,7 @@ def render_exports_section():
 
     all_cached = all(title in st.session_state.exports_cache for title, _, _, _ in exports_config)
 
+    # CHANGE 15: Success banner when all reports are ready
     if all_cached:
         st.success("All reports generated and ready to download.", icon=":material/check_circle:")
     else:
