@@ -926,6 +926,52 @@ class CategoryMatcherEngine:
     # FIRESTORE PERSISTENCE
     # ─────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _sanitize_firestore_key(key: str) -> str:
+        """
+        Firestore document field names must not contain:
+          .  /  [  ]  *  `
+        and must not be empty.
+
+        We replace every illegal character with an underscore.
+        Unicode is normalized to ASCII where possible so special characters
+        like em-dashes do not cause issues in some Firestore client versions.
+        The special __code__XXXX keys have their prefix protected.
+        """
+        import unicodedata
+
+        # Normalize unicode to closest ASCII equivalent
+        # e.g. em-dash → -, accented chars → base letter
+        try:
+            normalized = unicodedata.normalize('NFKD', key)
+            key = normalized.encode('ascii', 'ignore').decode('ascii')
+        except Exception:
+            pass  # keep original if normalization fails
+
+        # Protect __code__ prefix
+        if key.startswith('__code__'):
+            suffix = key[len('__code__'):]
+            suffix = re.sub(r'[./\[\]*`]', '_', suffix)
+            suffix = re.sub(r'_+', '_', suffix).strip('_')
+            return f'__code__{suffix}' if suffix else '__code__unknown'
+
+        sanitized = re.sub(r'[./\[\]*`]', '_', key)
+        sanitized = re.sub(r'_+', '_', sanitized)
+        sanitized = sanitized.strip('_')
+        return sanitized if sanitized else 'unknown'
+
+    def _safe_learning_db_for_firestore(self) -> dict:
+        """
+        Return a copy of learning_db with all keys sanitized for Firestore.
+        If two keys collide after sanitization the later one wins — acceptable
+        because they would map to the same product anyway.
+        """
+        safe: dict[str, str] = {}
+        for k, v in self.learning_db.items():
+            safe_key = self._sanitize_firestore_key(k)
+            safe[safe_key] = v
+        return safe
+
     def load_learning_db(self) -> dict[str, str]:
         """Load learned corrections from Firestore, merging all chunks."""
         db: dict[str, str] = {}
@@ -951,15 +997,14 @@ class CategoryMatcherEngine:
         Persist learning_db to Firestore.
 
         Guarantees:
-          • Stale chunks are deleted before new ones are written (no ghost data).
-          • A 2-second debounce prevents rapid successive writes from racing.
+          • Keys are sanitized — no periods, slashes or other illegal chars
+            that would cause Firestore to silently drop the entire batch.
+          • Stale chunks are deleted before new ones are written.
+          • 2-second debounce prevents rapid successive writes from racing.
           • All chunk writes happen in a single atomic batch commit.
         """
         now = time.time()
         if now - self._last_save_time < 2.0:
-            # Too soon after last write — mark pending but skip this call.
-            # The next explicit call (e.g. from apply_learned_corrections_bulk)
-            # will proceed normally since it waits for 2 s to elapse.
             self._pending_save = True
             print("⏳ Save debounced — will persist on next call.")
             return
@@ -969,21 +1014,23 @@ class CategoryMatcherEngine:
 
         try:
             CHUNK_SIZE = 400
-            items  = list(self.learning_db.items())
-            chunks = [
+            # Sanitize ALL keys before writing — this is the critical fix
+            safe_db = self._safe_learning_db_for_firestore()
+            items   = list(safe_db.items())
+            chunks  = [
                 dict(items[i : i + CHUNK_SIZE])
                 for i in range(0, len(items), CHUNK_SIZE)
             ]
 
             batch = self.db_client.batch()
 
-            # ── Step 1: delete ALL existing learning_db_* documents ──────
+            # Step 1: delete ALL existing learning_db_* documents
             existing_docs = self.db_client.collection('matcher_data').stream()
             for doc in existing_docs:
                 if doc.id.startswith('learning_db'):
                     batch.delete(doc.reference)
 
-            # ── Step 2: write fresh chunks ────────────────────────────────
+            # Step 2: write fresh sanitized chunks
             for idx, chunk in enumerate(chunks):
                 doc_ref = self.db_client.collection('matcher_data').document(
                     f'learning_db_{idx}'
@@ -992,7 +1039,7 @@ class CategoryMatcherEngine:
 
             batch.commit()
             print(
-                f"✅ Saved {len(self.learning_db)} entries "
+                f"✅ Saved {len(safe_db)} entries "
                 f"across {len(chunks)} Firestore document(s)."
             )
 
@@ -1027,8 +1074,7 @@ class CategoryMatcherEngine:
     def apply_learned_correction(self, product_name: str, category: str) -> None:
         """
         Store a single correction and persist immediately.
-        Prefer apply_learned_corrections_bulk() when approving multiple items
-        to avoid N successive Firestore writes.
+        Prefer apply_learned_corrections_bulk() when approving multiple items.
         """
         self.learning_db[product_name.lower().strip()] = category
         self.save_learning_db()
@@ -1041,8 +1087,7 @@ class CategoryMatcherEngine:
     def apply_learned_corrections_bulk(self, corrections: dict[str, str]) -> None:
         """
         Apply multiple product→category corrections and write to Firestore
-        exactly ONCE.  This is the preferred method when approving batches
-        of items from the Streamlit UI.
+        exactly ONCE.  Preferred method when approving batches from the UI.
 
         Args:
             corrections: {product_name: full_category_path, ...}
@@ -1053,9 +1098,8 @@ class CategoryMatcherEngine:
         for name, cat in corrections.items():
             self.learning_db[name.lower().strip()] = cat
 
-        # Force save even if debounce would normally block it,
-        # since this is an explicit bulk operation from the user.
-        self._last_save_time = 0.0   # reset guard so save proceeds
+        # Force save — reset debounce guard so this always goes through
+        self._last_save_time = 0.0
         self.save_learning_db()
 
         if SKLEARN_AVAILABLE and len(self.learning_db) >= 2:
@@ -1068,26 +1112,31 @@ class CategoryMatcherEngine:
         """
         Check the learning DB for an exact or near-exact match.
 
-        Matching rules (tightest to loosest):
-          1. Exact key match.
-          2. Key is a prefix of the product name AND key is ≥ 10 chars
-             (prevents short keys like 'ladies top' from swallowing
-              unrelated longer names like 'ladies top quality cotton').
+        Keys in learning_db may have been sanitized (periods/slashes replaced
+        with underscores) when loaded back from Firestore, so we sanitize the
+        lookup key the same way before comparing.
 
-        Returns category string or None.
+        Matching rules:
+          1. Exact match on raw key (in-memory, not yet flushed).
+          2. Exact match on sanitized key (loaded from Firestore).
+          3. Sanitized key is a prefix of the sanitized product name AND
+             key length >= 10 chars.
         """
-        pn = product_name.lower().strip()
+        pn_raw  = product_name.lower().strip()
+        pn_safe = self._sanitize_firestore_key(pn_raw)
 
-        # 1. Exact match
-        if pn in self.learning_db:
-            return self.learning_db[pn]
+        # 1. Exact match — raw key (catches in-memory corrections not yet flushed)
+        if pn_raw in self.learning_db:
+            return self.learning_db[pn_raw]
 
-        # 2. Prefix match — key must be substantial (≥ 10 chars) and
-        #    the product name must START with it so we don't get
-        #    'ladies top' matching 'ladies top quality cotton red 3pcs'
-        #    when we only want it to match 'ladies top' exactly.
+        # 2. Exact match — sanitized key (catches keys loaded from Firestore)
+        if pn_safe in self.learning_db:
+            return self.learning_db[pn_safe]
+
+        # 3. Prefix match on sanitized keys — must be substantial (>= 10 chars)
         for key, cat in self.learning_db.items():
-            if len(key) >= 10 and pn.startswith(key):
+            safe_key = self._sanitize_firestore_key(key)
+            if len(safe_key) >= 10 and pn_safe.startswith(safe_key):
                 return cat
 
         return None
@@ -1803,15 +1852,37 @@ class CategoryMatcherEngine:
 
 
 # ── Singleton accessor ────────────────────────────────────────────────────────
+# The module keeps ONE instance so check_wrong_category() always uses the
+# same object that the Streamlit UI teaches via apply_learned_corrections_bulk().
+#
+# streamlit_app.py must call set_engine(instance) immediately after creating
+# the engine via @st.cache_resource so both callers share the same brain.
 
-_ENGINE_INSTANCE = None
+_ENGINE_INSTANCE: "CategoryMatcherEngine | None" = None
 
-def get_engine():
-    """Return a module-level singleton engine."""
+
+def get_engine() -> "CategoryMatcherEngine":
+    """Return the module-level singleton engine, creating it if needed."""
     global _ENGINE_INSTANCE
     if _ENGINE_INSTANCE is None:
         _ENGINE_INSTANCE = CategoryMatcherEngine()
     return _ENGINE_INSTANCE
+
+
+def set_engine(instance: "CategoryMatcherEngine") -> None:
+    """
+    Inject an externally-created engine instance as the module singleton.
+
+    Call this from streamlit_app.py right after @st.cache_resource creates
+    the engine so that check_wrong_category() and the Streamlit approval
+    buttons share the exact same object — and therefore the same learning_db.
+
+    Example (streamlit_app.py):
+        engine = _get_cat_matcher_engine()   # cache_resource singleton
+        set_engine(engine)                   # wire it into the module
+    """
+    global _ENGINE_INSTANCE
+    _ENGINE_INSTANCE = instance
 
 
 # ── Streamlit validator function ──────────────────────────────────────────────
