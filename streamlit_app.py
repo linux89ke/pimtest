@@ -2059,10 +2059,15 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             new_report, _ = cached_validate_products(data_hash, subset_data, support_files, country_validator.code, data_has_warranty_cols_check, skip_validators=[title])
             msg_moved, msg_approved = {}, 0
             for sid in sids_to_process:
-                new_row = new_report[new_report['ProductSetSid'] == sid]
-                if new_row.empty or not str(new_row.iloc[0]['FLAG']):
-                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
-                    msg_approved += 1
+                            row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
+                            if row.empty:
+                                continue
+                            name     = str(row.iloc[0].get('NAME', '')).strip()
+                            category = str(row.iloc[0].get('CATEGORY', '')).strip()
+                            if name and category and category.lower() not in ('nan', 'none', ''):
+                                # ADDED: auto_save=False so we don't hit the Firebase speed limit!
+                                _engine.apply_learned_correction(name, category, auto_save=False)
+                                learned_count += 1
                 else:
                     new_flag = str(new_row.iloc[0]['FLAG'])
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
