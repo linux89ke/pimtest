@@ -58,11 +58,22 @@ except ImportError:
 
 @st.cache_resource(show_spinner=False)
 def _get_cat_matcher_engine():
-    """Singleton engine — built once per Streamlit worker process."""
+    """
+    Singleton engine — built once per Streamlit worker process.
+
+    CRITICAL: after creation we immediately inject this instance into the
+    category_matcher_engine module via set_engine() so that
+    check_wrong_category() (which calls get_engine() internally) uses the
+    exact same object that the Streamlit UI teaches via approve buttons.
+    Without this, approvals teach Brain A but the validator uses Brain B.
+    """
     if not _CAT_MATCHER_AVAILABLE:
         return None
     try:
-        return CategoryMatcherEngine()
+        from category_matcher_engine import set_engine as _set_engine
+        instance = CategoryMatcherEngine()
+        _set_engine(instance)   # ← wire Brain A = Brain B
+        return instance
     except Exception as e:
         logger.warning("CategoryMatcherEngine init failed: %s", e)
         return None
@@ -1980,6 +1991,7 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     _cats_list     = support_files.get('categories_names_list', [])
                     if _engine is not None:
                         corrections_to_learn: dict = {}
+                        codes_learned: set = set()
                         for sid in sids_to_process:
                             row = subset_data[
                                 subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)
@@ -2010,25 +2022,33 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                                     category = str(row.iloc[0].get('CATEGORY', '')).strip()
 
                             if category and category.lower() not in ('nan', 'none', ''):
-                                # Save by product name
                                 corrections_to_learn[name] = category
-                                # ALSO save by category code — this means ALL future
-                                # products with this code are auto-approved regardless
-                                # of their name. Most reliable fix for missing code_to_path.
                                 if cat_code:
                                     corrections_to_learn[f"__code__{cat_code}"] = category
+                                    codes_learned.add(cat_code)
 
                         if corrections_to_learn:
                             _engine.apply_learned_corrections_bulk(corrections_to_learn)
-                            # Count only real product corrections (not __code__ keys)
                             real_count = sum(
-                                1 for k in corrections_to_learn if not k.startswith('__code__')
+                                1 for k in corrections_to_learn
+                                if not k.startswith('__code__')
                             )
                             st.session_state.main_toasts.append(
-                                f"🧠 Engine learned {real_count} correction(s) from your approvals."
+                                f"🧠 Engine learned {real_count} name(s) + "
+                                f"{len(codes_learned)} category code(s): "
+                                f"{', '.join(codes_learned)}"
+                            )
+                        else:
+                            # Debug: nothing was saved — tell the user why
+                            st.session_state.main_toasts.append(
+                                "⚠️ No corrections saved — check that products "
+                                "have NAME and CATEGORY_CODE columns."
                             )
                 except Exception as _le:
                     logger.warning("Wrong Category approval learning failed: %s", _le)
+                    st.session_state.main_toasts.append(
+                        f"⚠️ Learning failed: {str(_le)[:80]}"
+                    )
 
             if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
