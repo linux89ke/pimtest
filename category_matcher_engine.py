@@ -49,6 +49,16 @@ class CategoryMatcherEngine:
     _BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
     _SK_MODEL_PATH    = os.path.join(_BASE_DIR, "sk_model.pkl")
 
+    # Class-level regex cache — compiled once, shared across all instances
+    _compiled_pattern_cache: dict = {}
+
+    @classmethod
+    def _cre(cls, pattern: str) -> re.Pattern:
+        """Return a compiled, cached regex for *pattern* (IGNORECASE)."""
+        if pattern not in cls._compiled_pattern_cache:
+            cls._compiled_pattern_cache[pattern] = re.compile(pattern, re.IGNORECASE)
+        return cls._compiled_pattern_cache[pattern]
+
     def __init__(self):
         self.db_client = self._init_firebase()
         self.learning_db: dict[str, str] = self.load_learning_db()
@@ -68,6 +78,13 @@ class CategoryMatcherEngine:
         self._sk_clf_vec     = None
         self._sk_le          = None
         self._sk_clf_trained = False
+
+        # Per-instance caches (set by build_tfidf_index / build_keyword_to_category_mapping)
+        self._cached_kw_map:          dict | None = None
+        self._cached_leaf_categories: dict | None = None
+        self._cached_last_parts:      dict | None = None
+        # Result cache for identify_product_type — avoids reprocessing identical names
+        self._identify_cache:         dict        = {}
 
         self._load_sklearn_model()
 
@@ -1042,6 +1059,27 @@ class CategoryMatcherEngine:
         except Exception:
             return None, 0.0
 
+    def batch_predict_domains(self, product_names: list) -> list:
+        """
+        Vectorised batch prediction — transforms all names in ONE sklearn call.
+        Replaces per-product _sklearn_global_best loops; ~10-50x faster on large batches.
+        Returns list of (best_category, score) in same order as input.
+        """
+        if not product_names:
+            return []
+        if not self._sk_built or self._sk_global_mat is None:
+            return [(None, 0.0)] * len(product_names)
+        try:
+            cleaned = [self._sk_clean(n) or 'unknown' for n in product_names]
+            qmat    = self._sk_global_vec.transform(cleaned)
+            sims    = cosine_similarity(qmat, self._sk_global_mat)  # (n_products, n_cats)
+            best_idxs   = sims.argmax(axis=1)
+            best_scores = sims.max(axis=1)
+            return [(self._sk_cats[int(idx)], float(score))
+                    for idx, score in zip(best_idxs, best_scores)]
+        except Exception:
+            return [(None, 0.0)] * len(product_names)
+
     def _retrain_correction_classifier(self):
         if not SKLEARN_AVAILABLE or len(self.learning_db) < 2:
             return
@@ -1169,6 +1207,12 @@ class CategoryMatcherEngine:
             self._build_sklearn_index(categories_list)
         else:
             self._build_domain_indexes(categories_list)
+        # Pre-compute and cache leaf/last-parts so get_most_specific_category
+        # never has to rebuild them per-product-call.
+        self._cached_leaf_categories = self.precompute_leaf_categories(categories_list)
+        self._cached_last_parts      = self.precompute_last_parts(categories_list)
+        # Invalidate keyword-map cache when the category list changes
+        self._cached_kw_map = None
         self._tfidf_built = True
 
     def similarity_match(self, product_name, categories_list):
@@ -1353,7 +1397,11 @@ class CategoryMatcherEngine:
     def identify_product_type(self, product_name):
         if pd.isna(product_name) or not isinstance(product_name, str):
             return None, []
-        
+
+        # ── Per-instance result cache: same name → same answer ────────────────
+        if product_name in self._identify_cache:
+            return self._identify_cache[product_name]
+
         product_lower = product_name.lower()
         ignore_patterns = [
             r'\b(lg|samsung|sony|panasonic|philips|whirlpool|haier|sharp|bosch|siemens|electrolux|daewoo|hitachi|toshiba|mitsubishi|canon|nikon|apple|samsung|google|microsoft|amazon)\b',
@@ -1366,10 +1414,10 @@ class CategoryMatcherEngine:
             r'\b(genuine|original|authentic|imported|export|local|custom|made\s*in)\b',
             r'\b(\d{4}|\d{2}-\d{2}|v\d+\.?\d*|model\s*\w+)\b',
         ]
-        
+
         cleaned_name = product_lower
         for pattern in ignore_patterns:
-            cleaned_name = re.sub(pattern, ' ', cleaned_name)
+            cleaned_name = self._cre(pattern).sub(' ', cleaned_name)
         cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
         
         women_fashion_patterns = [
@@ -1388,8 +1436,10 @@ class CategoryMatcherEngine:
             (r'\bshort\b|\bshorts\b(?!.*circuit|.*cut)', 'Women Shorts'),
         ]
         for pattern, product_type in women_fashion_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         men_fashion_patterns = [
             (r'\bmen\s*jeans?\b|\bguy\s*jeans?\b', 'Men Jeans'),
@@ -1416,8 +1466,10 @@ class CategoryMatcherEngine:
             (r'\bmen\s*pyjama\b|\bmen\s*pajama\b|\bmen\s*sleepwear\b', 'Men Sleepwear'),
         ]
         for pattern, product_type in men_fashion_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         kids_fashion_patterns = [
             (r'\bgirl\s*dress\b|\bgirls\s*dress\b|\bgirl\s*gown\b', 'Girls Dress'),
@@ -1434,8 +1486,10 @@ class CategoryMatcherEngine:
             (r'\bkid\s*pyjama\b|\bkids\s*pyjama\b|\bbaby\s*pyjama\b|\bchildren\s*pyjama\b', 'Kids Sleepwear'),
         ]
         for pattern, product_type in kids_fashion_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         traditional_patterns = [
             (r'\bankara\b(?!.*fabric|.*cloth)', 'Ankara Wear'),
@@ -1445,8 +1499,10 @@ class CategoryMatcherEngine:
             (r'\bkidagba\b|\bbubou\b|\bgele\b', 'Traditional Wear'),
         ]
         for pattern, product_type in traditional_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         electronics_patterns = [
             (r'\bsmart\s*tv\b|\bled\s*tv\b|\boled\s*tv\b|\b4k\s*tv\b|\buhd\s*tv\b|\blcd\s*tv\b|\btelevision\b|\bflat\s*screen\b', 'Television'),
@@ -1470,8 +1526,10 @@ class CategoryMatcherEngine:
             (r'\bdrone\b(?!.*rc)', 'Drone'),
         ]
         for pattern, product_type in electronics_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         home_patterns = [
             (r'\bsofa\b|\bcouch\b|\bsectional\s*sofa\b|\bsofa\s*set\b', 'Sofa'),
@@ -1505,8 +1563,10 @@ class CategoryMatcherEngine:
             (r'\bthermal\s*printer\b|\blabel\s*printer\b', 'Label Printer'),
         ]
         for pattern, product_type in home_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         health_patterns = [
             (r'\bhair\s*extension\b|\bhair\s*weave\b|\bbundle\s*hair\b|\bclosure\s*hair\b|\bfrontal\s*hair\b', 'Hair Extension'),
@@ -1555,8 +1615,10 @@ class CategoryMatcherEngine:
             (r'\bglutathione\b', 'Skin Supplement'),
         ]
         for pattern, product_type in health_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         auto_patterns = [
             (r'\bcar\s*wash\b|\bcar\s*shampoo\b|\bauto\s*wash\b', 'Car Wash'),
@@ -1587,8 +1649,10 @@ class CategoryMatcherEngine:
             (r'\bcar\s*organizer\b|\bauto\s*organizer\b', 'Car Organizer'),
         ]
         for pattern, product_type in auto_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         baby_patterns = [
             (r'\bbaby\s*formula\b|\binfant\s*formula\b|\bbaby\s*milk\b', 'Baby Formula'),
@@ -1611,8 +1675,10 @@ class CategoryMatcherEngine:
             (r'\bbaby\s*blanket\b|\bswaddle\b|\binfant\s*blanket\b', 'Baby Blanket'),
         ]
         for pattern, product_type in baby_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         phone_patterns = [
             (r'\bsmartphone\b|\bandroid\s*phone\b|\bmobile\s*phone\b|\bcell\s*phone\b', 'Smartphone'),
@@ -1631,8 +1697,10 @@ class CategoryMatcherEngine:
             (r'\bcordless\s*phone\b|\blandline\s*phone\b|\btelefone\b', 'Landline Phone'),
         ]
         for pattern, product_type in phone_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         computing_patterns = [
             (r'\blaptop\b|\bnotebook\s*computer\b|\bchromebook\b', 'Laptop'),
@@ -1658,8 +1726,10 @@ class CategoryMatcherEngine:
             (r'\bcomputer\s*speaker\b|\bdesk\s*speaker\b', 'Computer Speaker'),
         ]
         for pattern, product_type in computing_patterns:
-            if re.search(pattern, product_lower, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(product_lower):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
 
         product_patterns = [
             (r'\brefrigerator\b|\bfridge\b|\bmini\s*fridge\b|\bdoor\s*fridge\b|\bbar\s*fridge\b', 'Refrigerator'),
@@ -2004,13 +2074,16 @@ class CategoryMatcherEngine:
         ]
         
         for pattern, product_type in product_patterns:
-            if re.search(pattern, cleaned_name, re.IGNORECASE):
-                return product_type, self._get_context_keywords(product_name, product_type)
+            if self._cre(pattern).search(cleaned_name):
+                result = product_type, self._get_context_keywords(product_name, product_type)
+                self._identify_cache[product_name] = result
+                return result
         
         words = cleaned_name.split()
         product_words = [w for w in words if len(w) > 3 and w not in ['with', 'for', 'and', 'the', 'this', 'that', 'your']]
-        
-        return None, product_words[:5]
+        result = None, product_words[:5]
+        self._identify_cache[product_name] = result
+        return result
     
     def _get_context_keywords(self, product_name, product_type):
         context_patterns = {
@@ -3116,6 +3189,9 @@ class CategoryMatcherEngine:
         return self.get_category_for_product(product_name, keyword_mapping, categories_list)
     
     def build_keyword_to_category_mapping(self):
+        # Return cached copy — the mapping is static; only invalidated by build_tfidf_index
+        if self._cached_kw_map is not None:
+            return self._cached_kw_map
         keyword_mapping = {}
         
         product_type_mappings = {
@@ -4209,7 +4285,7 @@ class CategoryMatcherEngine:
         
         keyword_mapping.update(product_type_mappings)
         keyword_mapping.update(brand_mappings)
-        
+        self._cached_kw_map = keyword_mapping
         return keyword_mapping
     
     def get_category_for_product(self, product_name, keyword_mapping, categories_list):
@@ -4645,7 +4721,7 @@ def get_engine():
 def check_wrong_category(data, categories_list, cat_path_to_code=None, code_to_path=None, confidence_threshold=0.0):
     import pandas as pd
     import re
-    
+
     if cat_path_to_code is None:
         cat_path_to_code = {}
     if code_to_path is None:
@@ -4654,11 +4730,17 @@ def check_wrong_category(data, categories_list, cat_path_to_code=None, code_to_p
     if "NAME" not in data.columns or "CATEGORY" not in data.columns:
         return pd.DataFrame(columns=data.columns)
 
+    _top_dom_re = re.compile(r"\s*/\s*|\s*>\s*")
+    def _top_dom(path):
+        return _top_dom_re.split(str(path).strip())[0].strip().lower()
+
+    # ── Vectorised pre-filter ─────────────────────────────────────────────────
     d = data.copy()
-    d = d[
-        d["NAME"].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("")
-        & d["CATEGORY"].astype(str).str.strip().replace({"nan": "", "None": ""}).ne("")
-    ]
+    name_s    = d["NAME"].astype(str).str.strip()
+    cat_s     = d["CATEGORY"].astype(str).str.strip()
+    d = d[(name_s.replace({"nan": "", "None": ""}).ne(""))
+          & (cat_s.replace({"nan": "", "None": ""}).ne(""))
+          & (name_s.str.split().str.len() >= 3)]
     if d.empty:
         return pd.DataFrame(columns=data.columns)
 
@@ -4667,41 +4749,63 @@ def check_wrong_category(data, categories_list, cat_path_to_code=None, code_to_p
         engine.build_tfidf_index(categories_list)
     kw_map = engine.build_keyword_to_category_mapping()
 
-    def _top_dom(path):
-        return re.split(r"\s*/\s*|\s*>\s*", str(path).strip())[0].strip().lower()
+    # ── Resolve assigned domain for every row at once (no loop) ──────────────
+    if "CATEGORY_CODE" in d.columns:
+        codes = d["CATEGORY_CODE"].astype(str).str.strip().str.split(".").str[0]
+        assigned_full = codes.map(lambda c: code_to_path.get(c, ""))
+        fallback_mask = assigned_full == ""
+        assigned_full[fallback_mask] = d.loc[fallback_mask, "CATEGORY"].astype(str)
+    else:
+        assigned_full = d["CATEGORY"].astype(str)
+    d["_assigned_dom"] = assigned_full.apply(_top_dom)
 
-    flagged_rows = []
+    names = d["NAME"].astype(str).str.strip().tolist()
 
-    for _, row in d.iterrows():
-        name     = str(row["NAME"]).strip()
-        cat_leaf = str(row["CATEGORY"]).strip()
-        cat_code = str(row.get("CATEGORY_CODE", "")).strip().split(".")[0]
+    # ── Fast path: learning_db / keyword map (no TF-IDF) ─────────────────────
+    predictions = {}           # row index → predicted category string
+    needs_tfidf_indices = []   # (list position, df index) for TF-IDF batch
 
-        if len(name.split()) < 3:
+    for pos, idx in enumerate(d.index):
+        name = names[pos]
+        learned = engine.lookup_learning_db(name)
+        if learned:
+            predictions[idx] = learned
             continue
-
-        if cat_code and cat_code in code_to_path:
-            assigned_full = code_to_path[cat_code]
-        else:
-            assigned_full = cat_leaf
-            
-        assigned_dom = _top_dom(assigned_full)
-        predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
-        
-        if not predicted: continue
-        predicted_dom = _top_dom(predicted)
-
-        if not predicted_dom or predicted_dom == assigned_dom:
+        mapped = engine._map_product_type(name)
+        if mapped:
+            predictions[idx] = mapped
             continue
+        needs_tfidf_indices.append((pos, idx))
 
-        predicted_leaf = predicted.split("/")[-1].strip()
-        predicted_code = cat_path_to_code.get(predicted.lower(), "")
-        code_str = f" [{predicted_code}]" if predicted_code else ""
+    # ── Batch TF-IDF for remaining rows ──────────────────────────────────────
+    if needs_tfidf_indices:
+        batch_names  = [names[pos] for pos, _ in needs_tfidf_indices]
+        batch_preds  = engine.batch_predict_domains(batch_names)
+        for (pos, idx), (pred, score) in zip(needs_tfidf_indices, batch_preds):
+            if pred and score >= 0.05:
+                predictions[idx] = pred
 
-        comment = f"Assigned: {assigned_dom.title()} | Predicted: {predicted_dom.title()} — {predicted_leaf}{code_str}"
+    # ── Vectorised mismatch detection ────────────────────────────────────────
+    pred_series = pd.Series(predictions, name="_predicted")
+    d = d.join(pred_series)
+    d = d[d["_predicted"].notna()]
+    d["_predicted_dom"] = d["_predicted"].apply(_top_dom)
+    flagged = d[d["_predicted_dom"].ne(d["_assigned_dom"])
+                & d["_predicted_dom"].ne("")]
 
-        row_copy = row.copy()
-        row_copy["Comment_Detail"] = comment
-        flagged_rows.append(row_copy)
+    if flagged.empty:
+        return pd.DataFrame(columns=data.columns)
 
-    return pd.DataFrame(flagged_rows) if flagged_rows else pd.DataFrame(columns=data.columns)
+    # ── Build Comment_Detail column ───────────────────────────────────────────
+    def _make_comment(row):
+        pred_leaf  = str(row["_predicted"]).split("/")[-1].strip()
+        pred_code  = cat_path_to_code.get(str(row["_predicted"]).lower(), "")
+        code_str   = f" [{pred_code}]" if pred_code else ""
+        return (f"Assigned: {row['_assigned_dom'].title()} | "
+                f"Predicted: {row['_predicted_dom'].title()} — {pred_leaf}{code_str}")
+
+    flagged = flagged.copy()
+    flagged["Comment_Detail"] = flagged.apply(_make_comment, axis=1)
+    flagged = flagged.drop(columns=["_assigned_dom", "_predicted", "_predicted_dom"],
+                           errors="ignore")
+    return flagged
