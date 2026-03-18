@@ -41,13 +41,11 @@ except ImportError:
 
 # ── Category Matcher Engine ───────────────────────────────────────────────────
 try:
-    # CHANGED: Added get_engine so both parts of the app share the EXACT same brain
     from category_matcher_engine import CategoryMatcherEngine, check_wrong_category, get_engine
     _CAT_MATCHER_AVAILABLE = True
 except ImportError:
     _CAT_MATCHER_AVAILABLE = False
     def check_wrong_category(data, categories_list=None, cat_path_to_code=None, code_to_path=None, confidence_threshold=0.0):
-        """Fallback: flag only 'Miscellaneous' categories when engine unavailable."""
         if 'CATEGORY' not in data.columns:
             return pd.DataFrame(columns=data.columns)
         flagged = data[data['CATEGORY'].astype(str).str.contains(
@@ -59,22 +57,18 @@ except ImportError:
 
 @st.cache_resource(show_spinner=False)
 def _get_cat_matcher_engine():
-    """Singleton engine — built once per Streamlit worker process."""
     if not _CAT_MATCHER_AVAILABLE:
         return None
     try:
-        # CHANGED: Now it shares the exact same brain as the validator!
         return get_engine()
     except Exception as e:
         logger.warning("CategoryMatcherEngine init failed: %s", e)
         return None
 
-# Fallback stub so load_all_support_files never crashes if postqc isn't importable
 if 'load_category_map' not in dir():
     def load_category_map(filename: str = "category_map.xlsx") -> dict:
         return {}
 
-# CHANGE 12: Logger defined early so every function can use it
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
@@ -85,7 +79,6 @@ FLAG_CACHE_DIR = "app_cache_flags"
 os.makedirs(PARQUET_CACHE_DIR, exist_ok=True)
 os.makedirs(FLAG_CACHE_DIR, exist_ok=True)
 
-# CHANGE 10: Prune old pkl files so the cache dir never grows unbounded
 def prune_cache_dir(directory: str, max_files: int = 500):
     try:
         files = sorted(Path(directory).glob("*.pkl"), key=os.path.getmtime)
@@ -99,11 +92,6 @@ def prune_cache_dir(directory: str, max_files: int = 500):
 
 prune_cache_dir(FLAG_CACHE_DIR)
 
-# Evict any cached Wrong Category results — this validator now uses the ML
-# engine and must never serve stale empty results from before the engine was wired up.
-# We identify them by recomputing what their hash prefix would look like, but
-# the safest approach is simply to delete all cache files whose pickled content
-# is an empty DataFrame (size < 500 bytes, which real flag results never are).
 try:
     for _cf in Path(FLAG_CACHE_DIR).glob("*.pkl"):
         if _cf.stat().st_size < 500:
@@ -266,13 +254,11 @@ if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_fl
 if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
 if 'flags_expanded_initialized' not in st.session_state: st.session_state.flags_expanded_initialized = False
 
-# ── LANGUAGE PRE-SYNC ────────────────────────────────────────────────────────
 _pre_country = st.session_state.get("country_selector") or st.session_state.get("selected_country", "Kenya")
 if _pre_country == "Morocco":
     st.session_state.ui_lang = "fr"
 elif st.session_state.get("ui_lang") == "fr":
     st.session_state.ui_lang = "en"
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _t(key):
     return get_translation(st.session_state.ui_lang, key)
@@ -414,7 +400,6 @@ def create_match_key(row: pd.Series) -> str:
     color = normalize_text(row.get('COLOR', ''))
     return f"{brand}|{name}|{color}"
 
-# CHANGE 13: Fix weak fallback — same shape + same columns should not collide
 def df_hash(df: pd.DataFrame) -> str:
     try:
         return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
@@ -589,7 +574,6 @@ def load_refurb_data_from_local() -> dict:
             df = safe_excel_read(FILE_NAME, sheet_name=tab, usecols=[0, 1])
             if not df.empty:
                 df.columns = [str(c).strip() for c in df.columns]
-                phones_set = set(df.iloc[:, 0].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "phones"}
                 laptops_set = set(df.iloc[:, 1].dropna().astype(str).str.strip().str.lower()) - {"", "nan", "laptops"}
                 result["sellers"][tab] = {"Phones": set(), "Laptops": laptops_set}
         except Exception as e:
@@ -710,6 +694,143 @@ def load_suspected_fake_from_local() -> pd.DataFrame:
     return pd.DataFrame()
 
 # -------------------------------------------------
+# NIGERIA QC RULES LOADER
+# -------------------------------------------------
+@st.cache_data(ttl=3600)
+def load_nigeria_qc_rules() -> Dict:
+    """
+    Loads Nigeria_QC_Rules.xlsx and returns a structured dict used by the
+    six Nigeria-specific QC check functions.
+
+    Sheet rules:
+      Gift card     — whitelist of sellers per category code
+      Books         — per-title seller whitelist (blank seller = nobody allowed)
+      TVs           — per-brand seller whitelist within TV category codes
+      HP ink toners — seller whitelist for HP brand within toner categories
+      Apple         — seller whitelist for Apple-branded products (any category)
+      Xmas Tree     — seller whitelist triggered by keyword in product name
+    """
+    FILE_NAME = "Nigeria_QC_Rules.xlsx"
+    result: Dict = {
+        "gift_card":  {"sellers": set(), "category_codes": set()},
+        "books":      {},   # book_name_lower -> approved_seller_lower | None (nobody)
+        "tvs":        {"category_codes": set(), "brand_sellers": {}},
+        "hp_toners":  {"sellers": set(), "category_codes": set()},
+        "apple":      {"sellers": set()},
+        "xmas_tree":  {"sellers": set(), "keywords": set()},
+    }
+
+    if not os.path.exists(FILE_NAME):
+        logger.warning("Nigeria_QC_Rules.xlsx not found — NG-specific checks will be skipped.")
+        return result
+
+    # ── Gift card ──────────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="Gift card")
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            seller_col, cat_col = df.columns[0], df.columns[1]
+            result["gift_card"]["sellers"] = (
+                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
+                - {"", "nan", "seller"}
+            )
+            result["gift_card"]["category_codes"] = (
+                set(df[cat_col].dropna().astype(str).apply(clean_category_code))
+                - {"", "nan"}
+            )
+    except Exception as e:
+        logger.warning(f"load_nigeria_qc_rules gift_card: {e}")
+
+    # ── Books ──────────────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="Books")
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            name_col, seller_col = df.columns[0], df.columns[1]
+            for _, row in df.iterrows():
+                book = str(row[name_col]).strip().lower()
+                if not book or book == "nan":
+                    continue
+                raw_seller = str(row.get(seller_col, "")).strip().lower()
+                # None signals "no seller approved at all"
+                result["books"][book] = None if (not raw_seller or raw_seller == "nan") else raw_seller
+    except Exception as e:
+        logger.warning(f"load_nigeria_qc_rules books: {e}")
+
+    # ── TVs ────────────────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="TVs")
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            cat_col    = df.columns[0]
+            brand_cols = df.columns[1:]   # LG, Samsung, Hisense, Maxi …
+            result["tvs"]["category_codes"] = (
+                set(df[cat_col].dropna().astype(str).apply(clean_category_code))
+                - {"", "nan"}
+            )
+            for bc in brand_cols:
+                brand_lower = bc.strip().lower()
+                result["tvs"]["brand_sellers"][brand_lower] = (
+                    set(df[bc].dropna().astype(str).str.strip().str.lower())
+                    - {"", "nan", brand_lower}
+                )
+    except Exception as e:
+        logger.warning(f"load_nigeria_qc_rules tvs: {e}")
+
+    # ── HP ink toners ──────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="HP ink toners")
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            seller_col = df.columns[0]
+            cat_col    = df.columns[1] if len(df.columns) > 1 else None
+            result["hp_toners"]["sellers"] = (
+                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
+                - {"", "nan", "seller"}
+            )
+            if cat_col:
+                result["hp_toners"]["category_codes"] = (
+                    set(df[cat_col].dropna().astype(str).apply(clean_category_code))
+                    - {"", "nan"}
+                )
+    except Exception as e:
+        logger.warning(f"load_nigeria_qc_rules hp_toners: {e}")
+
+    # ── Apple ──────────────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="Apple")
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            seller_col = df.columns[0]
+            result["apple"]["sellers"] = (
+                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
+                - {"", "nan", "seller"}
+            )
+    except Exception as e:
+        logger.warning(f"load_nigeria_qc_rules apple: {e}")
+
+    # ── Xmas Tree ──────────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="Xmas Tree")
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            seller_col = df.columns[0]
+            kw_col     = df.columns[1] if len(df.columns) > 1 else None
+            result["xmas_tree"]["sellers"] = (
+                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
+                - {"", "nan", "seller"}
+            )
+            if kw_col:
+                result["xmas_tree"]["keywords"] = (
+                    set(df[kw_col].dropna().astype(str).str.strip().str.lower())
+                    - {"", "nan", "keyword", "keywords"}
+                )
+    except Exception as e:
+        logger.warning(f"load_nigeria_qc_rules xmas_tree: {e}")
+
+    return result
+
+# -------------------------------------------------
 # LOAD FLAGS MAPPING (WITH MULTI-LINGUAL SUPPORT)
 # -------------------------------------------------
 @st.cache_data(ttl=3600)
@@ -738,6 +859,13 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
         'Wrong Category': ('1000004 - Wrong Category', "Assigned to Wrong Category. Please use correct category."),
         'Poor images': ('1000042 - Kindly follow our product image upload guideline.', "Poor Image Quality"),
         'Perfume Tester': ('1000007 - Other Reason', "Sale of perfume testers is not permitted on Jumia."),
+        # ── Nigeria-specific QC rules ──────────────────────────────────────
+        'NG - Gift Card Seller':  ('1000003 - Restricted Brand', "Seller not authorised to sell Gift Cards in these categories."),
+        'NG - Books Seller':      ('1000003 - Restricted Brand', "Seller not authorised to sell this book title, or no seller is approved for it."),
+        'NG - TV Brand Seller':   ('1000003 - Restricted Brand', "Seller not authorised to sell this TV brand."),
+        'NG - HP Toners Seller':  ('1000003 - Restricted Brand', "Seller not authorised to sell HP Ink/Toners in these categories."),
+        'NG - Apple Seller':      ('1000003 - Restricted Brand', "Seller not authorised to sell Apple products."),
+        'NG - Xmas Tree Seller':  ('1000003 - Restricted Brand', "Seller not authorised to sell Christmas Tree products."),
     }
 
     default_mapping = {}
@@ -761,7 +889,10 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
                     if flag and flag.lower() != 'nan':
                         custom_mapping[flag] = {'reason': reason, 'en': comment_en, 'fr': comment_fr, 'ar': comment_ar}
                 if custom_mapping:
-                    return custom_mapping
+                    # Merge: keep NG rules even when reason.xlsx overrides others
+                    ng_keys = {k: v for k, v in default_mapping.items() if k.startswith('NG - ')}
+                    merged = {**custom_mapping, **ng_keys}
+                    return merged
     except Exception as e:
         logger.warning(f"load_flags_mapping({filename}): {e}")
 
@@ -797,19 +928,15 @@ def load_all_support_files() -> Dict:
         'smartphone_category_codes': safe_load_txt('smartphones.txt'),
         'refurb_data': load_refurb_data_from_local(),
         'category_map': load_category_map(),
+        'ng_qc_rules': load_nigeria_qc_rules(),   # Nigeria-only category QC rules
     }
-    # Build a flat list of category path strings for the matcher engine,
-    # and a path→code lookup for enriching validation results.
-    # category_map.xlsx columns: category_name | category_code | Category Path
     _cat_names: list[str] = []
     _cat_path_to_code: dict[str, str] = {}
     try:
         _cm_path = "category_map.xlsx"
         if os.path.exists(_cm_path):
             _cm_df = pd.read_excel(_cm_path, engine="openpyxl", dtype=str)
-            # Normalise column names
             _cm_df.columns = [c.strip() for c in _cm_df.columns]
-            # Prefer 'Category Path' (full hierarchical path) as the names list
             _path_col = next(
                 (c for c in _cm_df.columns if c.lower() == "category path"),
                 next((c for c in _cm_df.columns if "path" in c.lower()), None)
@@ -833,7 +960,6 @@ def load_all_support_files() -> Dict:
         logger.warning("Could not build categories_names_list: %s", _ce)
     support['categories_names_list'] = _cat_names
     support['cat_path_to_code'] = _cat_path_to_code
-    # Reverse lookup: category_code → full Category Path
     support['code_to_path'] = {v: k for k, v in _cat_path_to_code.items()}
     return support
 
@@ -870,19 +996,6 @@ class CountryValidator:
 # ENCODING HELPERS
 # -------------------------------------------------
 def _detect_and_read_csv(buf) -> pd.DataFrame:
-    """
-    Read a CSV/TSV with robust encoding detection.
-
-    Tries encodings in this order:
-      1. UTF-8-sig  (UTF-8 with BOM — common in Excel-saved CSVs)
-      2. UTF-8
-      3. CP1252     (Windows Western — most common Jumia export encoding)
-      4. ISO-8859-1 (Latin-1 fallback)
-
-    For each encoding, the separator is auto-detected: if the first parse
-    produces only one column, a semicolon separator is tried next.
-    Returns the first successfully parsed DataFrame with >1 column.
-    """
     _ENCODINGS = ['utf-8-sig', 'utf-8', 'cp1252', 'iso-8859-1']
     raw_bytes = buf.read()
 
@@ -896,35 +1009,17 @@ def _detect_and_read_csv(buf) -> pd.DataFrame:
             except Exception:
                 continue
 
-    # Absolute last resort — let pandas guess
     from io import BytesIO as _BIO
     return pd.read_csv(_BIO(raw_bytes), sep=None, engine='python', encoding='utf-8', dtype=str)
 
 
 def _repair_mojibake(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Fix the most common mojibake pattern: UTF-8 bytes that were decoded as
-    CP1252 (Windows Western) or ISO-8859-1 (Latin-1).  Applies only to
-    object (string) columns and only when the round-trip actually produces
-    valid UTF-8 with no replacement characters.
-
-    Repair order tried per value:
-      1. CP1252 → UTF-8   (covers â€" → – , Ã© → é , etc.)
-      2. Latin-1 → UTF-8  (fallback for strict Latin-1 files)
-
-    Examples fixed:
-        â€"   →  –   (en dash U+2013, very common in PARENTSKU)
-        Ã©    →  é   (e-acute, common in seller/brand names)
-        â€™   →  '   (right single quote)
-        Â£    →  £   (pound sign)
-    """
     import re as _re
     _ILLEGAL_XML = _re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
 
     def _fix(val):
         if not isinstance(val, str):
             return val
-        # Stage 1: mojibake round-trip
         for enc in ('cp1252', 'latin-1'):
             try:
                 fixed = val.encode(enc).decode('utf-8')
@@ -933,12 +1028,12 @@ def _repair_mojibake(df: pd.DataFrame) -> pd.DataFrame:
                     break
             except (UnicodeDecodeError, UnicodeEncodeError):
                 continue
-        # Stage 2: strip XML-illegal control chars (crash xlsxwriter)
         return _ILLEGAL_XML.sub('', val)
 
     for col in df.select_dtypes(include='object').columns:
         df[col] = df[col].apply(_fix)
     return df
+
 def standardize_input_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip()
@@ -1011,6 +1106,13 @@ FLAG_RELEVANT_COLS = {
     "Incomplete Smartphone Name": ["CATEGORY_CODE", "NAME"],
     "Duplicate product": ["NAME", "SELLER_NAME", "BRAND", "CATEGORY_CODE"],
     "Perfume Tester": ["CATEGORY_CODE", "NAME"],
+    # Nigeria-specific
+    "NG - Gift Card Seller":  ["CATEGORY_CODE", "SELLER_NAME"],
+    "NG - Books Seller":      ["NAME", "SELLER_NAME"],
+    "NG - TV Brand Seller":   ["CATEGORY_CODE", "BRAND", "SELLER_NAME"],
+    "NG - HP Toners Seller":  ["CATEGORY_CODE", "BRAND", "SELLER_NAME"],
+    "NG - Apple Seller":      ["BRAND", "SELLER_NAME"],
+    "NG - Xmas Tree Seller":  ["NAME", "SELLER_NAME"],
 }
 
 def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) -> str:
@@ -1019,8 +1121,6 @@ def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) ->
     if not available_cols: return "empty"
     df_hash_str = df_hash(data[available_cols])
     kwargs_repr = ""
-    # Skip large category lookup dicts — they don't change between runs and
-    # would make the repr huge, causing unnecessary cache misses or hits on stale data
     _skip_keys = {'categories_list', 'cat_path_to_code', 'code_to_path'}
     for k, v in kwargs.items():
         if k == 'data' or k in _skip_keys: continue
@@ -1029,7 +1129,6 @@ def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) ->
     return hashlib.md5((df_hash_str + kwargs_repr).encode()).hexdigest()
 
 def run_cached_check(func, cache_path, ckwargs):
-    # Wrong Category uses the ML engine — always run fresh, never use disk cache
     if func is check_miscellaneous_category:
         return func(**ckwargs)
     if os.path.exists(cache_path):
@@ -1045,12 +1144,6 @@ def run_cached_check(func, cache_path, ckwargs):
     return res
 
 def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, cat_path_to_code: dict = None, code_to_path: dict = None) -> pd.DataFrame:
-    """
-    Priority validator — powered by CategoryMatcherEngine.
-    Detects products whose CATEGORY_CODE resolves to a domain that doesn't
-    match what the product name implies. Runs first in the validation pipeline.
-    Falls back to miscellaneous-string detection when engine is unavailable.
-    """
     if categories_list is None:
         categories_list = []
     if cat_path_to_code is None:
@@ -1080,7 +1173,6 @@ def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = Non
         except Exception as _e:
             logger.warning("check_wrong_category engine error: %s", _e)
 
-    # Fallback — simple miscellaneous string check
     if 'CATEGORY' not in data.columns:
         return pd.DataFrame(columns=data.columns)
     flagged = data[data['CATEGORY'].astype(str).str.contains(
@@ -1286,7 +1378,6 @@ def check_seller_approved_for_perfume(data: pd.DataFrame, perfume_category_codes
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_perfume_tester(data: pd.DataFrame, perfume_category_codes: List[str], perfume_data: Dict) -> pd.DataFrame:
-    """Flag any perfume product that has 'tester' in the name as prohibited."""
     if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
     sheet_cat_codes = perfume_data.get('category_codes')
@@ -1360,26 +1451,18 @@ def check_generic_brand_issues(data: pd.DataFrame, valid_category_codes_fas: Lis
     return data[data['CATEGORY_CODE'].apply(clean_category_code).isin(set(clean_category_code(c) for c in valid_category_codes_fas)) & (data['BRAND'].astype(str).str.lower() == 'generic')].drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_fashion_brand_issues(data: pd.DataFrame, valid_category_codes_fas: List[str], code_to_path: Dict = None) -> pd.DataFrame:
-    """Flag products with brand='Fashion' that are NOT in the Fashion top-level domain.
-    If the category resolves to a path starting with 'Fashion', it is fine —
-    the brand name is appropriate for those products.
-    """
     if not {'CATEGORY_CODE', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     if code_to_path is None:
         code_to_path = {}
-    # Only look at products whose brand is exactly "Fashion"
     fashion_brand = data[data['BRAND'].astype(str).str.strip().str.lower() == 'fashion'].copy()
     if fashion_brand.empty:
         return pd.DataFrame(columns=data.columns)
     def _in_fashion_domain(cat_code: str) -> bool:
-        """Return True if the full category path starts with 'Fashion'."""
         full_path = code_to_path.get(str(cat_code).strip(), '')
         if full_path:
             return full_path.strip().lower().startswith('fashion')
-        # Fall back to the fas_codes list when no path is available
         return clean_category_code(cat_code) in fas_codes
     fas_codes = set(clean_category_code(c) for c in valid_category_codes_fas)
-    # Flag only those whose category does NOT belong to the Fashion domain
     flagged = fashion_brand[
         ~fashion_brand['CATEGORY_CODE'].apply(lambda c: _in_fashion_domain(clean_category_code(c)))
     ].copy()
@@ -1447,15 +1530,10 @@ def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[
         r"|tea\s*bags?|teabags?|bags?"
         r"|pieces?|pcs|pack|packs"
         r"|dozens?|pairs?|rolls?|sheets?|wipes?|pods?|softgels?|lozenges?|gummies|gummy|units?|serves?|servings?|vegan\s+pieces?)"
-        # "30s" / "30's" / "30\u2019s" / "60'S" — straight and curly apostrophes
         r"|\b\d+[\u0027\u2019]?s\b"
-        # standalone "dozen / a dozen"
         r"|\b(?:a\s+)?dozen\b"
-        # reversed: "pack of 24", "box of 10", "set of 6"
         r"|\b(?:pack|box|set|bundle|lot)\s+of\s+\d+\b"
-        # "per kg", "per g", "per ml" etc — e.g. "Chickpeas per Kg"
         r"|\bper\s+(?:kg|kgs?|g|gm|grams?|mg|mcg|ml|l|ltr|oz|lb)\b"
-        # broken UTF-8 µg/μg encoding variants: Âµg, Î¼g, µg, μg
         r"|\d+\s*(?:\xc2\xb5g|\xce\xbcg|\xb5g|\u00b5g|\u03bcg|mcg|µg|μg)",
         re.IGNORECASE
     )
@@ -1470,7 +1548,6 @@ def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_cod
     if not flagged.empty: flagged['Comment_Detail'] = "Name missing Storage/Memory spec (e.g., 64GB)"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-# CHANGE 9: Vectorized duplicate detection — replaces slow iterrows loop
 def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = None, similarity_threshold: float = 0.70, known_colors: List[str] = None, **kwargs) -> pd.DataFrame:
     if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     d = data.copy()
@@ -1499,9 +1576,220 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
 
 
 # -------------------------------------------------
+# NIGERIA-SPECIFIC QC CHECKS
+# Only wired into validate_products when country_validator.code == "NG"
+# Source file: Nigeria_QC_Rules.xlsx
+# All use reason code: 1000003 - Restricted Brand
+# -------------------------------------------------
+
+def check_nigeria_gift_card(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
+    """Only whitelisted sellers may list products in Gift Card category codes."""
+    rules            = ng_rules.get("gift_card", {})
+    cat_codes        = rules.get("category_codes", set())
+    approved_sellers = rules.get("sellers", set())
+    if not cat_codes or not approved_sellers:
+        return pd.DataFrame(columns=data.columns)
+    if not {"CATEGORY_CODE", "SELLER_NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    in_scope = data[data["CATEGORY_CODE"].apply(clean_category_code).isin(cat_codes)].copy()
+    if in_scope.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    flagged = in_scope[
+        ~in_scope["SELLER_NAME"].astype(str).str.strip().str.lower().isin(approved_sellers)
+    ].copy()
+    if not flagged.empty:
+        flagged["Comment_Detail"] = (
+            "Seller not authorised for Gift Card categories: "
+            + flagged["SELLER_NAME"].astype(str)
+        )
+    return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+
+def check_nigeria_books(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
+    """
+    For each book title in the rules:
+      - blank seller  -> nobody may sell it (flag everyone)
+      - named seller  -> only that seller may sell it
+    Matching is substring: book title appears inside product NAME (case-insensitive).
+    """
+    book_rules = ng_rules.get("books", {})
+    if not book_rules:
+        return pd.DataFrame(columns=data.columns)
+    if not {"NAME", "SELLER_NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    d = data.copy()
+    d["_name_l"]   = d["NAME"].astype(str).str.strip().str.lower()
+    d["_seller_l"] = d["SELLER_NAME"].astype(str).str.strip().str.lower()
+
+    flagged_idx: list = []
+    comment_map: dict = {}
+
+    for idx, row in d.iterrows():
+        name_l   = row["_name_l"]
+        seller_l = row["_seller_l"]
+        for book_name, allowed_seller in book_rules.items():
+            if book_name in name_l:
+                if allowed_seller is None:
+                    flagged_idx.append(idx)
+                    comment_map[idx] = f"No seller authorised for book: '{book_name[:60]}'"
+                elif seller_l != allowed_seller:
+                    flagged_idx.append(idx)
+                    comment_map[idx] = (
+                        f"Only '{allowed_seller}' may sell '{book_name[:40]}'"
+                    )
+                break   # first matching title wins for this row
+
+    if not flagged_idx:
+        return pd.DataFrame(columns=data.columns)
+
+    result = data.loc[flagged_idx].copy()
+    result["Comment_Detail"] = result.index.map(comment_map)
+    return result.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+
+def check_nigeria_tvs(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
+    """
+    Within TV category codes, each brand (LG / Samsung / Hisense / Maxi etc.)
+    has its own approved seller list. Products whose brand matches but whose
+    seller is not on that brand's list are flagged.
+    """
+    tv_rules      = ng_rules.get("tvs", {})
+    cat_codes     = tv_rules.get("category_codes", set())
+    brand_sellers = tv_rules.get("brand_sellers", {})
+
+    if not cat_codes or not brand_sellers:
+        return pd.DataFrame(columns=data.columns)
+    if not {"CATEGORY_CODE", "BRAND", "SELLER_NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    in_scope = data[data["CATEGORY_CODE"].apply(clean_category_code).isin(cat_codes)].copy()
+    if in_scope.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    in_scope["_brand_l"]  = in_scope["BRAND"].astype(str).str.strip().str.lower()
+    in_scope["_seller_l"] = in_scope["SELLER_NAME"].astype(str).str.strip().str.lower()
+
+    chunks: list = []
+    for brand_lower, approved in brand_sellers.items():
+        if not approved:
+            continue
+        brand_rows = in_scope[in_scope["_brand_l"] == brand_lower]
+        if brand_rows.empty:
+            continue
+        bad = brand_rows[~brand_rows["_seller_l"].isin(approved)].copy()
+        if not bad.empty:
+            bad["Comment_Detail"] = (
+                f"Seller not authorised for {brand_lower.upper()} TVs: "
+                + bad["SELLER_NAME"].astype(str)
+            )
+            chunks.append(bad)
+
+    if not chunks:
+        return pd.DataFrame(columns=data.columns)
+
+    result = pd.concat(chunks)
+    return result.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+
+def check_nigeria_hp_toners(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
+    """
+    Within HP toner category codes, only whitelisted sellers may list
+    products whose brand is 'HP'.
+    """
+    rules            = ng_rules.get("hp_toners", {})
+    cat_codes        = rules.get("category_codes", set())
+    approved_sellers = rules.get("sellers", set())
+
+    if not cat_codes or not approved_sellers:
+        return pd.DataFrame(columns=data.columns)
+    if not {"CATEGORY_CODE", "BRAND", "SELLER_NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    d = data.copy()
+    d["_cat"]      = d["CATEGORY_CODE"].apply(clean_category_code)
+    d["_brand_l"]  = d["BRAND"].astype(str).str.strip().str.lower()
+    d["_seller_l"] = d["SELLER_NAME"].astype(str).str.strip().str.lower()
+
+    in_scope = d[d["_cat"].isin(cat_codes) & (d["_brand_l"] == "hp")].copy()
+    if in_scope.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    flagged = in_scope[~in_scope["_seller_l"].isin(approved_sellers)].copy()
+    if not flagged.empty:
+        flagged["Comment_Detail"] = (
+            "Seller not authorised for HP Ink/Toners: "
+            + flagged["SELLER_NAME"].astype(str)
+        )
+    return flagged[
+        [c for c in data.columns if c in flagged.columns] + ["Comment_Detail"]
+    ].drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+
+def check_nigeria_apple(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
+    """Any product branded 'Apple' must come from an approved seller."""
+    rules            = ng_rules.get("apple", {})
+    approved_sellers = rules.get("sellers", set())
+
+    if not approved_sellers:
+        return pd.DataFrame(columns=data.columns)
+    if not {"BRAND", "SELLER_NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    apple = data[data["BRAND"].astype(str).str.strip().str.lower() == "apple"].copy()
+    if apple.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    flagged = apple[
+        ~apple["SELLER_NAME"].astype(str).str.strip().str.lower().isin(approved_sellers)
+    ].copy()
+    if not flagged.empty:
+        flagged["Comment_Detail"] = (
+            "Seller not authorised to sell Apple products: "
+            + flagged["SELLER_NAME"].astype(str)
+        )
+    return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+
+def check_nigeria_xmas_tree(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
+    """
+    If a product name contains any of the configured Christmas-tree keywords
+    (e.g. 'Christmas Tree', 'xmas tree'), the seller must be whitelisted.
+    """
+    rules            = ng_rules.get("xmas_tree", {})
+    approved_sellers = rules.get("sellers", set())
+    keywords         = rules.get("keywords", set())
+
+    if not approved_sellers or not keywords:
+        return pd.DataFrame(columns=data.columns)
+    if not {"NAME", "SELLER_NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    kw_pattern = re.compile(
+        r"(?<!\w)(" + "|".join(re.escape(k) for k in sorted(keywords, key=len, reverse=True)) + r")(?!\w)",
+        re.IGNORECASE,
+    )
+
+    in_scope = data[data["NAME"].astype(str).str.contains(kw_pattern, na=False)].copy()
+    if in_scope.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    flagged = in_scope[
+        ~in_scope["SELLER_NAME"].astype(str).str.strip().str.lower().isin(approved_sellers)
+    ].copy()
+    if not flagged.empty:
+        def _comment(row):
+            m = kw_pattern.search(str(row["NAME"]))
+            kw = m.group(0) if m else "?"
+            return f"Seller not authorised for Xmas Tree products (keyword '{kw}'): {row['SELLER_NAME']}"
+        flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
+    return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
+
+
+# -------------------------------------------------
 # REGISTER CHECK FUNCTIONS FOR postqc.py
-# Must come after all check functions are defined.
-# postqc reads this registry to avoid circular imports.
 # -------------------------------------------------
 if _reg is not None:
     _reg.REGISTRY.update({
@@ -1529,6 +1817,14 @@ if _reg is not None:
         'check_miscellaneous_category':      check_miscellaneous_category,
         'compile_regex_patterns':            compile_regex_patterns,
         'FX_RATE':                           FX_RATE,
+        # Nigeria-specific
+        'check_nigeria_gift_card':           check_nigeria_gift_card,
+        'check_nigeria_books':               check_nigeria_books,
+        'check_nigeria_tvs':                 check_nigeria_tvs,
+        'check_nigeria_hp_toners':           check_nigeria_hp_toners,
+        'check_nigeria_apple':               check_nigeria_apple,
+        'check_nigeria_xmas_tree':           check_nigeria_xmas_tree,
+        'load_nigeria_qc_rules':             load_nigeria_qc_rules,
     })
 
 # -------------------------------------------------
@@ -1567,6 +1863,19 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Incomplete Smartphone Name", check_incomplete_smartphone_name, {'smartphone_category_codes': support_files.get('smartphone_category_codes', [])}),
         ("Duplicate product", check_duplicate_products, {'exempt_categories': support_files.get('duplicate_exempt_codes', []), 'known_colors': support_files['colors']}),
     ]
+
+    # ── Nigeria-only QC rules (Nigeria_QC_Rules.xlsx) ──────────────────────
+    if country_validator.code == "NG":
+        _ng = support_files.get("ng_qc_rules", {})
+        validations += [
+            ("NG - Gift Card Seller",  check_nigeria_gift_card,  {"ng_rules": _ng}),
+            ("NG - Books Seller",      check_nigeria_books,      {"ng_rules": _ng}),
+            ("NG - TV Brand Seller",   check_nigeria_tvs,        {"ng_rules": _ng}),
+            ("NG - HP Toners Seller",  check_nigeria_hp_toners,  {"ng_rules": _ng}),
+            ("NG - Apple Seller",      check_nigeria_apple,      {"ng_rules": _ng}),
+            ("NG - Xmas Tree Seller",  check_nigeria_xmas_tree,  {"ng_rules": _ng}),
+        ]
+
     results = {}
     dup_groups = {}
     if {'NAME','BRAND','SELLER_NAME','COLOR'}.issubset(data.columns):
@@ -1670,7 +1979,6 @@ def to_excel_base(df, sheet, cols, writer, format_rules=False):
     for c in cols:
         if c not in df_p.columns: df_p[c] = pd.NA
     df_to_write = df_p[[c for c in cols if c in df_p.columns]]
-    # Final repair pass — catches any mojibake that survived from cached sessions
     df_to_write = _repair_mojibake(df_to_write.copy())
     df_to_write.to_excel(writer, index=False, sheet_name=sheet)
     if format_rules and 'Status' in df_to_write.columns:
@@ -1785,7 +2093,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
         })
     cards_json = json.dumps(cards_data)
 
-    # CHANGE 6: Safe upper() — guard against None translation value
     rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
     return f"""<!DOCTYPE html>
@@ -2057,7 +2364,6 @@ renderAll();
 # -------------------------------------------------
 # UI COMPONENTS
 # -------------------------------------------------
-# CHANGE 8: Reduced timeout from 2s to 1s to prevent page blocking on slow CDNs
 @st.cache_data(ttl=86400, show_spinner=False)
 def analyze_image_quality_cached(url: str) -> List[str]:
     if not url or not str(url).startswith("http"): return []
@@ -2076,7 +2382,6 @@ def analyze_image_quality_cached(url: str) -> List[str]:
     return warnings
 
 def _clear_flag_df_selection(title: str):
-    """Helper: wipe the st.dataframe widget selection state for a given flag tab."""
     if f"df_{title}" in st.session_state:
         del st.session_state[f"df_{title}"]
 
@@ -2099,8 +2404,6 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
 
-            # If the user approved items in Wrong Category, learn them!
-            # Make SURE 'and msg_approved > 0' is deleted from this next line:
             if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                 try:
                     _engine = _get_cat_matcher_engine()
@@ -2111,24 +2414,17 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                             if row.empty:
                                 continue
                             name = str(row.iloc[0].get('NAME', '')).strip()
-                            
-                            # Get the FULL hierarchical path to save to memory
                             cat_code = str(row.iloc[0].get('CATEGORY_CODE', '')).strip().split('.')[0]
                             full_path = support_files.get('code_to_path', {}).get(cat_code)
-                            
                             category = full_path if full_path else str(row.iloc[0].get('CATEGORY', '')).strip()
-                            
                             if name and category and category.lower() not in ('nan', 'none', ''):
                                 _engine.apply_learned_correction(name, category, auto_save=False)
                                 learned_count += 1
-                                
                         if learned_count:
-                            # SAVE ONCE AT THE VERY END
                             _engine.save_learning_db()
                             if _CAT_MATCHER_AVAILABLE and hasattr(_engine, '_retrain_correction_classifier'):
                                 try: _engine._retrain_correction_classifier()
                                 except: pass
-                                
                             st.session_state.main_toasts.append(
                                 f"🧠 Engine learned {learned_count} correction(s) from your approvals."
                             )
@@ -2139,7 +2435,6 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
-            # Keep expander open and clear selection after approval
             st.session_state[f"exp_{title}"] = True
             _clear_flag_df_selection(title)
         st.rerun()
@@ -2153,7 +2448,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if 'LIST_VARIATIONS' in data.columns: current_display_cols.append('LIST_VARIATIONS')
 
     if cache_key not in st.session_state.display_df_cache:
-        # Pull CATEGORY_CODE alongside display cols for full-path resolution
         _extra_cols = [c for c in current_display_cols if c in data.columns]
         if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols:
             _extra_cols = _extra_cols + ['CATEGORY_CODE']
@@ -2163,7 +2457,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             left_on='ProductSetSid', right_on='PRODUCT_SET_SID', how='left'
         )[[c for c in _extra_cols if c in data.columns]]
 
-        # ── Resolve CATEGORY_CODE → full hierarchical category path ──────
         _code_to_path = support_files.get('code_to_path', {})
         if _code_to_path and 'CATEGORY_CODE' in df_display.columns:
             df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(
@@ -2171,7 +2464,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             )
             df_display = df_display.drop(columns=['CATEGORY_CODE'])
 
-        # Keep only the originally-requested display cols (no stray CATEGORY_CODE)
         df_display = df_display[[c for c in current_display_cols if c in df_display.columns]]
         st.session_state.display_df_cache[cache_key] = df_display
     else:
@@ -2224,7 +2516,10 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         "Suspected counterfeit Jerseys", "Prohibited products", "Unnecessary words in NAME", "Single-word NAME",
         "Generic BRAND Issues", "Fashion brand issues", "BRAND name repeated in NAME", "Wrong Variation",
         "Generic branded products with genuine brands", "Missing COLOR", "Missing Weight/Volume",
-        "Incomplete Smartphone Name", "Duplicate product", "Poor images", "Perfume Tester", "Other Reason (Custom)",
+        "Incomplete Smartphone Name", "Duplicate product", "Poor images", "Perfume Tester",
+        "NG - Gift Card Seller", "NG - Books Seller", "NG - TV Brand Seller",
+        "NG - HP Toners Seller", "NG - Apple Seller", "NG - Xmas Tree Seller",
+        "Other Reason (Custom)",
     ]
 
     btn_col1, btn_col2 = st.columns([1, 1])
@@ -2232,7 +2527,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
-            # Clear selection before opening the dialog so rows are deselected on return
             _clear_flag_df_selection(title)
             bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
 
@@ -2249,7 +2543,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
-                    # Clear selection so table shows fresh after reject
                     _clear_flag_df_selection(title)
                     st.rerun()
             else:
@@ -2263,7 +2556,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
 
-                    # ── Learning hook: user manually tagged items as Wrong Category
                     if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                         try:
                             _engine = _get_cat_matcher_engine()
@@ -2282,16 +2574,13 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                         continue
                                     predicted = _engine.get_category_with_fallback(name, _kw_map, _cats)
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
-                                        # ADDED: auto_save=False
                                         _engine.apply_learned_correction(name, predicted, auto_save=False)
                                         learned_count += 1
                                 if learned_count:
-                                    # SAVE ONCE AT THE VERY END
                                     _engine.save_learning_db()
                                     if _CAT_MATCHER_AVAILABLE and hasattr(_engine, '_retrain_correction_classifier'):
                                         try: _engine._retrain_correction_classifier()
                                         except: pass
-
                                     st.session_state.main_toasts.append(
                                         f"🧠 Engine noted {learned_count} missed Wrong Category item(s) for future runs."
                                     )
@@ -2301,7 +2590,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
-                    # Clear selection so table shows fresh after reject
                     _clear_flag_df_selection(title)
                     st.rerun()
 
@@ -2430,8 +2718,6 @@ if st.session_state.get('last_processed_files') != process_signature:
     if process_signature == "empty":
         st.session_state.last_processed_files = "empty"
     else:
-        # Include the engine's learning DB size in the cache key so approving
-        # Wrong Category items automatically invalidates the cached report.
         _engine_for_cache = _get_cat_matcher_engine() if _CAT_MATCHER_AVAILABLE else None
         _learning_stamp   = str(len(_engine_for_cache.learning_db)) if _engine_for_cache else "0"
         sig_hash = hashlib.md5((process_signature + _learning_stamp).encode()).hexdigest()
@@ -2455,7 +2741,6 @@ if st.session_state.get('last_processed_files') != process_signature:
                         raw_data = pd.read_excel(_buf, engine='openpyxl', dtype=str)
                     else:
                         raw_data = _detect_and_read_csv(_buf)
-                    # Repair mojibake (UTF-8 decoded as Latin-1) on all string columns
                     raw_data = _repair_mojibake(raw_data)
                     detected_modes.append(detect_file_type(raw_data))
                     all_dfs.append(raw_data)
@@ -2553,7 +2838,6 @@ if _bridge_val:
                 st.session_state.display_df_cache.clear()
                 st.session_state.main_toasts.append((f"Rejected {_total} product(s)", ":material/block:"))
                 st.session_state.main_bridge_counter += 1
-                # CHANGE 16: Reset scroll flag on bridge-triggered reruns
                 st.session_state.do_scroll_top = False
                 st.rerun()
 
@@ -2566,7 +2850,7 @@ if _bridge_val:
                     _total_restored += 1
             if _total_restored > 0:
                 st.session_state.main_bridge_counter += 1
-                st.session_state.do_scroll_top = False  # CHANGE 16
+                st.session_state.do_scroll_top = False
                 st.rerun()
 
     except Exception as _e:
@@ -2651,7 +2935,6 @@ def render_image_grid():
 
     if 'MAIN_IMAGE' not in data.columns: data['MAIN_IMAGE'] = ''
     available_cols = [c for c in GRID_COLS if c in data.columns]
-    # Include CATEGORY_CODE so we can resolve the full hierarchical path
     if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
         available_cols = available_cols + ['CATEGORY_CODE']
     review_data = pd.merge(
@@ -2660,7 +2943,6 @@ def render_image_grid():
         left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
     )
 
-    # ── Resolve CATEGORY_CODE → full hierarchical category path ──────────
     _code_to_path = support_files.get('code_to_path', {})
     if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
         review_data = review_data.copy()
@@ -2728,7 +3010,6 @@ def render_image_grid():
     )
     components.html(grid_html, height=800, scrolling=True)
 
-    # CHANGE 16: Only scroll on explicit page navigation
     if st.session_state.get("do_scroll_top", False):
         components.html(
             "<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>",
@@ -2765,7 +3046,6 @@ def render_exports_section():
 
     all_cached = all(title in st.session_state.exports_cache for title, _, _, _ in exports_config)
 
-    # CHANGE 15: Success banner when all reports are ready
     if all_cached:
         st.success("All reports generated and ready to download.", icon=":material/check_circle:")
     else:
