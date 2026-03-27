@@ -1040,6 +1040,7 @@ def load_and_compile_json_rules(json_path="category_qc_weighted.json") -> dict:
     if not os.path.exists(json_path):
         logger.warning(f"{json_path} not found. Running without JSON boosts.")
         return {}
+        
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             raw_rules = json.load(f)
@@ -1047,16 +1048,49 @@ def load_and_compile_json_rules(json_path="category_qc_weighted.json") -> dict:
         logger.warning(f"Could not load JSON rules: {e}")
         return {}
 
+    # 1. Auto-fix if the JSON is formatted as a List instead of a Dictionary
+    if isinstance(raw_rules, list):
+        fixed_rules = {}
+        for item in raw_rules:
+            if isinstance(item, dict):
+                # Attempt to dynamically extract the category path and keywords
+                cat = item.get("category") or item.get("Category Path") or item.get("name")
+                kws = item.get("keywords") or item.get("weights")
+                if cat and isinstance(kws, dict):
+                    fixed_rules[cat] = kws
+        raw_rules = fixed_rules
+
+    # 2. Safety check: If it's STILL not a dictionary, return empty to prevent crashes
+    if not isinstance(raw_rules, dict):
+        logger.warning("JSON rules file has an unrecognizable format. Must be a dict.")
+        return {}
+
     compiled_rules = {}
     for cat_path, keywords_dict in raw_rules.items():
-        if not keywords_dict:
+        # Ensure the value is actually a dictionary of keywords
+        if not isinstance(keywords_dict, dict) or not keywords_dict:
             continue
-        sorted_kws = sorted(keywords_dict.keys(), key=len, reverse=True)
-        pattern_str = r'\b(' + '|'.join(re.escape(k) for k in sorted_kws) + r')\b'
-        compiled_rules[cat_path] = {
-            'pattern': re.compile(pattern_str, re.IGNORECASE),
-            'weights': {k.lower(): float(w) for k, w in keywords_dict.items()}
-        }
+            
+        try:
+            # Safely force all keys to strings (in case JSON has numbers as keys)
+            safe_kws = {str(k): float(w) for k, w in keywords_dict.items()}
+            
+            # Sort by length descending
+            sorted_kws = sorted(safe_kws.keys(), key=len, reverse=True)
+            if not sorted_kws:
+                continue
+                
+            # Build the regex pattern safely
+            pattern_str = r'\b(' + '|'.join(re.escape(k) for k in sorted_kws) + r')\b'
+            
+            compiled_rules[str(cat_path)] = {
+                'pattern': re.compile(pattern_str, re.IGNORECASE),
+                'weights': {k.lower(): w for k, w in safe_kws.items()}
+            }
+        except Exception as e:
+            logger.warning(f"Skipping bad JSON rule block for {cat_path}: {e}")
+            continue
+            
     return compiled_rules
 
 if 'compiled_json_rules' not in st.session_state: st.session_state.compiled_json_rules = load_and_compile_json_rules()
