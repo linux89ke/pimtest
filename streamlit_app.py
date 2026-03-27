@@ -997,6 +997,8 @@ def load_all_support_files() -> Dict:
     support['categories_names_list'] = _cat_names
     support['cat_path_to_code'] = _cat_path_to_code
     support['code_to_path'] = {v: k for k, v in _cat_path_to_code.items()}
+    # Compile JSON boost rules now that code_to_path is available
+    support['compiled_json_rules'] = load_and_compile_json_rules("category_qc_weighted.json")
     return support
 
 @st.cache_data(ttl=3600)
@@ -1019,8 +1021,10 @@ def load_and_compile_json_rules(json_path="category_qc_weighted.json") -> dict:
         fixed_rules = {}
         for item in raw_rules:
             if isinstance(item, dict):
-                cat = item.get("category") or item.get("Category Path") or item.get("name")
-                kws = item.get("keywords") or item.get("weights")
+                cat = (item.get("category") or item.get("Category Path")
+                       or item.get("name") or item.get("category_name"))
+                kws = (item.get("keywords") or item.get("weights")
+                       or item.get("positive"))
                 if cat and isinstance(kws, dict):
                     fixed_rules[cat] = kws
         raw_rules = fixed_rules
@@ -2653,7 +2657,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 # ==========================================
 # APP INITIALIZATION
 # ==========================================
-try: support_files = load_support_files_lazy(); st.session_state.support_files = support_files
+try: support_files = load_support_files_lazy(); st.session_state.support_files = support_files; st.session_state['compiled_json_rules'] = support_files.get('compiled_json_rules', {})
 except Exception as e: st.error(f"Failed to load configs: {e}"); st.stop()
 
 def get_image_base64(path):
