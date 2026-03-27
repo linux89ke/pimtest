@@ -333,6 +333,20 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     d['_cat_lower'] = d['_cat_clean'].str.lower()
     d['_name_clean'] = d['NAME'].astype(str).str.strip()
     
+    # Pre-build a leaf->full_path cache so each product row doesn't scan all paths
+    leaf_to_full_path = {}
+    if code_to_path:
+        for full_path in code_to_path.values():
+            for sep in ('/', '>'):
+                if sep in full_path:
+                    leaf = full_path.split(sep)[-1].strip().lower()
+                    break
+            else:
+                leaf = full_path.strip().lower()
+            # First match wins — most specific path for this leaf
+            if leaf not in leaf_to_full_path:
+                leaf_to_full_path[leaf] = full_path
+
     flagged_indices = []
     comment_map = {}
     kw_map = engine.build_keyword_to_category_mapping()
@@ -384,24 +398,37 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             # e.g. current='Smart Watches' -> 'Phones & Tablets / ... / Smart Watches'
             current_full = current_cat
             if code_to_path:
-                # Try resolving via cat_path_to_code first, then by leaf name scan
-                code = cat_path_to_code.get(current_cat.lower(), '')
-                if code and code in code_to_path:
-                    current_full = code_to_path[code]
+                # 1. Try resolving via CATEGORY_CODE directly (most reliable)
+                row_code = str(row.get('CATEGORY_CODE', '')).strip().split('.')[0]
+                if row_code and row_code in code_to_path:
+                    current_full = code_to_path[row_code]
                 else:
-                    # Scan code_to_path for a path whose leaf matches current_cat
-                    c_leaf_lower = current_cat.strip().lower()
-                    for full_path in code_to_path.values():
-                        if get_leaf(full_path) == c_leaf_lower:
-                            current_full = full_path
-                            break
+                    # 2. Try cat_path_to_code lookup
+                    code = cat_path_to_code.get(current_cat.lower(), '')
+                    if code and code in code_to_path:
+                        current_full = code_to_path[code]
+                    else:
+                        # 3. Use pre-built leaf cache
+                        current_full = leaf_to_full_path.get(current_cat.strip().lower(), current_cat)
 
-            # Suppress if both paths share the same top-level parent.
-            # This prevents flagging e.g. 'Smart Watches' when the suggestion is
-            # 'Phones & Tablets / Accessories / Smart Watch Cables' — same family.
-            p_top = get_top(predicted)
-            c_top = get_top(current_full)
-            if c_top and p_top and c_top == p_top:
+            # Suppress if both paths share the same top-level OR second-level parent.
+            # Top-level alone is too broad (e.g. Bluetooth Speakers and Radio Cassette Players
+            # are both under Electronics but are genuinely different categories).
+            # Second-level is precise enough: 'Phones & Tablets / Accessories / Smart Watches'
+            # vs 'Phones & Tablets / Accessories / Smart Watch Cables' → same family, don't flag.
+            def get_segments(path, n):
+                """Return the first n segments of a path as a lowercase tuple."""
+                for sep in ('/', '>'):
+                    if sep in path:
+                        parts = [p.strip().lower() for p in path.split(sep)]
+                        return tuple(parts[:n])
+                return (path.strip().lower(),)
+
+            p_top2 = get_segments(predicted, 2)
+            c_top2 = get_segments(current_full, 2)
+            # Suppress if they share at least 2 levels (or 1 if path is short)
+            shared = sum(1 for a, b in zip(p_top2, c_top2) if a == b)
+            if shared >= min(2, len(p_top2), len(c_top2)):
                 continue
 
             if p_leaf != c_leaf:
