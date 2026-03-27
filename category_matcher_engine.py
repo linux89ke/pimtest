@@ -211,7 +211,7 @@ class CategoryMatcherEngine:
                 name_vec = self.vectorizer.transform([name_clean])
                 similarities = cosine_similarity(name_vec, self.tfidf_matrix).flatten()
                 best_idx = np.argmax(similarities)
-                if similarities[best_idx] > 0.15:
+                if similarities[best_idx] > 0.35:
                     return self.categories[best_idx]
             except Exception:
                 pass
@@ -271,7 +271,7 @@ class CategoryMatcherEngine:
                     best_category = cat_path
             
             # Reject garbage matches if confidence is too low
-            if best_score < 0.12:
+            if best_score < 0.35:
                 return ""
                 
             return best_category
@@ -357,10 +357,21 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
         
         if predicted and predicted.lower() != current_cat.lower():
-            # Extract just the "leaf" category (the final word in the path) for a cleaner comparison
-            p_leaf = predicted.split('>')[-1].strip().lower()
-            c_leaf = current_cat.split('>')[-1].strip().lower()
-            
+            # Extract the leaf — handle both '/' and '>' separators
+            def get_leaf(path):
+                for sep in ('/', '>'):
+                    if sep in path:
+                        return path.split(sep)[-1].strip().lower()
+                return path.strip().lower()
+
+            p_leaf = get_leaf(predicted)
+            c_leaf = get_leaf(current_cat)
+
+            # Don't flag if current leaf already appears anywhere in predicted full path
+            # e.g. current='Bluetooth Speakers', predicted='Electronics / Audio / Bluetooth Speakers'
+            if c_leaf in predicted.lower():
+                continue
+
             if p_leaf != c_leaf:
                 flagged_indices.append(idx)
                 comment_map[idx] = f"Wrong Category. Suggested: {predicted}"
