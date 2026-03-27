@@ -254,9 +254,12 @@ class CategoryMatcherEngine:
                 # 1. Convert the engine's category path to lowercase
                 cat_path_lower = cat_path.lower()
                 
-                # 2. Check the JSON rules using the lowercase path
-                if cat_path_lower in self.compiled_rules:
-                    rule = self.compiled_rules[cat_path_lower]
+                # 2. Check the JSON rules — try full path first, then leaf name as fallback.
+                #    This handles both: rules keyed by full path ("automobile > car care > car polishes & waxes")
+                #    and rules keyed by bare category_name ("car polishes & waxes").
+                leaf_lower = cat_path_lower.split('>')[-1].strip()
+                rule = self.compiled_rules.get(cat_path_lower) or self.compiled_rules.get(leaf_lower)
+                if rule:
                     matches = rule['pattern'].findall(name_lower)
                     if matches:
                         boost = sum(rule['weights'].get(m.lower(), 0.0) for m in set(matches))
