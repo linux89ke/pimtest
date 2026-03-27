@@ -411,11 +411,11 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                         # 3. Use pre-built leaf cache
                         current_full = leaf_to_full_path.get(current_cat.strip().lower(), current_cat)
 
-            # Suppress if both paths share the same top-level OR second-level parent.
-            # Top-level alone is too broad (e.g. Bluetooth Speakers and Radio Cassette Players
-            # are both under Electronics but are genuinely different categories).
-            # Second-level is precise enough: 'Phones & Tablets / Accessories / Smart Watches'
-            # vs 'Phones & Tablets / Accessories / Smart Watch Cables' → same family, don't flag.
+            # ── Segment-similarity suppression ────────────────────────────────────
+            # Suppress if both paths share at least 2 leading segments.
+            # e.g. 'Phones & Tablets / Accessories / Smart Watches' vs
+            #      'Phones & Tablets / Accessories / Smart Watch Cables'
+            # → share 2 levels → suppress (same sub-family, not a wrong category).
             def get_segments(path, n):
                 """Return the first n segments of a path as a lowercase tuple."""
                 for sep in ('/', '>'):
@@ -424,11 +424,46 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                         return tuple(parts[:n])
                 return (path.strip().lower(),)
 
-            p_top2 = get_segments(predicted, 2)
-            c_top2 = get_segments(current_full, 2)
-            # Suppress if they share at least 2 levels (or 1 if path is short)
-            shared = sum(1 for a, b in zip(p_top2, c_top2) if a == b)
-            if shared >= min(2, len(p_top2), len(c_top2)):
+            p_segs = get_segments(predicted, 3)
+            c_segs = get_segments(current_full, 3)
+            shared = sum(1 for a, b in zip(p_segs, c_segs) if a == b)
+            if shared >= min(2, len(p_segs), len(c_segs)):
+                continue
+
+            # ── Cross-domain noise suppression ────────────────────────────────────
+            # Some product names contain incidental words (colors, materials, feature
+            # keywords) that pull TF-IDF toward completely unrelated domains.
+            # Block known noisy cross-domain leaps here.
+            _CROSS_DOMAIN_BLOCKS = [
+                # (current_top_keywords, forbidden_predicted_tops)
+                # Clothing/Fashion items should never be sent to Grocery or Fragrances
+                ({'fashion', 'clothing', 'outerwear', 'apparel', 'shoes', 'footwear',
+                  'sneakers', 'slippers', 'socks', 'polos', 'bras', 'underwear'},
+                 {'grocery', 'fragrances', 'industrial & scientific', 'automobile'}),
+                # Electronics should never land in Grocery or Industrial raw materials
+                ({'electronics', 'phones', 'tablets', 'audio', 'speakers', 'headsets',
+                  'smart watches', 'smartwatch', 'laptops', 'cameras', 'wi-fi', 'dongles',
+                  'power banks', 'earbuds', 'headphones'},
+                 {'grocery', 'automobile', 'industrial & scientific', 'garden & outdoors',
+                  'sporting goods', 'fashion'}),
+                # Health/Beauty should not land in Grocery frozen/produce
+                ({'health', 'beauty', 'skin care', 'creams', 'makeup', 'foundation'},
+                 {'grocery', 'industrial & scientific'}),
+                # Home items should not land in Grocery
+                ({'home', 'kitchen', 'storage', 'cleaning', 'toilet'},
+                 {'grocery', 'industrial & scientific', 'garden & outdoors'}),
+            ]
+            c_leaf_lower = current_cat.strip().lower()
+            c_full_lower = current_full.strip().lower()
+            p_top_lower = get_top(predicted).strip().lower()
+            blocked = False
+            for current_kws, forbidden_tops in _CROSS_DOMAIN_BLOCKS:
+                # Check if current category matches this block's domain
+                if any(kw in c_leaf_lower or kw in c_full_lower for kw in current_kws):
+                    if any(p_top_lower.startswith(ft) for ft in forbidden_tops):
+                        blocked = True
+                        break
+            if blocked:
                 continue
 
             if p_leaf != c_leaf:
