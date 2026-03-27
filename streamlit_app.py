@@ -2657,7 +2657,7 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                     st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
 
-                        if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE:
+                    if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                 try:
                     _engine = _get_cat_matcher_engine()
                     if _engine is not None:
