@@ -20,6 +20,56 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
+
+def compile_rules_from_json(raw_rules: list, code_to_path: dict = None) -> dict:
+    """
+    Converts raw JSON category rules into the compiled format the engine expects.
+
+    Each rule in raw_rules should look like:
+        {
+            "category_name": "Car Polishes & Waxes",
+            "category_code": 1000089,
+            "positive": {"car": 2, "polish": 3, "wax": 3}
+        }
+
+    Args:
+        raw_rules:    List of rule dicts loaded from your JSON file.
+        code_to_path: Optional dict mapping str(category_code) -> full category path
+                      e.g. {"1000089": "Automobile > Car Care > Car Polishes & Waxes"}
+                      If provided, the full path is used as the lookup key so it
+                      aligns with what the TF-IDF index stores in engine.categories.
+
+    Returns:
+        A dict keyed by lowercase category path (or name), ready for set_compiled_rules().
+    """
+    if code_to_path is None:
+        code_to_path = {}
+
+    compiled = {}
+    for rule in raw_rules:
+        positive_kws = rule.get('positive', {})
+        if not positive_kws:
+            continue
+
+        # Resolve the key: prefer the full path from code_to_path, fall back to category_name
+        code_str = str(rule.get('category_code', ''))
+        cat_key = code_to_path.get(code_str, rule.get('category_name', '')).lower().strip()
+        if not cat_key:
+            continue
+
+        # Build one regex pattern covering all positive keywords
+        pattern = re.compile(
+            r'\b(' + '|'.join(re.escape(k.lower()) for k in positive_kws) + r')\b'
+        )
+
+        compiled[cat_key] = {
+            'pattern': pattern,
+            'weights': {k.lower(): float(v) for k, v in positive_kws.items()}
+        }
+
+    return compiled
+
+
 class CategoryMatcherEngine:
     def __init__(self, db_path="cat_learning.db"):
         self.db_path = db_path
@@ -40,9 +90,18 @@ class CategoryMatcherEngine:
         self._init_db()
         self.load_learning_db()
 
-    def set_compiled_rules(self, rules: dict):
-        """Loads the JSON heuristic rules into the engine."""
-        self.compiled_rules = rules or {}
+    def set_compiled_rules(self, rules, code_to_path: dict = None):
+        """
+        Loads heuristic rules into the engine.
+
+        Accepts either:
+          - A raw list of JSON rule dicts (auto-compiled via compile_rules_from_json)
+          - An already-compiled dict (from a prior compile_rules_from_json call)
+        """
+        if isinstance(rules, list):
+            self.compiled_rules = compile_rules_from_json(rules, code_to_path or {})
+        else:
+            self.compiled_rules = rules or {}
 
     def _init_db(self):
         try:
