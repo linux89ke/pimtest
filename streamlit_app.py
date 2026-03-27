@@ -255,7 +255,6 @@ if 'ls_processed_flag' not in st.session_state: st.session_state.ls_processed_fl
 if 'ls_read_trigger' not in st.session_state: st.session_state.ls_read_trigger = 0
 if 'flags_expanded_initialized' not in st.session_state: st.session_state.flags_expanded_initialized = False
 
-if 'compiled_json_rules' not in st.session_state: st.session_state.compiled_json_rules = load_and_compile_json_rules()
 
 _pre_country = st.session_state.get("country_selector") or st.session_state.get("selected_country", "Kenya")
 if _pre_country == "Morocco":
@@ -1059,6 +1058,8 @@ def load_and_compile_json_rules(json_path="category_qc_weighted.json") -> dict:
             'weights': {k.lower(): float(w) for k, w in keywords_dict.items()}
         }
     return compiled_rules
+
+if 'compiled_json_rules' not in st.session_state: st.session_state.compiled_json_rules = load_and_compile_json_rules()
 
 @st.cache_data(ttl=3600)
 def compile_regex_patterns(words: List[str]) -> re.Pattern:
