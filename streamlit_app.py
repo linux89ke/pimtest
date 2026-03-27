@@ -1274,13 +1274,20 @@ def run_cached_check(func, cache_path, ckwargs):
         logger.warning(f"run_cached_check save failed {cache_path}: {e}")
     return res
 
-def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, cat_path_to_code: dict = None, code_to_path: dict = None) -> pd.DataFrame:
+def check_miscellaneous_category(data: pd.DataFrame, 
+                                 categories_list: list = None, 
+                                 compiled_rules: dict = None, 
+                                 cat_path_to_code: dict = None, 
+                                 code_to_path: dict = None) -> pd.DataFrame:
     if categories_list is None:
         categories_list = []
+    if compiled_rules is None:
+        compiled_rules = st.session_state.get('compiled_json_rules', {})
     if cat_path_to_code is None:
         cat_path_to_code = {}
     if code_to_path is None:
         code_to_path = {}
+        
     if not categories_list or not code_to_path:
         try:
             _sf = st.session_state.get("support_files", {})
@@ -1298,6 +1305,7 @@ def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = Non
                     _engine.build_tfidf_index(categories_list)
                 return check_wrong_category(
                     data, categories_list,
+                    compiled_rules=compiled_rules,
                     cat_path_to_code=cat_path_to_code,
                     code_to_path=code_to_path,
                 )
@@ -2080,6 +2088,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     validations = [
         ("Wrong Category", check_miscellaneous_category, {
             'categories_list': support_files.get('categories_names_list', []),
+            'compiled_rules': st.session_state.get('compiled_json_rules', {}),
             'cat_path_to_code': support_files.get('cat_path_to_code', {}),
             'code_to_path': support_files.get('code_to_path', {}),
         }),
@@ -2652,17 +2661,22 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                 try:
                     _engine = _get_cat_matcher_engine()
                     if _engine is not None:
-                        learned_count = 0
+                                                learned_count = 0
                         for sid in sids_to_process:
                             row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
                             if row.empty:
                                 continue
                             name = str(row.iloc[0].get('NAME', '')).strip()
-                            cat_code = str(row.iloc[0].get('CATEGORY_CODE', '')).strip().split('.')[0]
-                            full_path = support_files.get('code_to_path', {}).get(cat_code)
-                            category = full_path if full_path else str(row.iloc[0].get('CATEGORY', '')).strip()
-                            if name and category and category.lower() not in ('nan', 'none', ''):
-                                _engine.apply_learned_correction(name, category, auto_save=False)
+                            if not name:
+                                continue
+
+                            # === REPLACEMENT 3 START ===
+                            _engine.set_compiled_rules(st.session_state.get('compiled_json_rules', {}))
+                            predicted = _engine.get_category_with_boost(name)
+                            # === REPLACEMENT 3 END ===
+
+                            if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
+                                _engine.apply_learned_correction(name, predicted, auto_save=False)
                                 learned_count += 1
                         if learned_count:
                             _engine.save_learning_db()
@@ -2808,7 +2822,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                             if _engine is not None and _cats:
                                 if not _engine._tfidf_built:
                                     _engine.build_tfidf_index(_cats)
-                                learned_count = 0
+                                                                learned_count = 0
                                 for sid in to_reject:
                                     prod_row = data[data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
                                     if prod_row.empty:
@@ -2816,10 +2830,12 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                     name = str(prod_row.iloc[0].get('NAME', '')).strip()
                                     if not name:
                                         continue
-                                        
-                                    # Call the new boosted prediction
-                                    predicted = _engine.get_category_with_boost(name, st.session_state.compiled_json_rules)
-                                    
+
+                                    # === REPLACEMENT 3 START ===
+                                    _engine.set_compiled_rules(st.session_state.get('compiled_json_rules', {}))
+                                    predicted = _engine.get_category_with_boost(name)
+                                    # === REPLACEMENT 3 END ===
+
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
                                         _engine.apply_learned_correction(name, predicted, auto_save=False)
                                         learned_count += 1
