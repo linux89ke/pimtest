@@ -2086,7 +2086,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     suspected_fake_df = support_files.get('suspected_fake', {}).get(country_validator.code, pd.DataFrame()) if isinstance(support_files.get('suspected_fake'), dict) else pd.DataFrame()
     country_prohibited_words = support_files.get('prohibited_words_all', {}).get(country_validator.code, [])
     validations = [
-        ("Wrong Category", check_miscellaneous_category, {
+                ("Wrong Category", check_miscellaneous_category, {
             'categories_list': support_files.get('categories_names_list', []),
             'compiled_rules': st.session_state.get('compiled_json_rules', {}),
             'cat_path_to_code': support_files.get('cat_path_to_code', {}),
