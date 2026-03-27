@@ -357,8 +357,15 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
         
         if predicted and predicted.lower() != current_cat.lower():
-            # Extract the leaf — handle both '/' and '>' separators
+            def get_top(path):
+                """Return the top-level category segment, handling / and > separators."""
+                for sep in ('/', '>'):
+                    if sep in path:
+                        return path.split(sep)[0].strip().lower()
+                return path.strip().lower()
+
             def get_leaf(path):
+                """Return the leaf segment, handling / and > separators."""
                 for sep in ('/', '>'):
                     if sep in path:
                         return path.split(sep)[-1].strip().lower()
@@ -367,9 +374,34 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             p_leaf = get_leaf(predicted)
             c_leaf = get_leaf(current_cat)
 
-            # Don't flag if current leaf already appears anywhere in predicted full path
+            # Skip if the current leaf already appears anywhere in the predicted path
             # e.g. current='Bluetooth Speakers', predicted='Electronics / Audio / Bluetooth Speakers'
             if c_leaf in predicted.lower():
+                continue
+
+            # Resolve current category to its full path using code_to_path so we
+            # can compare top-level parents.
+            # e.g. current='Smart Watches' -> 'Phones & Tablets / ... / Smart Watches'
+            current_full = current_cat
+            if code_to_path:
+                # Try resolving via cat_path_to_code first, then by leaf name scan
+                code = cat_path_to_code.get(current_cat.lower(), '')
+                if code and code in code_to_path:
+                    current_full = code_to_path[code]
+                else:
+                    # Scan code_to_path for a path whose leaf matches current_cat
+                    c_leaf_lower = current_cat.strip().lower()
+                    for full_path in code_to_path.values():
+                        if get_leaf(full_path) == c_leaf_lower:
+                            current_full = full_path
+                            break
+
+            # Suppress if both paths share the same top-level parent.
+            # This prevents flagging e.g. 'Smart Watches' when the suggestion is
+            # 'Phones & Tablets / Accessories / Smart Watch Cables' — same family.
+            p_top = get_top(predicted)
+            c_top = get_top(current_full)
+            if c_top and p_top and c_top == p_top:
                 continue
 
             if p_leaf != c_leaf:
