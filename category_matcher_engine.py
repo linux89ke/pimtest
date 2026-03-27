@@ -192,9 +192,12 @@ class CategoryMatcherEngine:
                 base_score = float(similarities[idx])
                 boost = 0.0
                 
-                # Use internal self.compiled_rules instead of passing it as an arg
-                if cat_path in self.compiled_rules:
-                    rule = self.compiled_rules[cat_path]
+                # 1. Convert the engine's category path to lowercase
+                cat_path_lower = cat_path.lower()
+                
+                # 2. Check the JSON rules using the lowercase path
+                if cat_path_lower in self.compiled_rules:
+                    rule = self.compiled_rules[cat_path_lower]
                     matches = rule['pattern'].findall(name_lower)
                     if matches:
                         boost = sum(rule['weights'].get(m.lower(), 0.0) for m in set(matches))
