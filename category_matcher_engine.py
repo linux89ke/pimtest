@@ -351,6 +351,14 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     comment_map = {}
     kw_map = engine.build_keyword_to_category_mapping()
 
+    # ── Resolution diagnostics (logged once per run) ──────────────────────────
+    _diag_logged = 0
+    _has_code_col = 'CATEGORY_CODE' in d.columns
+    logger.info(f'[WrongCat] code_to_path size={len(code_to_path)}, '
+                f'cat_path_to_code size={len(cat_path_to_code)}, '
+                f'leaf_cache size={len(leaf_to_full_path)}, '
+                f'has_code_col={_has_code_col}')
+
     for idx, row in d.iterrows():
         current_cat = row['_cat_clean']
         name = row['_name_clean']
@@ -397,19 +405,32 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             # can compare top-level parents.
             # e.g. current='Smart Watches' -> 'Phones & Tablets / ... / Smart Watches'
             current_full = current_cat
+            _resolution_method = 'unresolved'
             if code_to_path:
                 # 1. Try resolving via CATEGORY_CODE directly (most reliable)
                 row_code = str(row.get('CATEGORY_CODE', '')).strip().split('.')[0]
                 if row_code and row_code in code_to_path:
                     current_full = code_to_path[row_code]
+                    _resolution_method = f'code({row_code})'
                 else:
                     # 2. Try cat_path_to_code lookup
                     code = cat_path_to_code.get(current_cat.lower(), '')
                     if code and code in code_to_path:
                         current_full = code_to_path[code]
+                        _resolution_method = f'cat_path_to_code({code})'
                     else:
                         # 3. Use pre-built leaf cache
-                        current_full = leaf_to_full_path.get(current_cat.strip().lower(), current_cat)
+                        resolved = leaf_to_full_path.get(current_cat.strip().lower())
+                        if resolved:
+                            current_full = resolved
+                            _resolution_method = 'leaf_cache'
+                        # else stays as bare leaf — log it
+            if _diag_logged < 10:
+                logger.info(f'[WrongCat] resolution: cat={current_cat!r} '
+                            f'row_code={str(row.get("CATEGORY_CODE","")).strip()!r} '
+                            f'method={_resolution_method} '
+                            f'current_full={current_full!r}')
+                _diag_logged += 1
 
             # ── Segment-similarity suppression ────────────────────────────────────
             # Suppress if both paths share at least 2 leading segments.
