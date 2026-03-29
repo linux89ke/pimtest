@@ -180,9 +180,16 @@ class CategoryMatcherEngine:
         self.categories = [str(c).strip() for c in categories_list if str(c).strip() and str(c).strip().lower() != 'nan']
         if not self.categories: return
         clean_cats = [clean_text(c) for c in self.categories]
+        # Detect if index is built on full paths (contains separators) or bare leaves.
+        # Full paths give much richer TF-IDF signal; bare leaves score near-zero.
+        sep_count = sum(1 for c in self.categories if '/' in c or '>' in c)
+        self._index_has_full_paths = (sep_count / max(len(self.categories), 1)) > 0.3
         try:
             self.tfidf_matrix = self.vectorizer.fit_transform(clean_cats)
             self._tfidf_built = True
+            logger.info(f'[TF-IDF] Built index: {len(self.categories)} categories, '
+                        f'full_paths={self._index_has_full_paths} '
+                        f'(sep_count={sep_count})')
         except Exception as e:
             logger.warning(f"Failed to build TF-IDF index: {e}")
 
@@ -270,8 +277,11 @@ class CategoryMatcherEngine:
                     best_score = final_score
                     best_category = cat_path
             
-            # Reject garbage matches if confidence is too low
-            if best_score < 0.35:
+            # Reject garbage matches if confidence is too low.
+            # Bare-leaf indexes score much lower than full-path indexes,
+            # so use a lower threshold when we know the index is bare leaves.
+            _threshold = 0.35 if getattr(self, '_index_has_full_paths', True) else 0.15
+            if best_score < _threshold:
                 return ""
                 
             return best_category
@@ -310,8 +320,26 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     if engine is None:
         return pd.DataFrame(columns=data.columns)
 
+    # If categories_list is bare leaf names (no path separators), the TF-IDF
+    # index will produce near-zero similarities for most product names.
+    # Prefer full paths from code_to_path if available.
+    _effective_cats = categories_list
+    if code_to_path:
+        full_paths = list(code_to_path.values())
+        sep_ratio = sum(1 for p in full_paths if '/' in p or '>' in p) / max(len(full_paths), 1)
+        if sep_ratio > 0.3:
+            _effective_cats = full_paths
+            logger.info(f'[WrongCat] Using code_to_path full paths '
+                        f'({len(_effective_cats)}) instead of categories_list '
+                        f'({len(categories_list)}) for TF-IDF index')
+
     if not engine._tfidf_built:
-        engine.build_tfidf_index(categories_list)
+        engine.build_tfidf_index(_effective_cats)
+    elif getattr(engine, '_index_has_full_paths', True) is False and _effective_cats is not categories_list:
+        # Index was built on bare leaves but we now have full paths — rebuild
+        logger.info('[WrongCat] Rebuilding TF-IDF index with full paths')
+        engine._tfidf_built = False
+        engine.build_tfidf_index(_effective_cats)
 
     # CRITICAL: Feed the engine the JSON rules so it can use them!
     if compiled_rules:
@@ -377,6 +405,11 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
         # Fallback to standard tf-idf if boost rejected it for low confidence
         if not predicted:
             predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
+
+        # If predicted is a bare leaf name, resolve it to its full path via
+        # code_to_path so segment comparison works correctly.
+        if predicted and code_to_path and '/' not in predicted and '>' not in predicted:
+            predicted = leaf_to_full_path.get(predicted.strip().lower(), predicted)
         
         if predicted and predicted.lower() != current_cat.lower():
             def get_top(path):
