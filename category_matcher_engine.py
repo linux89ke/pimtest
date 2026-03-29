@@ -435,23 +435,95 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             # keywords) that pull TF-IDF toward completely unrelated domains.
             # Block known noisy cross-domain leaps here.
             _CROSS_DOMAIN_BLOCKS = [
-                # (current_top_keywords, forbidden_predicted_tops)
-                # Clothing/Fashion items should never be sent to Grocery or Fragrances
+                # (current_leaf_keywords, forbidden_predicted_top_prefixes)
+
+                # Supplements/medicine must not go to Phones & Tablets ("tablet" = pill)
+                ({'supplements', 'tablets', 'capsules', 'vitamins', 'syrup', 'herbal',
+                  'herbs', 'strips', 'milk substitutes'},
+                 {'phones & tablets', 'electronics', 'automobile',
+                  'industrial & scientific', 'sporting goods'}),
+
+                # Clothing/Fashion must not go to Grocery, Sporting Goods, or Automobile
                 ({'fashion', 'clothing', 'outerwear', 'apparel', 'shoes', 'footwear',
-                  'sneakers', 'slippers', 'socks', 'polos', 'bras', 'underwear'},
-                 {'grocery', 'fragrances', 'industrial & scientific', 'automobile'}),
-                # Electronics should never land in Grocery or Industrial raw materials
-                ({'electronics', 'phones', 'tablets', 'audio', 'speakers', 'headsets',
-                  'smart watches', 'smartwatch', 'laptops', 'cameras', 'wi-fi', 'dongles',
-                  'power banks', 'earbuds', 'headphones'},
-                 {'grocery', 'automobile', 'industrial & scientific', 'garden & outdoors',
-                  'sporting goods', 'fashion'}),
-                # Health/Beauty should not land in Grocery frozen/produce
-                ({'health', 'beauty', 'skin care', 'creams', 'makeup', 'foundation'},
-                 {'grocery', 'industrial & scientific'}),
-                # Home items should not land in Grocery
-                ({'home', 'kitchen', 'storage', 'cleaning', 'toilet'},
-                 {'grocery', 'industrial & scientific', 'garden & outdoors'}),
+                  'sneakers', 'slippers', 'socks', 'polos', 'bras', 'underwear',
+                  't-shirts', 'shirts', 'dresses', 'jackets', 'coats', 'jeans',
+                  'sandals', 'rain boots', 'boots', 'stockings'},
+                 {'grocery', 'industrial & scientific', 'automobile',
+                  'sporting goods', 'electronics', 'home & office', 'pet supplies'}),
+
+                # Electronics/Audio/Phones must not bleed into unrelated domains
+                ({'electronics', 'cell phones', 'bluetooth speakers', 'bluetooth headsets',
+                  'earphones', 'headsets', 'smart watches', 'wrist watches', 'tv remote',
+                  'remote controls', 'wi-fi', 'dongles', 'power banks', 'earbuds',
+                  'headphones', 'laptops', 'cameras', 'speakers', 'portable bluetooth'},
+                 {'grocery', 'automobile', 'industrial & scientific',
+                  'garden & outdoors', 'sporting goods', 'fashion', 'pet supplies'}),
+
+                # Watches/clocks must not go to Fashion accessories or Sporting Goods
+                ({'wrist watches', "women's watches", "men's watches", 'kids watches',
+                  'smart watches', 'wall clocks', 'alarm clocks'},
+                 {'fashion', 'sporting goods', 'grocery', 'automobile'}),
+
+                # Health/Beauty/Personal care must not bleed into Grocery or unrelated
+                ({'health', 'beauty', 'skin care', 'creams', 'makeup', 'foundation',
+                  'heating pads', 'salon & spa', 'salon', 'spa', 'massage', 'medical',
+                  'shaving gels', 'hair sprays', 'eau de parfum', 'fragrance', 'perfume',
+                  'sets & kits'},
+                 {'grocery', 'industrial & scientific', 'sporting goods',
+                  'automobile', 'phones & tablets', 'toys & games', 'pet supplies'}),
+
+                # Home/Kitchen/Furniture must not bleed into Grocery, Sporting Goods,
+                # or Automobile
+                ({'home', 'kitchen', 'storage', 'cleaning', 'toilet', 'coat racks',
+                  'sewing machines', 'pressure cookers', 'electric pressure cookers',
+                  'cookers', 'christian books', 'books', 'printer cutters', 'sprayers',
+                  'art set', 'security & filtering'},
+                 {'grocery', 'sporting goods', 'automobile',
+                  'industrial & scientific', 'garden & outdoors'}),
+
+                # Baby/Kids play equipment must not go to Garden or Sporting Goods
+                ({'outdoor safety', 'play yard', 'baby', 'strollers', 'nursery'},
+                 {'garden & outdoors', 'sporting goods', 'automobile'}),
+
+                # Same-domain false positives: sub-categories of the same domain
+                # e.g. Salon & Spa Chairs -> H&B/Massage Tools, Cell Phones -> P&T/SIM Trays,
+                # Pressure Cookers -> H&O/Pressure Cooker Parts
+                # These are handled by the segment check using code_to_path,
+                # but as a safety net if code_to_path isn't available:
+                ({'salon & spa chairs', 'massage chairs'},
+                 {'health & beauty'}),
+                ({'cell phones', 'earphones & headsets'},
+                 {'phones & tablets'}),
+                ({'pressure cookers', 'electric pressure cookers'},
+                 {'home & office'}),
+
+                # Creams/Strips/Supplements must not bleed into unrelated domains
+                ({'creams', 'strips', 'supplements', 'creams & moisturizers'},
+                 {'sporting goods', 'automobile', 'grocery',
+                  'phones & tablets', 'industrial & scientific'}),
+
+                # Bluetooth Headsets/Remote Controls are sub-items of Electronics/P&T
+                ({'bluetooth headsets', 'tv remote controls', 'remote controls',
+                  'android phones', 'musicals'},
+                 {'sporting goods', 'grocery', 'automobile', 'garden & outdoors',
+                  'industrial & scientific', 'fashion', 'pet supplies'}),
+
+                # Books must not go to Office Electronics or unrelated domains
+                ({'christian books & bibles', 'motivational & self-help',
+                  'business & economics'},
+                 {'home & office', 'industrial & scientific', 'automobile',
+                  'grocery', 'sporting goods'}),
+
+                # Kitchen appliances/tools must not go to Automobile or Sporting Goods
+                ({'freezers', 'mixers & blenders', 'food processors', 'rice cookers',
+                  'bakeware sets', 'utensils', 'printer cutters', 'art set',
+                  'push & pull toys'},
+                 {'automobile', 'sporting goods', 'grocery',
+                  'industrial & scientific', 'garden & outdoors'}),
+
+                # Umbrellas must not bleed into Fashion sub-items
+                ({'stick umbrellas', 'umbrellas'},
+                 {'fashion', 'grocery', 'automobile', 'sporting goods'}),
             ]
             c_leaf_lower = current_cat.strip().lower()
             c_full_lower = current_full.strip().lower()
