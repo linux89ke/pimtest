@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 # =============================================================================
 # 🚀 PERFORMANCE OPTIMIZATION: HOISTED CONSTANTS
-# Moving these massive dictionaries out of the loop prevents Python from
-# recreating them in memory for every single product row.
 # =============================================================================
 
 SAME_DOMAIN_CATEGORIES = {
@@ -161,9 +159,11 @@ CROSS_DOMAIN_BLOCKS = [
      {'fashion', 'grocery', 'automobile', 'sporting goods'}),
     ({'backpacks', 'camping backpacks', 'bags'},
      {'electronics', 'automobile', 'industrial & scientific'}),
-    ({'digital games', 'ps 5 games', 'ps4 games', 'xbox games'},
+     
+    # ---> UPDATED RULE: Added toys & games and sporting goods to block list for video games
+    ({'digital games', 'ps 5 games', 'ps4 games', 'xbox games', 'play station', 'nintendo'},
      {'health & beauty', 'grocery', 'automobile',
-      'industrial & scientific', 'fashion'}),
+      'industrial & scientific', 'fashion', 'toys & games', 'sporting goods'}),
 ]
 
 
@@ -179,21 +179,18 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 def get_top(path):
-    """Return the top-level category segment, handling / and > separators."""
     for sep in ('/', '>'):
         if sep in path:
             return path.split(sep)[0].strip().lower()
     return path.strip().lower()
 
 def get_leaf(path):
-    """Return the leaf segment, handling / and > separators."""
     for sep in ('/', '>'):
         if sep in path:
             return path.split(sep)[-1].strip().lower()
     return path.strip().lower()
 
 def get_segments(path, n):
-    """Return the first n segments of a path as a lowercase tuple."""
     for sep in ('/', '>'):
         if sep in path:
             parts = [p.strip().lower() for p in path.split(sep)]
@@ -366,7 +363,6 @@ class CategoryMatcherEngine:
                 name_vec = self.vectorizer.transform([name_clean])
                 similarities = cosine_similarity(name_vec, self.tfidf_matrix).flatten()
                 best_idx = np.argmax(similarities)
-                # Used dynamic confidence threshold
                 if similarities[best_idx] > confidence_threshold:
                     return self.categories[best_idx]
             except Exception as e:
@@ -418,7 +414,6 @@ class CategoryMatcherEngine:
                     best_score = final_score
                     best_category = cat_path
             
-            # Use dynamic confidence threshold
             if best_score < confidence_threshold:
                 return ""
                 
@@ -452,12 +447,11 @@ def get_engine(db_path="cat_learning.db"):
 
 
 # =============================================================================
-# MAIN LOGIC
+# MAIN CHECKING LOGIC
 # =============================================================================
 
 def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rules: dict = None, cat_path_to_code: dict = None, code_to_path: dict = None, confidence_threshold: float = 0.0):
     
-    # 1. Stricter Initial Validation
     if data is None or data.empty:
         return pd.DataFrame()
 
@@ -507,14 +501,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     comment_map = {}
     kw_map = engine.build_keyword_to_category_mapping()
 
-    _diag_logged = 0
-    _has_code_col = 'CATEGORY_CODE' in d.columns
-    logger.info(f'[WrongCat] code_to_path size={len(code_to_path)}, '
-                f'cat_path_to_code size={len(cat_path_to_code)}, '
-                f'leaf_cache size={len(leaf_to_full_path)}, '
-                f'has_code_col={_has_code_col}')
-
-    # Establish safe minimum threshold
     safe_threshold = max(confidence_threshold, 0.35)
 
     for idx, row in d.iterrows():
@@ -529,7 +515,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             comment_map[idx] = "Category is 'Miscellaneous'"
             continue
 
-        # Passes dynamic threshold to engine
         predicted = engine.get_category_with_boost(name, confidence_threshold=safe_threshold)
         
         if not predicted:
@@ -539,7 +524,7 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             p_leaf = get_leaf(predicted)
             c_leaf = get_leaf(current_cat)
 
-            # 2. Fixed Leaf Validation (Exact match, not just substring)
+            # Strict segment matching
             predicted_segments = [p.strip().lower() for p in predicted.replace('>', '/').split('/')]
             if c_leaf in predicted_segments:
                 continue
@@ -561,13 +546,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                         if resolved:
                             current_full = resolved
                             _resolution_method = 'leaf_cache'
-            
-            if _diag_logged < 10:
-                logger.info(f'[WrongCat] resolution: cat={current_cat!r} '
-                            f'row_code={str(row.get("CATEGORY_CODE","")).strip()!r} '
-                            f'method={_resolution_method} '
-                            f'current_full={current_full!r}')
-                _diag_logged += 1
 
             p_segs = get_segments(predicted, 3)
             c_segs = get_segments(current_full, 3)
@@ -579,13 +557,11 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             c_full_lower = current_full.strip().lower()
             p_top_lower = get_top(predicted).strip().lower()
 
-            # Uses hoisted global constant
             same_domain_cats = SAME_DOMAIN_CATEGORIES.get(p_top_lower, set())
             if c_leaf_lower in same_domain_cats:
                 continue
 
             blocked = False
-            # Uses hoisted global constant
             for current_kws, forbidden_tops in CROSS_DOMAIN_BLOCKS:
                 if any(kw in c_leaf_lower or kw in c_full_lower for kw in current_kws):
                     if any(p_top_lower.startswith(ft) for ft in forbidden_tops):
@@ -604,8 +580,76 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     res = data.loc[flagged_indices].copy()
     res['Comment_Detail'] = res.index.map(comment_map)
     
-    # 3. Safe Deduplication Validation
     if 'PRODUCT_SET_SID' in res.columns:
         return res.drop_duplicates(subset=['PRODUCT_SET_SID'])
         
     return res.drop_duplicates()
+
+
+# =============================================================================
+# AUTO-TRAINING FUNCTION
+# =============================================================================
+
+def train_engine_from_csv(csv_filepath: str):
+    """
+    Reads a CSV file, finds items rejected for 'Wrong Category',
+    and trains the engine's ML model to memorize their original (correct) categories.
+    """
+    print(f"Loading data from {csv_filepath}...")
+    try:
+        df = pd.read_csv(csv_filepath)
+    except Exception as e:
+        print(f"Failed to read CSV: {e}")
+        return
+    
+    # Filter for items rejected specifically for "Wrong Category" (or code 1000004)
+    if 'Reason' not in df.columns:
+        print("Error: The CSV is missing the 'Reason' column.")
+        return
+        
+    wrong_cat_mask = df['Reason'].astype(str).str.contains('1000004|Wrong Category', case=False, na=False)
+    rejected_items = df[wrong_cat_mask].copy()
+    
+    if rejected_items.empty:
+        print("No 'Wrong Category' rejected items found to train on.")
+        return
+
+    print(f"Found {len(rejected_items)} wrongly categorized items. Training engine...")
+
+    engine = get_engine()
+    if engine is None:
+        print("Error: Could not initialize the CategoryMatcherEngine.")
+        return
+
+    train_count = 0
+    for idx, row in rejected_items.iterrows():
+        product_name = str(row.get('NAME', '')).strip()
+        original_category = str(row.get('CATEGORY', '')).strip()
+        
+        # Skip garbage data
+        if not product_name or product_name.lower() == 'nan':
+            continue
+            
+        if not original_category or original_category.lower() == 'nan':
+            continue
+
+        # Train the engine. auto_save=False ensures we batch save at the very end.
+        engine.apply_learned_correction(product_name, original_category, auto_save=False)
+        train_count += 1
+        print(f"Learned: '{product_name}' -> belongs in -> '{original_category}'")
+
+    print("Saving to SQLite database and retraining the ML model...")
+    engine.save_learning_db()
+    
+    print(f"Success! The engine has memorized the correct categories for {train_count} products.")
+
+
+# =============================================================================
+# EXAMPLE USAGE
+# =============================================================================
+if __name__ == "__main__":
+    # Ensure your CSV file is in the same directory, or provide the full path here.
+    # To run the training script first to fix the ML database:
+    # train_engine_from_csv('ProductSets.csv')
+    
+    print("System ready.")
