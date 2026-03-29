@@ -457,84 +457,131 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             # to their known sub-category leaf names so we can suppress same-domain
             # false positives without needing code_to_path at all.
             _SAME_DOMAIN_CATEGORIES = {
+                # Each entry: top-level domain -> set of leaf category names that
+                # GENUINELY BELONG to that domain. Only suppress if the current
+                # category is a legitimate sub-category of the predicted domain.
+                # Do NOT add entries just because they were false-positived into
+                # a domain — that causes over-suppression.
+
                 'health & beauty': {
                     'creams', 'strips', 'supplements', 'creams & moisturizers',
                     'conditioners', 'face moisturizers', 'cleansers', 'soaps & cleansers',
-                    'hair & scalp treatments', 'back braces', 'toners', 'face', 'body',
-                    'cellulite massagers', 'serums', 'hairpieces', 'shaving creams',
-                    'gels', 'wrinkle & anti-aging devices', 'lips', 'soaps', 'washes',
+                    'hair & scalp treatments', 'toners', 'face', 'body',
+                    'cellulite massagers', 'serums', 'shaving creams', 'gels',
+                    'wrinkle & anti-aging devices', 'lips', 'soaps', 'washes',
                     'body wash', 'joint & muscle pain relief', 'bubble bath', 'lotions',
                     'essential oils', 'health & fitness', 'detox & cleanse', 'oils',
                     'sets & kits', 'shaving gels', 'hair sprays', 'eau de parfum',
-                    'fragrances', 'skin care', 'salon & spa chairs', 'massage chairs',
-                    'heating pads', 'makeup sets', 'foundation', 'face primer',
-                    'makeup organizers', 'hair color', 'outerwear',
+                    'skin care', 'salon & spa chairs', 'massage chairs', 'heating pads',
+                    'makeup sets', 'foundation', 'face primer', 'makeup organizers',
+                    'hair color', 'back braces', 'cellulite massagers', 'serums',
+                    'face primer',  # facial massager word match
+                    'hairpieces', 'wrinkle & anti-aging devices', 'bubble bath',
+                    'body wash', 'shaving creams', 'soaps', 'washes', 'body',
+                    'face', 'lips', 'gels', 'essential oils', 'detox & cleanse',
+                    'health & fitness', 'body scrubs', 'nail care', 'eye care',
+                    'feminine care', 'oral care', 'medical supplies',
                 },
+
                 'home & office': {
-                    'printer cutters', 'art set', 'sets & kits', 'freezers',
-                    'push & pull toys', 'food processors', 'mixers & blenders',
-                    'rice cookers', 'deep fryers', 'faith & spirituality', "women's",
-                    'medical support hose', 'kitchen utensils & gadgets', 'air fryers',
-                    'cookers', 'standing shelf units', 'microwave ovens',
-                    'food storage containers', 'bedding sets', 'curtain panels',
-                    'duvet covers', 'vacuum cleaners', 'wet & dry vacuums',
-                    'bagless vacuum cleaner', 'wastebasket bags', 'canvas boards & panels',
-                    'kitchen storage & organization accessories', 'stemmed water glasses',
-                    'hot pots', 'usb fans', 'whisks', 'mosquito net', 'books',
-                    'christian books & bibles', 'motivational & self-help',
-                    'business & economics', 'mystery & thrillers', 'romance',
-                    'politics & history', 'bestselling books', 'android phones',
-                    'wi-fi dongles', 'eyeshadow', 'herbs', 'organic',
-                    'milk substitutes', 'creams & moisturizers', 'supplements',
-                    'pressure cookers', 'electric pressure cookers', 'sewing machines',
-                    'coat racks', 'security & filtering', 'sprayers',
+                    # Books/media in H&O
+                    'bestselling books', 'faith & spirituality',
+                    # Sets & kits that are home-related
+                    'sets & kits',
+                    # Medical/support items shelved in H&O
+                    'medical support hose',
+                    # Toys shelved under H&O sub-paths (kids bathroom etc)
+                    'push & pull toys', 'stacking & nesting toys',
+                    # Women's clothing sub-sections sometimes shelved in H&O
+                    "women's",
+                    # Kitchen appliances — genuinely in H&O
+                    'freezers', 'food processors', 'mixers & blenders', 'rice cookers',
+                    'deep fryers', 'air fryers', 'cookers', 'microwave ovens',
+                    'electric pressure cookers', 'pressure cookers', 'hot pots',
+                    'waffle makers', 'toasters', 'kettles', 'coffee makers',
+                    # Home tools/cleaning
+                    'vacuum cleaners', 'wet & dry vacuums', 'bagless vacuum cleaner',
+                    'washing machines', 'dishwashers',
+                    # Furniture/storage genuinely in H&O
+                    'standing shelf units', 'coat racks',
+                    # Arts/crafts genuinely in H&O
+                    'printer cutters', 'art set', 'canvas boards & panels',
+                    # Kitchen tools genuinely in H&O
+                    'kitchen utensils & gadgets', 'kitchen storage & organization accessories',
+                    'stemmed water glasses', 'whisks', 'wastebasket bags',
+                    # Bedding/home decor genuinely in H&O
+                    'bedding sets', 'curtain panels', 'duvet covers', 'mosquito net',
+                    # Small appliances
+                    'usb fans',
+                    # Home improvement
+                    'sprayers', 'security & filtering',
                 },
+
                 'electronics': {
-                    'musicals', 'ceiling fans', 'grinders', 'smart tvs', 'sound bars',
-                    'headphone amplifiers', 'ear pieces', 'overhead projectors', 'gadgets',
-                    'headphone extension cables', 'others', 'ceiling fan light kits',
-                    'earbud headphones', 'portable recorders', 'wireless lavalier microphones',
-                    'bluetooth headsets', 'earphones & headsets', 'portable bluetooth speakers',
-                    'tv remote controls', 'remote controls', 'wrist watches', "women's watches",
-                    "men's watches", 'smart watches', 'bluetooth speakers',
+                    # Audio genuinely in Electronics
+                    'bluetooth speakers', 'bluetooth headsets', 'earphones & headsets',
+                    'portable bluetooth speakers', 'sound bars', 'headphone amplifiers',
+                    'earbud headphones', 'headphone extension cables',
+                    'wireless lavalier microphones',
+                    # Video/display
+                    'smart tvs', 'overhead projectors',
+                    # Accessories genuinely in Electronics
+                    'ceiling fans', 'ceiling fan light kits', 'usb fans',
+                    # Remote controls
+                    'tv remote controls', 'remote controls',
+                    # Portable electronics
+                    'gadgets',
                 },
+
                 'phones & tablets': {
-                    'tv remote controls', 'remote controls', 'wrist watches', 'chargers',
-                    'earbud headphones', 'rubber strap', 'electrical device mounts',
-                    'cell phones', 'android phones', 'earphones & headsets',
-                    'supplements', 'tablets', 'capsules',
+                    # Accessories genuinely in P&T
+                    'chargers', 'earbud headphones', 'rubber strap',
+                    'electrical device mounts', 'earphones & headsets',
+                    # Phones genuinely in P&T
+                    'cell phones', 'android phones', 'smartphones',
+                    'flip cases', 'cases', 'screen protectors',
                 },
+
                 'fashion': {
-                    'sandals', "women's clothing bundle", 'casual dresses', 'hats & caps',
-                    'briefs', 'thongs', 'handbags', 'socks', 'push & pull toys',
-                    'desks', 'jewellery', 'thermoses', 'unisex fabrics', 'reflectors',
-                    'body pillows', 'replacement cords', 'stacking & nesting toys',
-                    'cleansers', 'parenting', 'sneakers', 'slippers', 'shoes',
+                    # Footwear genuinely in Fashion
+                    'sandals', 'sneakers', 'slippers', 'shoes', 'rain boots', 'boots',
+                    # Clothing genuinely in Fashion
+                    'casual dresses', 'hats & caps', 'briefs', 'thongs', 'socks',
+                    'unisex fabrics', 'stockings', 'polos', 'bras', 'underwear',
                     't-shirts', 'shirts', 'outerwear', 'clothing', 'dresses',
-                    'jackets', 'coats', 'jeans', 'rain boots', 'boots', 'stockings',
-                    'polos', 'bras', 'underwear',
+                    'jackets', 'coats', 'jeans',
+                    # Accessories genuinely in Fashion
+                    'handbags', 'jewellery',
                 },
+
                 'computing': {
-                    'portable power banks', 'bluetooth headsets', 'educational tablets',
-                    'game room furniture', 'hand tools', 'business & economics',
-                    'creams', 'milk substitutes',
+                    'laptops', 'desktops', 'tablets', 'monitors', 'keyboards',
+                    'mice', 'printers', 'scanners', 'hard drives', 'ssds',
+                    'computer accessories', 'networking', 'routers',
+                    'portable power banks', 'bluetooth headsets',
                 },
-                'sporting goods': {
-                    'stands', 'hand grips',
-                },
+
                 'musical instruments': {
-                    'accessories', 'subwoofers', 'bags, cases & covers',
-                    'racks & stands', 'musicals',
+                    'subwoofers', 'bags, cases & covers', 'racks & stands', 'musicals',
+                    'microphones', 'amplifiers', 'mixers',
                 },
+
                 'grocery': {
-                    'standard batteries', 'batteries',
+                    # Only suppress genuinely-Grocery sub-categories — we WANT
+                    # to flag products put in wrong Grocery sub-paths
+                    'standard batteries',  # batteries incorrectly in Grocery
                 },
+
                 'baby products': {
                     'pillows', 'lumbar supports', 'wipes, napkins & serviettes',
-                    'walkers', 'feminine washes',
+                    'walkers', 'feminine washes', 'baby formula', 'diapers',
+                    'baby monitors', 'strollers',
                 },
+
                 'gaming': {
-                    'meat thermometers',
+                    'gaming headsets', 'gaming mice', 'gaming keyboards',
+                    'controllers', 'ps 5 games', 'ps4 games', 'xbox games',
+                    'pc gaming', 'gaming chairs', 'gaming desks',
                 },
             }
             same_domain_cats = _SAME_DOMAIN_CATEGORIES.get(p_top_lower, set())
@@ -644,6 +691,10 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                 ({'digital games', 'ps 5 games', 'ps4 games', 'xbox games'},
                  {'health & beauty', 'grocery', 'automobile',
                   'industrial & scientific', 'fashion'}),
+
+                # Hair/fabric dyes must not go to Toys tie-dye kits
+                ({'dyes', 'hair dye', 'fabric dye'},
+                 {'toys & games', 'grocery', 'automobile', 'industrial & scientific'}),
             ]
             c_leaf_lower = current_cat.strip().lower()
             c_full_lower = current_full.strip().lower()
