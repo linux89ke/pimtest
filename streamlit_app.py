@@ -968,11 +968,16 @@ def load_all_support_files() -> Dict:
     }
     _cat_names: list[str] = []
     _cat_path_to_code: dict[str, str] = {}
+    _code_to_path: dict[str, str] = {}
+
+    # Load category_map.xlsx ONCE — builds categories_names_list, cat_path_to_code,
+    # and code_to_path all in a single pass.
+    _cm_path = "category_map.xlsx"
     try:
-        _cm_path = "category_map.xlsx"
         if os.path.exists(_cm_path):
             _cm_df = pd.read_excel(_cm_path, engine="openpyxl", dtype=str)
             _cm_df.columns = [c.strip() for c in _cm_df.columns]
+
             _path_col = next(
                 (c for c in _cm_df.columns if c.lower() == "category path"),
                 next((c for c in _cm_df.columns if "path" in c.lower()), None)
@@ -980,43 +985,51 @@ def load_all_support_files() -> Dict:
             _code_col = next(
                 (c for c in _cm_df.columns if "code" in c.lower()), None
             )
+
+            logger.info(
+                f"[CategoryMap] Loaded {_cm_path}: {len(_cm_df)} rows, "
+                f"path_col={_path_col!r}, code_col={_code_col!r}"
+            )
+
             if _path_col:
                 _valid = _cm_df[_path_col].dropna().astype(str)
                 _valid = _valid[_valid.str.strip().ne("")]
                 _cat_names = _valid.tolist()
+
                 if _code_col:
                     for _, _row in _cm_df[[_path_col, _code_col]].dropna().iterrows():
                         _p = str(_row[_path_col]).strip()
                         _c = str(_row[_code_col]).strip().split(".")[0]
                         if _p and _c:
-                            _cat_path_to_code[_p.lower()] = _c  # lowercase key for lookups
-        if not _cat_names and support['category_map']:
-            _cat_names = list(support['category_map'].keys())
+                            _cat_path_to_code[_p.lower()] = _c  # lowercase for lookups
+                            _code_to_path[_c] = _p               # original case
+
+                logger.info(
+                    f"[CategoryMap] Built: {len(_cat_names)} category paths, "
+                    f"{len(_code_to_path)} code->path entries"
+                )
+            else:
+                logger.warning(
+                    f"[CategoryMap] No 'Category Path' column found in {_cm_path}. "
+                    f"Columns: {list(_cm_df.columns)}"
+                )
+        else:
+            logger.warning(
+                f"[CategoryMap] {_cm_path} not found — wrong-category detection "
+                f"will be skipped. Place category_map.xlsx in the app root directory."
+            )
     except Exception as _ce:
-        logger.warning("Could not build categories_names_list: %s", _ce)
+        logger.error(f"[CategoryMap] Failed to load {_cm_path}: {_ce}")
+
     support['categories_names_list'] = _cat_names
     support['cat_path_to_code'] = _cat_path_to_code
-    # code_to_path: maps str(code) -> original-case full path
-    # Built separately to preserve original casing for display, while
-    # cat_path_to_code uses lowercase keys for case-insensitive lookups.
-    _code_to_path: dict[str, str] = {}
-    try:
-        if os.path.exists('category_map.xlsx'):
-            _cm2 = pd.read_excel('category_map.xlsx', engine='openpyxl', dtype=str)
-            _cm2.columns = [c.strip() for c in _cm2.columns]
-            _p2 = next((c for c in _cm2.columns if c.lower() == 'category path'),
-                       next((c for c in _cm2.columns if 'path' in c.lower()), None))
-            _c2 = next((c for c in _cm2.columns if 'code' in c.lower()), None)
-            if _p2 and _c2:
-                for _, _r2 in _cm2[[_p2, _c2]].dropna().iterrows():
-                    _pv = str(_r2[_p2]).strip()
-                    _cv = str(_r2[_c2]).strip().split('.')[0]
-                    if _pv and _cv:
-                        _code_to_path[_cv] = _pv  # original case preserved
-    except Exception as _cte:
-        logger.warning('Could not build code_to_path with original case: %s', _cte)
-        _code_to_path = {v: k for k, v in _cat_path_to_code.items()}  # fallback
     support['code_to_path'] = _code_to_path
+
+    logger.info(
+        f"[CategoryMap] Final: categories_names_list={len(_cat_names)}, "
+        f"cat_path_to_code={len(_cat_path_to_code)}, code_to_path={len(_code_to_path)}"
+    )
+
     # Compile JSON boost rules now that code_to_path is available
     support['compiled_json_rules'] = load_and_compile_json_rules("category_qc_weighted.json")
     return support
