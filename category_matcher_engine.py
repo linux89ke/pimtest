@@ -76,7 +76,7 @@ class CategoryMatcherEngine:
         self.vectorizer = TfidfVectorizer(
             analyzer='word',
             ngram_range=(1, 2),
-            min_df=2,
+            min_df=1,
             max_df=0.95,
             stop_words='english'
         )
@@ -335,11 +335,24 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
 
     if not engine._tfidf_built:
         engine.build_tfidf_index(_effective_cats)
-    elif getattr(engine, '_index_has_full_paths', True) is False and _effective_cats is not categories_list:
-        # Index was built on bare leaves but we now have full paths — rebuild
+    elif not getattr(engine, '_index_has_full_paths', False) and _effective_cats is not categories_list:
+        # Index was built on bare leaves (or before _index_has_full_paths was added)
+        # but we now have full paths available — rebuild for better accuracy.
         logger.info('[WrongCat] Rebuilding TF-IDF index with full paths')
         engine._tfidf_built = False
         engine.build_tfidf_index(_effective_cats)
+
+    # Guard: bare-leaf TF-IDF produces too many false positives to be useful.
+    # Category leaf names like 'Cases', 'High-top', 'Leather' are too short
+    # and ambiguous to reliably match against product names via cosine similarity.
+    # Only run wrong-category detection when we have full paths (from category_map.xlsx).
+    if not getattr(engine, '_index_has_full_paths', False):
+        logger.warning(
+            '[WrongCat] Skipping wrong-category detection: TF-IDF index was built '
+            'on bare leaf category names (no category_map.xlsx full paths available). '
+            'Ensure category_map.xlsx is present and loading correctly.'
+        )
+        return pd.DataFrame(columns=data.columns)
 
     # CRITICAL: Feed the engine the JSON rules so it can use them!
     if compiled_rules:
@@ -483,6 +496,11 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             shared = sum(1 for a, b in zip(p_segs, c_segs) if a == b)
             if shared >= min(2, len(p_segs), len(c_segs)):
                 continue
+
+            # Pre-compute leaf/top values used by both suppression checks below
+            c_leaf_lower = current_cat.strip().lower()
+            c_full_lower = current_full.strip().lower()
+            p_top_lower = get_top(predicted).strip().lower()
 
             # ── Same-domain suppression ───────────────────────────────────────────
             # When code_to_path can't resolve a bare leaf name to its full path,
@@ -729,9 +747,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                 ({'dyes', 'hair dye', 'fabric dye'},
                  {'toys & games', 'grocery', 'automobile', 'industrial & scientific'}),
             ]
-            c_leaf_lower = current_cat.strip().lower()
-            c_full_lower = current_full.strip().lower()
-            p_top_lower = get_top(predicted).strip().lower()
             blocked = False
             for current_kws, forbidden_tops in _CROSS_DOMAIN_BLOCKS:
                 # Check if current category matches this block's domain
