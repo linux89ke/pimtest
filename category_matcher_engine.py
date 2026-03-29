@@ -451,6 +451,96 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             if shared >= min(2, len(p_segs), len(c_segs)):
                 continue
 
+            # ── Same-domain suppression ───────────────────────────────────────────
+            # When code_to_path can't resolve a bare leaf name to its full path,
+            # the segment check can't fire. This dict maps top-level domain names
+            # to their known sub-category leaf names so we can suppress same-domain
+            # false positives without needing code_to_path at all.
+            _SAME_DOMAIN_CATEGORIES = {
+                'health & beauty': {
+                    'creams', 'strips', 'supplements', 'creams & moisturizers',
+                    'conditioners', 'face moisturizers', 'cleansers', 'soaps & cleansers',
+                    'hair & scalp treatments', 'back braces', 'toners', 'face', 'body',
+                    'cellulite massagers', 'serums', 'hairpieces', 'shaving creams',
+                    'gels', 'wrinkle & anti-aging devices', 'lips', 'soaps', 'washes',
+                    'body wash', 'joint & muscle pain relief', 'bubble bath', 'lotions',
+                    'essential oils', 'health & fitness', 'detox & cleanse', 'oils',
+                    'sets & kits', 'shaving gels', 'hair sprays', 'eau de parfum',
+                    'fragrances', 'skin care', 'salon & spa chairs', 'massage chairs',
+                    'heating pads', 'makeup sets', 'foundation', 'face primer',
+                    'makeup organizers', 'hair color', 'outerwear',
+                },
+                'home & office': {
+                    'printer cutters', 'art set', 'sets & kits', 'freezers',
+                    'push & pull toys', 'food processors', 'mixers & blenders',
+                    'rice cookers', 'deep fryers', 'faith & spirituality', "women's",
+                    'medical support hose', 'kitchen utensils & gadgets', 'air fryers',
+                    'cookers', 'standing shelf units', 'microwave ovens',
+                    'food storage containers', 'bedding sets', 'curtain panels',
+                    'duvet covers', 'vacuum cleaners', 'wet & dry vacuums',
+                    'bagless vacuum cleaner', 'wastebasket bags', 'canvas boards & panels',
+                    'kitchen storage & organization accessories', 'stemmed water glasses',
+                    'hot pots', 'usb fans', 'whisks', 'mosquito net', 'books',
+                    'christian books & bibles', 'motivational & self-help',
+                    'business & economics', 'mystery & thrillers', 'romance',
+                    'politics & history', 'bestselling books', 'android phones',
+                    'wi-fi dongles', 'eyeshadow', 'herbs', 'organic',
+                    'milk substitutes', 'creams & moisturizers', 'supplements',
+                    'pressure cookers', 'electric pressure cookers', 'sewing machines',
+                    'coat racks', 'security & filtering', 'sprayers',
+                },
+                'electronics': {
+                    'musicals', 'ceiling fans', 'grinders', 'smart tvs', 'sound bars',
+                    'headphone amplifiers', 'ear pieces', 'overhead projectors', 'gadgets',
+                    'headphone extension cables', 'others', 'ceiling fan light kits',
+                    'earbud headphones', 'portable recorders', 'wireless lavalier microphones',
+                    'bluetooth headsets', 'earphones & headsets', 'portable bluetooth speakers',
+                    'tv remote controls', 'remote controls', 'wrist watches', "women's watches",
+                    "men's watches", 'smart watches', 'bluetooth speakers',
+                },
+                'phones & tablets': {
+                    'tv remote controls', 'remote controls', 'wrist watches', 'chargers',
+                    'earbud headphones', 'rubber strap', 'electrical device mounts',
+                    'cell phones', 'android phones', 'earphones & headsets',
+                    'supplements', 'tablets', 'capsules',
+                },
+                'fashion': {
+                    'sandals', "women's clothing bundle", 'casual dresses', 'hats & caps',
+                    'briefs', 'thongs', 'handbags', 'socks', 'push & pull toys',
+                    'desks', 'jewellery', 'thermoses', 'unisex fabrics', 'reflectors',
+                    'body pillows', 'replacement cords', 'stacking & nesting toys',
+                    'cleansers', 'parenting', 'sneakers', 'slippers', 'shoes',
+                    't-shirts', 'shirts', 'outerwear', 'clothing', 'dresses',
+                    'jackets', 'coats', 'jeans', 'rain boots', 'boots', 'stockings',
+                    'polos', 'bras', 'underwear',
+                },
+                'computing': {
+                    'portable power banks', 'bluetooth headsets', 'educational tablets',
+                    'game room furniture', 'hand tools', 'business & economics',
+                    'creams', 'milk substitutes',
+                },
+                'sporting goods': {
+                    'stands', 'hand grips',
+                },
+                'musical instruments': {
+                    'accessories', 'subwoofers', 'bags, cases & covers',
+                    'racks & stands', 'musicals',
+                },
+                'grocery': {
+                    'standard batteries', 'batteries',
+                },
+                'baby products': {
+                    'pillows', 'lumbar supports', 'wipes, napkins & serviettes',
+                    'walkers', 'feminine washes',
+                },
+                'gaming': {
+                    'meat thermometers',
+                },
+            }
+            same_domain_cats = _SAME_DOMAIN_CATEGORIES.get(p_top_lower, set())
+            if c_leaf_lower in same_domain_cats:
+                continue
+
             # ── Cross-domain noise suppression ────────────────────────────────────
             # Some product names contain incidental words (colors, materials, feature
             # keywords) that pull TF-IDF toward completely unrelated domains.
@@ -545,6 +635,15 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                 # Umbrellas must not bleed into Fashion sub-items
                 ({'stick umbrellas', 'umbrellas'},
                  {'fashion', 'grocery', 'automobile', 'sporting goods'}),
+
+                # Bags/backpacks must not go to Electronics camera accessories
+                ({'backpacks', 'camping backpacks', 'bags'},
+                 {'electronics', 'automobile', 'industrial & scientific'}),
+
+                # Video/digital games must not go to H&B or unrelated domains
+                ({'digital games', 'ps 5 games', 'ps4 games', 'xbox games'},
+                 {'health & beauty', 'grocery', 'automobile',
+                  'industrial & scientific', 'fashion'}),
             ]
             c_leaf_lower = current_cat.strip().lower()
             c_full_lower = current_full.strip().lower()
