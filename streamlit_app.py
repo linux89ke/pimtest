@@ -989,14 +989,34 @@ def load_all_support_files() -> Dict:
                         _p = str(_row[_path_col]).strip()
                         _c = str(_row[_code_col]).strip().split(".")[0]
                         if _p and _c:
-                            _cat_path_to_code[_p.lower()] = _c
+                            _cat_path_to_code[_p.lower()] = _c  # lowercase key for lookups
         if not _cat_names and support['category_map']:
             _cat_names = list(support['category_map'].keys())
     except Exception as _ce:
         logger.warning("Could not build categories_names_list: %s", _ce)
     support['categories_names_list'] = _cat_names
     support['cat_path_to_code'] = _cat_path_to_code
-    support['code_to_path'] = {v: k for k, v in _cat_path_to_code.items()}
+    # code_to_path: maps str(code) -> original-case full path
+    # Built separately to preserve original casing for display, while
+    # cat_path_to_code uses lowercase keys for case-insensitive lookups.
+    _code_to_path: dict[str, str] = {}
+    try:
+        if os.path.exists('category_map.xlsx'):
+            _cm2 = pd.read_excel('category_map.xlsx', engine='openpyxl', dtype=str)
+            _cm2.columns = [c.strip() for c in _cm2.columns]
+            _p2 = next((c for c in _cm2.columns if c.lower() == 'category path'),
+                       next((c for c in _cm2.columns if 'path' in c.lower()), None))
+            _c2 = next((c for c in _cm2.columns if 'code' in c.lower()), None)
+            if _p2 and _c2:
+                for _, _r2 in _cm2[[_p2, _c2]].dropna().iterrows():
+                    _pv = str(_r2[_p2]).strip()
+                    _cv = str(_r2[_c2]).strip().split('.')[0]
+                    if _pv and _cv:
+                        _code_to_path[_cv] = _pv  # original case preserved
+    except Exception as _cte:
+        logger.warning('Could not build code_to_path with original case: %s', _cte)
+        _code_to_path = {v: k for k, v in _cat_path_to_code.items()}  # fallback
+    support['code_to_path'] = _code_to_path
     # Compile JSON boost rules now that code_to_path is available
     support['compiled_json_rules'] = load_and_compile_json_rules("category_qc_weighted.json")
     return support
