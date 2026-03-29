@@ -13,6 +13,164 @@ from sklearn.linear_model import LogisticRegression
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# 🚀 PERFORMANCE OPTIMIZATION: HOISTED CONSTANTS
+# Moving these massive dictionaries out of the loop prevents Python from
+# recreating them in memory for every single product row.
+# =============================================================================
+
+SAME_DOMAIN_CATEGORIES = {
+    'health & beauty': {
+        'creams', 'strips', 'supplements', 'creams & moisturizers',
+        'conditioners', 'face moisturizers', 'cleansers', 'soaps & cleansers',
+        'hair & scalp treatments', 'back braces', 'toners', 'face', 'body',
+        'cellulite massagers', 'serums', 'hairpieces', 'shaving creams',
+        'gels', 'wrinkle & anti-aging devices', 'lips', 'soaps', 'washes',
+        'body wash', 'joint & muscle pain relief', 'bubble bath', 'lotions',
+        'essential oils', 'health & fitness', 'detox & cleanse', 'oils',
+        'sets & kits', 'shaving gels', 'hair sprays', 'eau de parfum',
+        'fragrances', 'skin care', 'salon & spa chairs', 'massage chairs',
+        'heating pads', 'makeup sets', 'foundation', 'face primer',
+        'makeup organizers', 'hair color', 'outerwear',
+    },
+    'home & office': {
+        'printer cutters', 'art set', 'sets & kits', 'freezers',
+        'push & pull toys', 'food processors', 'mixers & blenders',
+        'rice cookers', 'deep fryers', 'faith & spirituality', "women's",
+        'medical support hose', 'kitchen utensils & gadgets', 'air fryers',
+        'cookers', 'standing shelf units', 'microwave ovens',
+        'food storage containers', 'bedding sets', 'curtain panels',
+        'duvet covers', 'vacuum cleaners', 'wet & dry vacuums',
+        'bagless vacuum cleaner', 'wastebasket bags', 'canvas boards & panels',
+        'kitchen storage & organization accessories', 'stemmed water glasses',
+        'hot pots', 'usb fans', 'whisks', 'mosquito net', 'books',
+        'christian books & bibles', 'motivational & self-help',
+        'business & economics', 'mystery & thrillers', 'romance',
+        'politics & history', 'bestselling books', 'android phones',
+        'wi-fi dongles', 'eyeshadow', 'herbs', 'organic',
+        'milk substitutes', 'creams & moisturizers', 'supplements',
+        'pressure cookers', 'electric pressure cookers', 'sewing machines',
+        'coat racks', 'security & filtering', 'sprayers',
+    },
+    'electronics': {
+        'musicals', 'ceiling fans', 'grinders', 'smart tvs', 'sound bars',
+        'headphone amplifiers', 'ear pieces', 'overhead projectors', 'gadgets',
+        'headphone extension cables', 'others', 'ceiling fan light kits',
+        'earbud headphones', 'portable recorders', 'wireless lavalier microphones',
+        'bluetooth headsets', 'earphones & headsets', 'portable bluetooth speakers',
+        'tv remote controls', 'remote controls', 'wrist watches', "women's watches",
+        "men's watches", 'smart watches', 'bluetooth speakers',
+    },
+    'phones & tablets': {
+        'tv remote controls', 'remote controls', 'wrist watches', 'chargers',
+        'earbud headphones', 'rubber strap', 'electrical device mounts',
+        'cell phones', 'android phones', 'earphones & headsets',
+        'supplements', 'tablets', 'capsules',
+    },
+    'fashion': {
+        'sandals', "women's clothing bundle", 'casual dresses', 'hats & caps',
+        'briefs', 'thongs', 'handbags', 'socks', 'push & pull toys',
+        'desks', 'jewellery', 'thermoses', 'unisex fabrics', 'reflectors',
+        'body pillows', 'replacement cords', 'stacking & nesting toys',
+        'cleansers', 'parenting', 'sneakers', 'slippers', 'shoes',
+        't-shirts', 'shirts', 'outerwear', 'clothing', 'dresses',
+        'jackets', 'coats', 'jeans', 'rain boots', 'boots', 'stockings',
+        'polos', 'bras', 'underwear',
+    },
+    'computing': {
+        'portable power banks', 'bluetooth headsets', 'educational tablets',
+        'game room furniture', 'hand tools', 'business & economics',
+        'creams', 'milk substitutes',
+    },
+    'sporting goods': {
+        'stands', 'hand grips',
+    },
+    'musical instruments': {
+        'accessories', 'subwoofers', 'bags, cases & covers',
+        'racks & stands', 'musicals',
+    },
+    'grocery': {
+        'standard batteries', 'batteries',
+    },
+    'baby products': {
+        'pillows', 'lumbar supports', 'wipes, napkins & serviettes',
+        'walkers', 'feminine washes',
+    },
+    'gaming': {
+        'meat thermometers',
+    },
+}
+
+CROSS_DOMAIN_BLOCKS = [
+    ({'supplements', 'tablets', 'capsules', 'vitamins', 'syrup', 'herbal',
+      'herbs', 'strips', 'milk substitutes'},
+     {'phones & tablets', 'electronics', 'automobile',
+      'industrial & scientific', 'sporting goods'}),
+    ({'fashion', 'clothing', 'outerwear', 'apparel', 'shoes', 'footwear',
+      'sneakers', 'slippers', 'socks', 'polos', 'bras', 'underwear',
+      't-shirts', 'shirts', 'dresses', 'jackets', 'coats', 'jeans',
+      'sandals', 'rain boots', 'boots', 'stockings'},
+     {'grocery', 'industrial & scientific', 'automobile',
+      'sporting goods', 'electronics', 'home & office', 'pet supplies'}),
+    ({'electronics', 'cell phones', 'bluetooth speakers', 'bluetooth headsets',
+      'earphones', 'headsets', 'smart watches', 'wrist watches', 'tv remote',
+      'remote controls', 'wi-fi', 'dongles', 'power banks', 'earbuds',
+      'headphones', 'laptops', 'cameras', 'speakers', 'portable bluetooth'},
+     {'grocery', 'automobile', 'industrial & scientific',
+      'garden & outdoors', 'sporting goods', 'fashion', 'pet supplies'}),
+    ({'wrist watches', "women's watches", "men's watches", 'kids watches',
+      'smart watches', 'wall clocks', 'alarm clocks'},
+     {'fashion', 'sporting goods', 'grocery', 'automobile'}),
+    ({'health', 'beauty', 'skin care', 'creams', 'makeup', 'foundation',
+      'heating pads', 'salon & spa', 'salon', 'spa', 'massage', 'medical',
+      'shaving gels', 'hair sprays', 'eau de parfum', 'fragrance', 'perfume',
+      'sets & kits'},
+     {'grocery', 'industrial & scientific', 'sporting goods',
+      'automobile', 'phones & tablets', 'toys & games', 'pet supplies'}),
+    ({'home', 'kitchen', 'storage', 'cleaning', 'toilet', 'coat racks',
+      'sewing machines', 'pressure cookers', 'electric pressure cookers',
+      'cookers', 'christian books', 'books', 'printer cutters', 'sprayers',
+      'art set', 'security & filtering'},
+     {'grocery', 'sporting goods', 'automobile',
+      'industrial & scientific', 'garden & outdoors'}),
+    ({'outdoor safety', 'play yard', 'baby', 'strollers', 'nursery'},
+     {'garden & outdoors', 'sporting goods', 'automobile'}),
+    ({'salon & spa chairs', 'massage chairs'},
+     {'health & beauty'}),
+    ({'cell phones', 'earphones & headsets'},
+     {'phones & tablets'}),
+    ({'pressure cookers', 'electric pressure cookers'},
+     {'home & office'}),
+    ({'creams', 'strips', 'supplements', 'creams & moisturizers'},
+     {'sporting goods', 'automobile', 'grocery',
+      'phones & tablets', 'industrial & scientific'}),
+    ({'bluetooth headsets', 'tv remote controls', 'remote controls',
+      'android phones', 'musicals'},
+     {'sporting goods', 'grocery', 'automobile', 'garden & outdoors',
+      'industrial & scientific', 'fashion', 'pet supplies'}),
+    ({'christian books & bibles', 'motivational & self-help',
+      'business & economics'},
+     {'home & office', 'industrial & scientific', 'automobile',
+      'grocery', 'sporting goods'}),
+    ({'freezers', 'mixers & blenders', 'food processors', 'rice cookers',
+      'bakeware sets', 'utensils', 'printer cutters', 'art set',
+      'push & pull toys'},
+     {'automobile', 'sporting goods', 'grocery',
+      'industrial & scientific', 'garden & outdoors'}),
+    ({'stick umbrellas', 'umbrellas'},
+     {'fashion', 'grocery', 'automobile', 'sporting goods'}),
+    ({'backpacks', 'camping backpacks', 'bags'},
+     {'electronics', 'automobile', 'industrial & scientific'}),
+    ({'digital games', 'ps 5 games', 'ps4 games', 'xbox games'},
+     {'health & beauty', 'grocery', 'automobile',
+      'industrial & scientific', 'fashion'}),
+]
+
+
+# =============================================================================
+# 🚀 PERFORMANCE OPTIMIZATION: HOISTED HELPERS
+# =============================================================================
+
 def clean_text(text: str) -> str:
     if pd.isna(text): return ""
     text = str(text).lower()
@@ -20,28 +178,30 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
+def get_top(path):
+    """Return the top-level category segment, handling / and > separators."""
+    for sep in ('/', '>'):
+        if sep in path:
+            return path.split(sep)[0].strip().lower()
+    return path.strip().lower()
+
+def get_leaf(path):
+    """Return the leaf segment, handling / and > separators."""
+    for sep in ('/', '>'):
+        if sep in path:
+            return path.split(sep)[-1].strip().lower()
+    return path.strip().lower()
+
+def get_segments(path, n):
+    """Return the first n segments of a path as a lowercase tuple."""
+    for sep in ('/', '>'):
+        if sep in path:
+            parts = [p.strip().lower() for p in path.split(sep)]
+            return tuple(parts[:n])
+    return (path.strip().lower(),)
+
 
 def compile_rules_from_json(raw_rules: list, code_to_path: dict = None) -> dict:
-    """
-    Converts raw JSON category rules into the compiled format the engine expects.
-
-    Each rule in raw_rules should look like:
-        {
-            "category_name": "Car Polishes & Waxes",
-            "category_code": 1000089,
-            "positive": {"car": 2, "polish": 3, "wax": 3}
-        }
-
-    Args:
-        raw_rules:    List of rule dicts loaded from your JSON file.
-        code_to_path: Optional dict mapping str(category_code) -> full category path
-                      e.g. {"1000089": "Automobile > Car Care > Car Polishes & Waxes"}
-                      If provided, the full path is used as the lookup key so it
-                      aligns with what the TF-IDF index stores in engine.categories.
-
-    Returns:
-        A dict keyed by lowercase category path (or name), ready for set_compiled_rules().
-    """
     if code_to_path is None:
         code_to_path = {}
 
@@ -51,13 +211,11 @@ def compile_rules_from_json(raw_rules: list, code_to_path: dict = None) -> dict:
         if not positive_kws:
             continue
 
-        # Resolve the key: prefer the full path from code_to_path, fall back to category_name
         code_str = str(rule.get('category_code', ''))
         cat_key = code_to_path.get(code_str, rule.get('category_name', '')).lower().strip()
         if not cat_key:
             continue
 
-        # Build one regex pattern covering all positive keywords
         pattern = re.compile(
             r'\b(' + '|'.join(re.escape(k.lower()) for k in positive_kws) + r')\b'
         )
@@ -69,6 +227,10 @@ def compile_rules_from_json(raw_rules: list, code_to_path: dict = None) -> dict:
 
     return compiled
 
+
+# =============================================================================
+# ENGINE CLASS
+# =============================================================================
 
 class CategoryMatcherEngine:
     def __init__(self, db_path="cat_learning.db"):
@@ -84,20 +246,13 @@ class CategoryMatcherEngine:
         self.categories = []
         self._tfidf_built = False
         self.learning_db = {}
-        self.compiled_rules = {}  # Store JSON rules directly in the engine
+        self.compiled_rules = {} 
         self.correction_classifier = None
         self.correction_vectorizer = None
         self._init_db()
         self.load_learning_db()
 
     def set_compiled_rules(self, rules, code_to_path: dict = None):
-        """
-        Loads heuristic rules into the engine.
-
-        Accepts either:
-          - A raw list of JSON rule dicts (auto-compiled via compile_rules_from_json)
-          - An already-compiled dict (from a prior compile_rules_from_json call)
-        """
         if isinstance(rules, list):
             self.compiled_rules = compile_rules_from_json(rules, code_to_path or {})
         else:
@@ -201,7 +356,7 @@ class CategoryMatcherEngine:
                 pass
         return None
 
-    def get_category_with_fallback(self, name: str, kw_map: dict = None, categories_list: list = None) -> str:
+    def get_category_with_fallback(self, name: str, kw_map: dict = None, categories_list: list = None, confidence_threshold: float = 0.35) -> str:
         learned = self.predict_category_from_learning(name)
         if learned: return learned
         
@@ -211,9 +366,11 @@ class CategoryMatcherEngine:
                 name_vec = self.vectorizer.transform([name_clean])
                 similarities = cosine_similarity(name_vec, self.tfidf_matrix).flatten()
                 best_idx = np.argmax(similarities)
-                if similarities[best_idx] > 0.35:
+                # Used dynamic confidence threshold
+                if similarities[best_idx] > confidence_threshold:
                     return self.categories[best_idx]
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Fallback TF-IDF failed: {e}")
                 pass
                 
         if kw_map:
@@ -223,11 +380,7 @@ class CategoryMatcherEngine:
                     return cat
         return ""
 
-    def get_category_with_boost(self, name: str, top_n: int = 20) -> str:
-        """
-        Gets the top N TF-IDF predictions, applies internal JSON heuristic boosts, 
-        and returns the highest scoring category.
-        """
+    def get_category_with_boost(self, name: str, top_n: int = 20, confidence_threshold: float = 0.35) -> str:
         learned = self.predict_category_from_learning(name)
         if learned: 
             return learned
@@ -251,12 +404,7 @@ class CategoryMatcherEngine:
                 base_score = float(similarities[idx])
                 boost = 0.0
                 
-                # 1. Convert the engine's category path to lowercase
                 cat_path_lower = cat_path.lower()
-                
-                # 2. Check the JSON rules — try full path first, then leaf name as fallback.
-                #    This handles both: rules keyed by full path ("automobile > car care > car polishes & waxes")
-                #    and rules keyed by bare category_name ("car polishes & waxes").
                 leaf_lower = cat_path_lower.split('>')[-1].strip()
                 rule = self.compiled_rules.get(cat_path_lower) or self.compiled_rules.get(leaf_lower)
                 if rule:
@@ -264,14 +412,14 @@ class CategoryMatcherEngine:
                     if matches:
                         boost = sum(rule['weights'].get(m.lower(), 0.0) for m in set(matches))
                 
-                final_score = base_score + (boost * 0.6) # Increased multiplier slightly for more authority
+                final_score = base_score + (boost * 0.6) 
                 
                 if final_score > best_score:
                     best_score = final_score
                     best_category = cat_path
             
-            # Reject garbage matches if confidence is too low
-            if best_score < 0.35:
+            # Use dynamic confidence threshold
+            if best_score < confidence_threshold:
                 return ""
                 
             return best_category
@@ -302,8 +450,19 @@ def get_engine(db_path="cat_learning.db"):
             _engine_instance = None
     return _engine_instance
 
+
+# =============================================================================
+# MAIN LOGIC
+# =============================================================================
+
 def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rules: dict = None, cat_path_to_code: dict = None, code_to_path: dict = None, confidence_threshold: float = 0.0):
+    
+    # 1. Stricter Initial Validation
+    if data is None or data.empty:
+        return pd.DataFrame()
+
     if not {'NAME', 'CATEGORY'}.issubset(data.columns) or not categories_list:
+        logger.warning("Missing 'NAME' or 'CATEGORY' columns in DataFrame.")
         return pd.DataFrame(columns=data.columns)
         
     engine = get_engine()
@@ -313,7 +472,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     if not engine._tfidf_built:
         engine.build_tfidf_index(categories_list)
 
-    # CRITICAL: Feed the engine the JSON rules so it can use them!
     if compiled_rules:
         engine.set_compiled_rules(compiled_rules)
 
@@ -333,7 +491,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     d['_cat_lower'] = d['_cat_clean'].str.lower()
     d['_name_clean'] = d['NAME'].astype(str).str.strip()
     
-    # Pre-build a leaf->full_path cache so each product row doesn't scan all paths
     leaf_to_full_path = {}
     if code_to_path:
         for full_path in code_to_path.values():
@@ -343,7 +500,6 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                     break
             else:
                 leaf = full_path.strip().lower()
-            # First match wins — most specific path for this leaf
             if leaf not in leaf_to_full_path:
                 leaf_to_full_path[leaf] = full_path
 
@@ -351,13 +507,15 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
     comment_map = {}
     kw_map = engine.build_keyword_to_category_mapping()
 
-    # ── Resolution diagnostics (logged once per run) ──────────────────────────
     _diag_logged = 0
     _has_code_col = 'CATEGORY_CODE' in d.columns
     logger.info(f'[WrongCat] code_to_path size={len(code_to_path)}, '
                 f'cat_path_to_code size={len(cat_path_to_code)}, '
                 f'leaf_cache size={len(leaf_to_full_path)}, '
                 f'has_code_col={_has_code_col}')
+
+    # Establish safe minimum threshold
+    safe_threshold = max(confidence_threshold, 0.35)
 
     for idx, row in d.iterrows():
         current_cat = row['_cat_clean']
@@ -371,60 +529,39 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             comment_map[idx] = "Category is 'Miscellaneous'"
             continue
 
-        # ---> CRITICAL FIX: The automated scanner now uses the JSON boost!
-        predicted = engine.get_category_with_boost(name)
+        # Passes dynamic threshold to engine
+        predicted = engine.get_category_with_boost(name, confidence_threshold=safe_threshold)
         
-        # Fallback to standard tf-idf if boost rejected it for low confidence
         if not predicted:
-            predicted = engine.get_category_with_fallback(name, kw_map, categories_list)
+            predicted = engine.get_category_with_fallback(name, kw_map, categories_list, confidence_threshold=safe_threshold)
         
         if predicted and predicted.lower() != current_cat.lower():
-            def get_top(path):
-                """Return the top-level category segment, handling / and > separators."""
-                for sep in ('/', '>'):
-                    if sep in path:
-                        return path.split(sep)[0].strip().lower()
-                return path.strip().lower()
-
-            def get_leaf(path):
-                """Return the leaf segment, handling / and > separators."""
-                for sep in ('/', '>'):
-                    if sep in path:
-                        return path.split(sep)[-1].strip().lower()
-                return path.strip().lower()
-
             p_leaf = get_leaf(predicted)
             c_leaf = get_leaf(current_cat)
 
-            # Skip if the current leaf already appears anywhere in the predicted path
-            # e.g. current='Bluetooth Speakers', predicted='Electronics / Audio / Bluetooth Speakers'
-            if c_leaf in predicted.lower():
+            # 2. Fixed Leaf Validation (Exact match, not just substring)
+            predicted_segments = [p.strip().lower() for p in predicted.replace('>', '/').split('/')]
+            if c_leaf in predicted_segments:
                 continue
 
-            # Resolve current category to its full path using code_to_path so we
-            # can compare top-level parents.
-            # e.g. current='Smart Watches' -> 'Phones & Tablets / ... / Smart Watches'
             current_full = current_cat
             _resolution_method = 'unresolved'
             if code_to_path:
-                # 1. Try resolving via CATEGORY_CODE directly (most reliable)
                 row_code = str(row.get('CATEGORY_CODE', '')).strip().split('.')[0]
                 if row_code and row_code in code_to_path:
                     current_full = code_to_path[row_code]
                     _resolution_method = f'code({row_code})'
                 else:
-                    # 2. Try cat_path_to_code lookup
                     code = cat_path_to_code.get(current_cat.lower(), '')
                     if code and code in code_to_path:
                         current_full = code_to_path[code]
                         _resolution_method = f'cat_path_to_code({code})'
                     else:
-                        # 3. Use pre-built leaf cache
                         resolved = leaf_to_full_path.get(current_cat.strip().lower())
                         if resolved:
                             current_full = resolved
                             _resolution_method = 'leaf_cache'
-                        # else stays as bare leaf — log it
+            
             if _diag_logged < 10:
                 logger.info(f'[WrongCat] resolution: cat={current_cat!r} '
                             f'row_code={str(row.get("CATEGORY_CODE","")).strip()!r} '
@@ -432,225 +569,24 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
                             f'current_full={current_full!r}')
                 _diag_logged += 1
 
-            # ── Segment-similarity suppression ────────────────────────────────────
-            # Suppress if both paths share at least 2 leading segments.
-            # e.g. 'Phones & Tablets / Accessories / Smart Watches' vs
-            #      'Phones & Tablets / Accessories / Smart Watch Cables'
-            # → share 2 levels → suppress (same sub-family, not a wrong category).
-            def get_segments(path, n):
-                """Return the first n segments of a path as a lowercase tuple."""
-                for sep in ('/', '>'):
-                    if sep in path:
-                        parts = [p.strip().lower() for p in path.split(sep)]
-                        return tuple(parts[:n])
-                return (path.strip().lower(),)
-
             p_segs = get_segments(predicted, 3)
             c_segs = get_segments(current_full, 3)
             shared = sum(1 for a, b in zip(p_segs, c_segs) if a == b)
             if shared >= min(2, len(p_segs), len(c_segs)):
                 continue
 
-            # ── Same-domain suppression ───────────────────────────────────────────
-            # When code_to_path can't resolve a bare leaf name to its full path,
-            # the segment check can't fire. This dict maps top-level domain names
-            # to their known sub-category leaf names so we can suppress same-domain
-            # false positives without needing code_to_path at all.
-            _SAME_DOMAIN_CATEGORIES = {
-                'health & beauty': {
-                    'creams', 'strips', 'supplements', 'creams & moisturizers',
-                    'conditioners', 'face moisturizers', 'cleansers', 'soaps & cleansers',
-                    'hair & scalp treatments', 'back braces', 'toners', 'face', 'body',
-                    'cellulite massagers', 'serums', 'hairpieces', 'shaving creams',
-                    'gels', 'wrinkle & anti-aging devices', 'lips', 'soaps', 'washes',
-                    'body wash', 'joint & muscle pain relief', 'bubble bath', 'lotions',
-                    'essential oils', 'health & fitness', 'detox & cleanse', 'oils',
-                    'sets & kits', 'shaving gels', 'hair sprays', 'eau de parfum',
-                    'fragrances', 'skin care', 'salon & spa chairs', 'massage chairs',
-                    'heating pads', 'makeup sets', 'foundation', 'face primer',
-                    'makeup organizers', 'hair color', 'outerwear',
-                },
-                'home & office': {
-                    'printer cutters', 'art set', 'sets & kits', 'freezers',
-                    'push & pull toys', 'food processors', 'mixers & blenders',
-                    'rice cookers', 'deep fryers', 'faith & spirituality', "women's",
-                    'medical support hose', 'kitchen utensils & gadgets', 'air fryers',
-                    'cookers', 'standing shelf units', 'microwave ovens',
-                    'food storage containers', 'bedding sets', 'curtain panels',
-                    'duvet covers', 'vacuum cleaners', 'wet & dry vacuums',
-                    'bagless vacuum cleaner', 'wastebasket bags', 'canvas boards & panels',
-                    'kitchen storage & organization accessories', 'stemmed water glasses',
-                    'hot pots', 'usb fans', 'whisks', 'mosquito net', 'books',
-                    'christian books & bibles', 'motivational & self-help',
-                    'business & economics', 'mystery & thrillers', 'romance',
-                    'politics & history', 'bestselling books', 'android phones',
-                    'wi-fi dongles', 'eyeshadow', 'herbs', 'organic',
-                    'milk substitutes', 'creams & moisturizers', 'supplements',
-                    'pressure cookers', 'electric pressure cookers', 'sewing machines',
-                    'coat racks', 'security & filtering', 'sprayers',
-                },
-                'electronics': {
-                    'musicals', 'ceiling fans', 'grinders', 'smart tvs', 'sound bars',
-                    'headphone amplifiers', 'ear pieces', 'overhead projectors', 'gadgets',
-                    'headphone extension cables', 'others', 'ceiling fan light kits',
-                    'earbud headphones', 'portable recorders', 'wireless lavalier microphones',
-                    'bluetooth headsets', 'earphones & headsets', 'portable bluetooth speakers',
-                    'tv remote controls', 'remote controls', 'wrist watches', "women's watches",
-                    "men's watches", 'smart watches', 'bluetooth speakers',
-                },
-                'phones & tablets': {
-                    'tv remote controls', 'remote controls', 'wrist watches', 'chargers',
-                    'earbud headphones', 'rubber strap', 'electrical device mounts',
-                    'cell phones', 'android phones', 'earphones & headsets',
-                    'supplements', 'tablets', 'capsules',
-                },
-                'fashion': {
-                    'sandals', "women's clothing bundle", 'casual dresses', 'hats & caps',
-                    'briefs', 'thongs', 'handbags', 'socks', 'push & pull toys',
-                    'desks', 'jewellery', 'thermoses', 'unisex fabrics', 'reflectors',
-                    'body pillows', 'replacement cords', 'stacking & nesting toys',
-                    'cleansers', 'parenting', 'sneakers', 'slippers', 'shoes',
-                    't-shirts', 'shirts', 'outerwear', 'clothing', 'dresses',
-                    'jackets', 'coats', 'jeans', 'rain boots', 'boots', 'stockings',
-                    'polos', 'bras', 'underwear',
-                },
-                'computing': {
-                    'portable power banks', 'bluetooth headsets', 'educational tablets',
-                    'game room furniture', 'hand tools', 'business & economics',
-                    'creams', 'milk substitutes',
-                },
-                'sporting goods': {
-                    'stands', 'hand grips',
-                },
-                'musical instruments': {
-                    'accessories', 'subwoofers', 'bags, cases & covers',
-                    'racks & stands', 'musicals',
-                },
-                'grocery': {
-                    'standard batteries', 'batteries',
-                },
-                'baby products': {
-                    'pillows', 'lumbar supports', 'wipes, napkins & serviettes',
-                    'walkers', 'feminine washes',
-                },
-                'gaming': {
-                    'meat thermometers',
-                },
-            }
-            same_domain_cats = _SAME_DOMAIN_CATEGORIES.get(p_top_lower, set())
-            if c_leaf_lower in same_domain_cats:
-                continue
-
-            # ── Cross-domain noise suppression ────────────────────────────────────
-            # Some product names contain incidental words (colors, materials, feature
-            # keywords) that pull TF-IDF toward completely unrelated domains.
-            # Block known noisy cross-domain leaps here.
-            _CROSS_DOMAIN_BLOCKS = [
-                # (current_leaf_keywords, forbidden_predicted_top_prefixes)
-
-                # Supplements/medicine must not go to Phones & Tablets ("tablet" = pill)
-                ({'supplements', 'tablets', 'capsules', 'vitamins', 'syrup', 'herbal',
-                  'herbs', 'strips', 'milk substitutes'},
-                 {'phones & tablets', 'electronics', 'automobile',
-                  'industrial & scientific', 'sporting goods'}),
-
-                # Clothing/Fashion must not go to Grocery, Sporting Goods, or Automobile
-                ({'fashion', 'clothing', 'outerwear', 'apparel', 'shoes', 'footwear',
-                  'sneakers', 'slippers', 'socks', 'polos', 'bras', 'underwear',
-                  't-shirts', 'shirts', 'dresses', 'jackets', 'coats', 'jeans',
-                  'sandals', 'rain boots', 'boots', 'stockings'},
-                 {'grocery', 'industrial & scientific', 'automobile',
-                  'sporting goods', 'electronics', 'home & office', 'pet supplies'}),
-
-                # Electronics/Audio/Phones must not bleed into unrelated domains
-                ({'electronics', 'cell phones', 'bluetooth speakers', 'bluetooth headsets',
-                  'earphones', 'headsets', 'smart watches', 'wrist watches', 'tv remote',
-                  'remote controls', 'wi-fi', 'dongles', 'power banks', 'earbuds',
-                  'headphones', 'laptops', 'cameras', 'speakers', 'portable bluetooth'},
-                 {'grocery', 'automobile', 'industrial & scientific',
-                  'garden & outdoors', 'sporting goods', 'fashion', 'pet supplies'}),
-
-                # Watches/clocks must not go to Fashion accessories or Sporting Goods
-                ({'wrist watches', "women's watches", "men's watches", 'kids watches',
-                  'smart watches', 'wall clocks', 'alarm clocks'},
-                 {'fashion', 'sporting goods', 'grocery', 'automobile'}),
-
-                # Health/Beauty/Personal care must not bleed into Grocery or unrelated
-                ({'health', 'beauty', 'skin care', 'creams', 'makeup', 'foundation',
-                  'heating pads', 'salon & spa', 'salon', 'spa', 'massage', 'medical',
-                  'shaving gels', 'hair sprays', 'eau de parfum', 'fragrance', 'perfume',
-                  'sets & kits'},
-                 {'grocery', 'industrial & scientific', 'sporting goods',
-                  'automobile', 'phones & tablets', 'toys & games', 'pet supplies'}),
-
-                # Home/Kitchen/Furniture must not bleed into Grocery, Sporting Goods,
-                # or Automobile
-                ({'home', 'kitchen', 'storage', 'cleaning', 'toilet', 'coat racks',
-                  'sewing machines', 'pressure cookers', 'electric pressure cookers',
-                  'cookers', 'christian books', 'books', 'printer cutters', 'sprayers',
-                  'art set', 'security & filtering'},
-                 {'grocery', 'sporting goods', 'automobile',
-                  'industrial & scientific', 'garden & outdoors'}),
-
-                # Baby/Kids play equipment must not go to Garden or Sporting Goods
-                ({'outdoor safety', 'play yard', 'baby', 'strollers', 'nursery'},
-                 {'garden & outdoors', 'sporting goods', 'automobile'}),
-
-                # Same-domain false positives: sub-categories of the same domain
-                # e.g. Salon & Spa Chairs -> H&B/Massage Tools, Cell Phones -> P&T/SIM Trays,
-                # Pressure Cookers -> H&O/Pressure Cooker Parts
-                # These are handled by the segment check using code_to_path,
-                # but as a safety net if code_to_path isn't available:
-                ({'salon & spa chairs', 'massage chairs'},
-                 {'health & beauty'}),
-                ({'cell phones', 'earphones & headsets'},
-                 {'phones & tablets'}),
-                ({'pressure cookers', 'electric pressure cookers'},
-                 {'home & office'}),
-
-                # Creams/Strips/Supplements must not bleed into unrelated domains
-                ({'creams', 'strips', 'supplements', 'creams & moisturizers'},
-                 {'sporting goods', 'automobile', 'grocery',
-                  'phones & tablets', 'industrial & scientific'}),
-
-                # Bluetooth Headsets/Remote Controls are sub-items of Electronics/P&T
-                ({'bluetooth headsets', 'tv remote controls', 'remote controls',
-                  'android phones', 'musicals'},
-                 {'sporting goods', 'grocery', 'automobile', 'garden & outdoors',
-                  'industrial & scientific', 'fashion', 'pet supplies'}),
-
-                # Books must not go to Office Electronics or unrelated domains
-                ({'christian books & bibles', 'motivational & self-help',
-                  'business & economics'},
-                 {'home & office', 'industrial & scientific', 'automobile',
-                  'grocery', 'sporting goods'}),
-
-                # Kitchen appliances/tools must not go to Automobile or Sporting Goods
-                ({'freezers', 'mixers & blenders', 'food processors', 'rice cookers',
-                  'bakeware sets', 'utensils', 'printer cutters', 'art set',
-                  'push & pull toys'},
-                 {'automobile', 'sporting goods', 'grocery',
-                  'industrial & scientific', 'garden & outdoors'}),
-
-                # Umbrellas must not bleed into Fashion sub-items
-                ({'stick umbrellas', 'umbrellas'},
-                 {'fashion', 'grocery', 'automobile', 'sporting goods'}),
-
-                # Bags/backpacks must not go to Electronics camera accessories
-                ({'backpacks', 'camping backpacks', 'bags'},
-                 {'electronics', 'automobile', 'industrial & scientific'}),
-
-                # Video/digital games must not go to H&B or unrelated domains
-                ({'digital games', 'ps 5 games', 'ps4 games', 'xbox games'},
-                 {'health & beauty', 'grocery', 'automobile',
-                  'industrial & scientific', 'fashion'}),
-            ]
             c_leaf_lower = current_cat.strip().lower()
             c_full_lower = current_full.strip().lower()
             p_top_lower = get_top(predicted).strip().lower()
+
+            # Uses hoisted global constant
+            same_domain_cats = SAME_DOMAIN_CATEGORIES.get(p_top_lower, set())
+            if c_leaf_lower in same_domain_cats:
+                continue
+
             blocked = False
-            for current_kws, forbidden_tops in _CROSS_DOMAIN_BLOCKS:
-                # Check if current category matches this block's domain
+            # Uses hoisted global constant
+            for current_kws, forbidden_tops in CROSS_DOMAIN_BLOCKS:
                 if any(kw in c_leaf_lower or kw in c_full_lower for kw in current_kws):
                     if any(p_top_lower.startswith(ft) for ft in forbidden_tops):
                         blocked = True
@@ -667,4 +603,9 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
 
     res = data.loc[flagged_indices].copy()
     res['Comment_Detail'] = res.index.map(comment_map)
-    return res.drop_duplicates(subset=['PRODUCT_SET_SID'])
+    
+    # 3. Safe Deduplication Validation
+    if 'PRODUCT_SET_SID' in res.columns:
+        return res.drop_duplicates(subset=['PRODUCT_SET_SID'])
+        
+    return res.drop_duplicates()
