@@ -139,6 +139,7 @@ REJECTION_REASONS_COLS = ['CODE - REJECTION_REASON', 'COMMENT']
 
 FULL_DATA_COLS = [
     "PRODUCT_SET_SID", "ACTIVE_STATUS_COUNTRY", "NAME", "BRAND", "CATEGORY", "CATEGORY_CODE",
+    "FULL_CATEGORY_PATH",
     "COLOR", "COLOR_FAMILY", "MAIN_IMAGE", "VARIATION", "PARENTSKU", "SELLER_NAME", "SELLER_SKU",
     "GLOBAL_PRICE", "GLOBAL_SALE_PRICE", "TAX_CLASS", "FLAG", "LISTING_STATUS",
     "PRODUCT_WARRANTY", "WARRANTY_DURATION", "WARRANTY_ADDRESS", "WARRANTY_TYPE", "COUNT_VARIATIONS",
@@ -2100,9 +2101,27 @@ def prepare_full_data_merged(data_df, final_report_df):
         d_cp, r_cp = data_df.copy(), final_report_df.copy()
         d_cp['PRODUCT_SET_SID'] = d_cp['PRODUCT_SET_SID'].astype(str).str.strip()
         r_cp['ProductSetSid'] = r_cp['ProductSetSid'].astype(str).str.strip()
-        merged = pd.merge(d_cp, r_cp[["ProductSetSid", "Status", "Reason", "Comment", "FLAG", "SellerName"]], left_on="PRODUCT_SET_SID", right_on="ProductSetSid", how='left')
-        if 'ProductSetSid' in merged.columns: merged.drop(columns=['ProductSetSid'], inplace=True)
+        
+        # Build full category path column
+        _code_to_path = st.session_state.get('support_files', {}).get('code_to_path', {})
+        if _code_to_path and 'CATEGORY_CODE' in d_cp.columns:
+            d_cp['FULL_CATEGORY_PATH'] = d_cp['CATEGORY_CODE'].apply(
+                lambda c: _code_to_path.get(str(c).strip(), '') if pd.notna(c) else ''
+            )
+        else:
+            d_cp['FULL_CATEGORY_PATH'] = ''
+            
+        merged = pd.merge(
+            d_cp, 
+            r_cp[["ProductSetSid", "Status", "Reason", "Comment", "FLAG", "SellerName"]], 
+            left_on="PRODUCT_SET_SID", right_on="ProductSetSid", how='left'
+        )
+        
+        if 'ProductSetSid' in merged.columns: 
+            merged.drop(columns=['ProductSetSid'], inplace=True)
+            
         return merged
+        
     except Exception as e:
         logger.error(f"prepare_full_data_merged: {e}")
         return pd.DataFrame()
@@ -2965,10 +2984,10 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            (_t("total_prod"),  len(data),                                                                                                   JUMIA_COLORS['dark_gray']),
-            (_t("approved"),    len(app_df),                                                                                                 JUMIA_COLORS['success_green']),
-            (_t("rejected"),    len(rej_df),                                                                                                 JUMIA_COLORS['jumia_red']),
-            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                             JUMIA_COLORS['primary_orange']),
+            (_t("total_prod"),  len(data),                                                                                                                             JUMIA_COLORS['dark_gray']),
+            (_t("approved"),    len(app_df),                                                                                                                           JUMIA_COLORS['success_green']),
+            (_t("rejected"),    len(rej_df),                                                                                                                           JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                                                           JUMIA_COLORS['primary_orange']),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
