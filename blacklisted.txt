@@ -1,25 +1,14 @@
 Tempered
 screen protector
 protector
-100000 mah
-100000mah
-100000 mah
-100000mah
-110000 mah
-110000mah
-110000 mah
-110000mah
-120000 mah
-120000mah
-120000 mah
-120000mah
+
 24k gold
 50000mAh
 50000mah
 5OOOOmah
 5h1t
 5hit
-60000 mah
+
 60000mah
 60000 mah
 60000mah
@@ -1600,6 +1589,7 @@ weapons
 Becoactin
 Shalina
 Glock
+intimate wash
 Cry Babies
 Themra Epimedyumlu Macun
 Epimedyumlu Macun
