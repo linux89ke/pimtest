@@ -20,6 +20,286 @@ QuenGel
 Laneige
 C&Q
 Arrow
+Asus
+Acer
+MSI
+Alienware
+Gigabyte
+ZTE
+Infinix
+Tecno
+Itel
+Honor
+
+JBL
+Beats
+Bose
+Anker
+Belkin
+Ugreen
+Baseus
+Oraimo
+Soundcore
+Skullcandy
+
+Canon
+Nikon
+GoPro
+Fujifilm
+DJI
+Kodak
+Epson
+Brother
+Lexmark
+Xerox
+
+KitchenAid
+Whirlpool
+Haier
+Midea
+Kenwood
+Russell Hobbs
+Morphy Richards
+Smeg
+Electrolux
+Sharp
+
+IKEA
+Ashley Furniture
+Wayfair
+La-Z-Boy
+Herman Miller
+Steelcase
+Tempur-Pedic
+Sealy
+Sleep Number
+Casper
+
+Crocs
+Skechers
+Clarks
+Dr. Martens
+Birkenstock
+Aldo
+Steve Madden
+Geox
+ECCO
+Salomon
+
+Decathlon
+Quechua
+Karrimor
+Umbro
+Diadora
+Lotto
+Mizuno
+Yonex
+Head
+Wilson
+
+Ray-Ban
+Oakley
+Persol
+Carrera
+Polaroid Eyewear
+Maui Jim
+Tom Ford
+Oliver Peoples
+Warby Parker
+Gentle Monster
+
+Michael Kors
+Coach
+Kate Spade
+Tory Burch
+Longchamp
+Dooney & Bourke
+Furla
+Guess
+Marc Jacobs
+Rebecca Minkoff
+
+Diesel
+G-Star RAW
+Superdry
+AllSaints
+Ted Baker
+Paul Smith
+Hugo Boss
+Armani Exchange
+Massimo Dutti
+COS
+
+Unilever
+Procter & Gamble
+Colgate-Palmolive
+Reckitt
+Henkel
+Beiersdorf
+Amway
+Oriflame
+Mary Kay
+Neutrogena
+
+Olay
+Nivea
+Garnier
+Biore
+Simple
+Vichy
+Eucerin
+Aveeno
+Avene
+SVR
+
+Glossier
+ColourPop
+Pat McGrath Labs
+Too Faced
+Urban Decay
+Tarte
+Benefit Cosmetics
+Bobbi Brown
+Laura Mercier
+Make Up For Ever
+
+Hask
+Cantu
+Aussie
+Herbal Essences
+Matrix
+Redken
+Paul Mitchell
+Schwarzkopf
+Wella
+Luster's
+
+Persil
+Ariel
+Sunlight
+Omo
+Comfort
+Downy
+Febreze
+Glade
+Air Wick
+Dettol
+
+Guinness
+Heineken
+Budweiser
+Corona
+Smirnoff
+Johnnie Walker
+Hennessy
+Absolut
+Baileys
+Jack Daniel's
+
+Kellogg's
+Weetabix
+Quaker
+Cadbury
+Mars
+Snickers
+KitKat
+Oreo
+Danone
+Yoplait
+
+
+
+LEGO
+Mattel
+Hasbro
+Fisher-Price
+Hot Wheels
+Barbie
+Nerf
+Playmobil
+VTech
+LeapFrog
+Blink
+Wyze
+Eufy
+TP-Link
+Tapo
+Netgear
+D-Link
+Linksys
+
+Synology
+QNAP
+Asustor
+Drobo
+TerraMaster
+LaCie
+G-Technology
+Buffalo
+Promise Technology
+iStorage
+
+Ubiquiti
+MikroTik
+Cambium Networks
+Cisco Meraki
+Juniper
+Fortinet
+Palo Alto Networks
+Sophos
+WatchGuard
+Zyxel
+ViewSonic
+BenQ
+AOC
+Philco
+Vestel
+Skyworth
+Changhong
+Konka
+Hisilicon
+BOE
+OnePlus
+Nothing
+Fairphone
+Wiko
+Micromax
+Lava
+Blu
+Meizu
+Coolpad
+LeEco
+
+Roku
+Fire TV
+Chromecast
+TiVo
+Naim Audio
+Marshall
+Bang & Olufsen
+Devialet
+Sennheiser
+Shure
+Audemars Piguet
+Patek Philippe
+Vacheron Constantin
+Breguet
+Blancpain
+Hublot
+Richard Mille
+IWC Schaffhausen
+Jaeger-LeCoultre
+Panerai
+Intel
+AMD
+Nvidia
+Qualcomm
+MediaTek
+Corsair
+HyperX
+Kingston
+Sandisk
+Western Digital
 NARS
 Dior Beauty
 Givenchy Beauty
