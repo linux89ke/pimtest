@@ -469,10 +469,45 @@ def check_unnecessary_words(data: pd.DataFrame, pattern: re.Pattern) -> pd.DataF
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_single_word_name(data: pd.DataFrame, book_category_codes: List[str], books_data: Dict = None) -> pd.DataFrame:
-    if not {'CATEGORY_CODE','NAME'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
+    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns): 
+        return pd.DataFrame(columns=data.columns)
+        
     cat_codes = (books_data or {}).get('category_codes') or set(clean_category_code(c) for c in book_category_codes)
-    non_books = data[~data['_cat_clean'].isin(cat_codes)]
-    return non_books[non_books['NAME'].astype(str).str.split().str.len() == 1].drop_duplicates(subset=['PRODUCT_SET_SID'])
+    
+    d = data.copy()
+    
+    # Calculate word count and character count using fast pandas string methods
+    names = d['NAME'].astype(str).str.strip()
+    word_counts = names.str.split().str.len()
+    char_counts = names.str.len()
+    
+    # Condition: 2 words or fewer, OR less than 15 characters
+    bad_name_mask = (word_counts <= 2) | (char_counts < 15)
+    
+    # Exclude books from this strict naming rule
+    if '_cat_clean' in d.columns:
+        non_books_mask = ~d['_cat_clean'].isin(cat_codes)
+    else:
+        non_books_mask = ~d['CATEGORY_CODE'].apply(clean_category_code).isin(cat_codes)
+        
+    flagged = d[bad_name_mask & non_books_mask].copy()
+    
+    if not flagged.empty:
+        def get_reason(row):
+            name_str = str(row['NAME']).strip()
+            w_count = len(name_str.split())
+            c_count = len(name_str)
+            
+            if w_count <= 2 and c_count < 15:
+                return f"{w_count} words, {c_count} chars"
+            elif w_count <= 2:
+                return f"{w_count} words"
+            else:
+                return f"{c_count} chars"
+                
+        flagged['Comment_Detail'] = flagged.apply(get_reason, axis=1)
+        
+    return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_generic_brand_issues(data: pd.DataFrame, valid_category_codes_fas: List[str]) -> pd.DataFrame:
     if not {'CATEGORY_CODE','BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
