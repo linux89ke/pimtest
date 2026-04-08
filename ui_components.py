@@ -493,6 +493,22 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
+// 🚀 LOCK STREAMLIT DIALOG: Prevents accidental clicks on gray background from closing the window!
+try {{
+  var par = window.parent.document;
+  if (!par.window.__modalLocked) {{
+    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup'].forEach(ev => {{
+      par.addEventListener(ev, function(e) {{
+        var dialog = par.querySelector('[data-testid="stDialog"]');
+        if (dialog && !dialog.contains(e.target)) {{
+           e.stopPropagation();
+        }}
+      }}, true); // True = capture phase (stops it before React sees it)
+    }});
+    par.window.__modalLocked = true;
+  }}
+}} catch(e) {{}}
+
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
@@ -702,13 +718,6 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
-document.addEventListener('click', function(e) {{
-  var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
-    closeZoom();
-  }}
-}});
-
 function updateSelCount() {{ 
   document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
   updateParentPagination();
@@ -884,6 +893,7 @@ def visual_review_modal(support_files):
     n_rows       = -(-len(page_data) // cols_per_row)
     grid_height  = min(n_rows * 320 + 140, 800)
 
+    # 🚀 Safely rendering via components.html since st.iframe srcdoc isn't stable yet
     components.html(grid_html, height=grid_height, scrolling=True)
 
 @st.fragment
