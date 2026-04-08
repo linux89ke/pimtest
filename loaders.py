@@ -322,7 +322,7 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
         'Suspected counterfeit Jerseys': ('1000023 - Confirmation of counterfeit product by Jumia technical team (Not Authorized)', "Jersey confirmed counterfeit."),
         'Prohibited products': ('1000007 - Other Reason', "Listing of this product is prohibited."),
         'Unnecessary words in NAME': ('1000008 - Kindly Improve Product Name Description', "Avoid unnecessary words in title."),
-        'Single-word NAME': ('1000008 - Kindly Improve Product Name Description', "Update product title format: Name – Type – Color."),
+        'Single-word NAME': ('1000008 - Kindly Improve Product Name Description', "Product name is too short. Kindly update the product title using this format: Name – Type of the Products – Color. If available, please also add key details such as weight, capacity, type, and warranty to make the title clear and complete for customers."),
         'Generic BRAND Issues': ('1000007 - Other Reason', "Use correct brand instead of Generic/Fashion. Apply for brand approval if needed."),
         'Fashion brand issues': ('1000007 - Other Reason', "Use correct brand instead of Fashion. Apply for brand approval if needed."),
         'BRAND name repeated in NAME': ('1000007 - Other Reason', "Brand name should not be repeated in product name."),
