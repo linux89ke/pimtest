@@ -397,7 +397,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
   
-  /* 🚀 SUBTLE ZOOM BUTTON */
   .zoom-btn{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;background:rgba(0,0,0,0.4);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .2s;}}
   .zoom-btn:hover{{background:rgba(0,0,0,0.7);}}
   .zoom-btn svg{{width:12px;height:12px;flex-shrink:0;}}
@@ -581,7 +580,6 @@ function renderCard(card) {{
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
 
-  // SUBTLE ZOOM ICON
   var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -725,14 +723,8 @@ renderAll();
 </body>
 </html>"""
 
-@st.fragment
-def render_image_grid(support_files):
-    if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc":
-        return
-
-    st.markdown("---")
-    st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
-
+@st.dialog("🔍 Visual Review Mode", width="large")
+def visual_review_modal(support_files):
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
     committed_rej_sids = {
@@ -790,11 +782,8 @@ def render_image_grid(support_files):
 
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center")
     with pg_cols[0]:
-        if st.button("◀ Prev Page", use_container_width=True,
-                     disabled=st.session_state.grid_page == 0):
-            st.session_state.grid_page = max(0, st.session_state.grid_page - 1)
-            st.session_state.do_scroll_top = True
-            st.rerun(scope="fragment")
+        if st.button("◀ Prev Page", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
+            st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
     with pg_cols[1]:
         new_page = st.number_input(
             f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
@@ -803,14 +792,9 @@ def render_image_grid(support_files):
         )
         if new_page - 1 != st.session_state.grid_page:
             st.session_state.grid_page = new_page - 1
-            st.session_state.do_scroll_top = True
-            st.rerun(scope="fragment")
     with pg_cols[2]:
-        if st.button("Next Page ▶", use_container_width=True,
-                     disabled=st.session_state.grid_page >= total_pages - 1):
+        if st.button("Next Page ▶", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
             st.session_state.grid_page += 1
-            st.session_state.do_scroll_top = True
-            st.rerun(scope="fragment")
 
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
@@ -836,39 +820,38 @@ def render_image_grid(support_files):
         for sid in page_data["PRODUCT_SET_SID"].astype(str)
         if st.session_state.get(f"quick_rej_{sid}")
     }
-    _grid_cache_key = (
-        f"grid_html_{st.session_state.grid_page}"
-        f"_{len(page_data)}"
-        f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
-        f"_r{len(rejected_state)}"
-    )
     
-    if _grid_cache_key not in st.session_state:
-        cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
-        st.session_state[_grid_cache_key] = build_fast_grid_html(
-            page_data=page_data,
-            flags_mapping=support_files.get("flags_mapping", {}),
-            country=st.session_state.get('selected_country', 'Kenya'),
-            page_warnings=page_warnings,
-            rejected_state=rejected_state,
-            cols_per_row=cols_per_row,
-            prefetch_urls=prefetch_urls,
-        )
-
-    grid_html = st.session_state[_grid_cache_key]
+    # Do not cache dialog grid html to ensure fresh state on reruns
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
+    grid_html = build_fast_grid_html(
+        page_data=page_data,
+        flags_mapping=support_files.get("flags_mapping", {}),
+        country=st.session_state.get('selected_country', 'Kenya'),
+        page_warnings=page_warnings,
+        rejected_state=rejected_state,
+        cols_per_row=cols_per_row,
+        prefetch_urls=prefetch_urls,
+    )
+
     n_rows       = -(-len(page_data) // cols_per_row)
-    grid_height  = min(n_rows * 320 + 140, 2600)
+    grid_height  = min(n_rows * 320 + 140, 800) # Modal keeps a clean height
 
     components.html(grid_html, height=grid_height, scrolling=True)
 
-    if st.session_state.get("do_scroll_top", False):
-        components.html(
-            "<script>window.parent.document.querySelector('.main')"
-            ".scrollTo({top:0,behavior:'smooth'});</script>",
-            height=0,
-        )
-        st.session_state.do_scroll_top = False
+@st.fragment
+def render_image_grid(support_files):
+    if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc":
+        return
+
+    st.markdown("---")
+    
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
+        st.caption("Open Focus Mode to rapidly visually review and reject products.")
+    with c2:
+        if st.button("🔍 Start Visual Review", type="primary", use_container_width=True):
+            visual_review_modal(support_files)
 
 @st.fragment
 def render_exports_section(support_files, country_validator):
