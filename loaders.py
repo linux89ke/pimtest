@@ -539,3 +539,13 @@ def load_and_compile_json_rules(json_path="category_qc_weighted.json") -> dict:
         except Exception as e:
             logger.warning(f"Skipping bad JSON rule for {cat_path}: {e}")
     return compiled_rules
+
+@st.cache_data(ttl=3600)
+def load_support_files_lazy(): 
+    return load_all_support_files()
+
+@st.cache_data(ttl=3600)
+def compile_regex_patterns(words: List[str]) -> re.Pattern:
+    if not words: return None
+    pattern = '|'.join(r'\b' + re.escape(w) + r'\b' for w in sorted(words, key=len, reverse=True))
+    return re.compile(pattern, re.IGNORECASE)
