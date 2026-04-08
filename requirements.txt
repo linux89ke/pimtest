@@ -11,3 +11,4 @@ lxml>=4.9.0
 plotly
 imagehash
 opencv-python-headless
+st-styled
