@@ -361,9 +361,11 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <meta name="referrer" content="no-referrer">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
-  body{{background:#f5f5f5;padding:8px;}}
-  
-  .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
+  html,body{{height:100%;overflow:hidden;background:#f5f5f5;}}
+  body{{display:flex;flex-direction:column;}}
+  #scroll-area{{flex:1;overflow-y:auto;padding:8px;}}
+
+  .ctrl-bar{{flex-shrink:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);border-bottom:2px solid {O};box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;}}
   .batch-btn{{padding:7px 14px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:12px;cursor:pointer;}}
@@ -466,7 +468,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
   .debug-hud{{position:absolute;inset:0;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:9px;padding:5px;display:none;word-break:break-all;z-index:100;}}
 
-  .bottom-bar{{position:sticky;bottom:0;z-index:99999;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.97);backdrop-filter:blur(8px);border-top:2px solid {O};border-radius:4px;margin-top:14px;box-shadow:0 -4px 16px rgba(0,0,0,0.12);}}
+  .bottom-bar{{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.97);border-top:2px solid {O};box-shadow:0 -4px 16px rgba(0,0,0,0.12);}}
   .nav-btn{{padding:7px 18px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:13px;cursor:pointer;}}
   .nav-btn:hover{{opacity:.88;}}
   .nav-btn:disabled{{opacity:.35;cursor:default;}}
@@ -491,6 +493,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
 </div>
+<div id="scroll-area">
 <div class="grid" id="card-grid"></div>
 
 <div id="zoom-tooltip">
@@ -500,6 +503,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
 <div id="prefetch-status"></div>
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
+</div>
 
 <script>
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
@@ -797,16 +801,34 @@ function doClose() {{
 }}
 
 function doCloseNow() {{
-  // Close the Streamlit dialog by clicking its native × button in the parent frame
+  // Walk up from the iframe element in the parent and hide the dialog backdrop
   try {{
     var par = window.parent;
-    // Streamlit dialog close button has data-testid="stBaseButton-headerNoPadding" or aria-label="Close"
-    var closeBtn = par.document.querySelector('[data-testid="stBaseButton-headerNoPadding"]') ||
-                   par.document.querySelector('button[aria-label="Close"]') ||
-                   par.document.querySelector('[data-testid="stDialog"] button[kind="header"]');
-    if (closeBtn) {{ closeBtn.click(); return; }}
+    var iframes = par.document.querySelectorAll('iframe');
+    var thisIframe = null;
+    for (var i = 0; i < iframes.length; i++) {{
+      try {{ if (iframes[i].contentWindow === window) {{ thisIframe = iframes[i]; break; }} }} catch(e) {{}}
+    }}
+    if (thisIframe) {{
+      // Walk up to find the dialog overlay (data-testid="stDialog" or role="dialog")
+      var el = thisIframe.parentElement;
+      while (el && el !== par.document.body) {{
+        if (el.getAttribute('role') === 'dialog' || el.getAttribute('data-testid') === 'stDialog' ||
+            (el.tagName === 'DIV' && el.style && el.style.zIndex && parseInt(el.style.zIndex) > 100)) {{
+          el.style.display = 'none';
+          return;
+        }}
+        // Also try clicking a close button if we find one nearby
+        var closeBtn = el.querySelector('button[aria-label="Close"], [data-testid="stBaseButton-headerNoPadding"]');
+        if (closeBtn) {{ closeBtn.click(); return; }}
+        el = el.parentElement;
+      }}
+      // Last resort: click any close/dismiss button in the dialog
+      var anyClose = par.document.querySelector('[data-testid="stBaseButton-headerNoPadding"], button[aria-label="Close"]');
+      if (anyClose) {{ anyClose.click(); return; }}
+    }}
   }} catch(e) {{}}
-  // Fallback: send message to Streamlit
+  // Final fallback: bridge message
   sendMsg('close_modal', {{}});
 }}
 
@@ -944,11 +966,10 @@ def visual_review_modal(support_files):
         total_pages=total_pages,
     )
 
-    # No height cap — iframe expands to fit all cards so the outer page scrolls naturally
-    n_rows      = -(-len(page_data) // cols_per_row)
-    grid_height = n_rows * 340 + 280  # extra 280 for the sticky bottom bar
+    # Fixed height iframe that owns its own scroll — bars are flex items so they stay pinned
+    grid_height = 820
 
-    components.html(grid_html, height=grid_height, scrolling=False)
+    components.html(grid_html, height=grid_height, scrolling=True)
 
 @st.fragment
 def render_image_grid(support_files):
