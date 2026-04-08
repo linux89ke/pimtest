@@ -94,7 +94,6 @@ Diadora
 Lotto
 Mizuno
 Yonex
-Head
 Wilson
 
 Ray-Ban
@@ -848,7 +847,6 @@ Ariel
 Arimis
 Aris
 Ariston
-Arm
 Arm & Hammer
 Armaf
 Armaf Sterling Perfums
@@ -1797,7 +1795,6 @@ Indomie
 Ines & Marechal
 Infantino
 Infinix
-Infrared
 INGCO
 Ingrams
 Inkworld arts
@@ -1806,7 +1803,6 @@ Intex
 Iodex
 IPCONE
 Ipsa
-Iran
 IREV
 ISNtree
 Isomars
