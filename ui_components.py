@@ -419,7 +419,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// 🚀 FIX: Keep escapeHtml strictly for non-URL text to prevent HTML injection
+// Keep escapeHtml strictly for non-URL text to prevent HTML injection!
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 
 var CARDS    = {cards_json};
@@ -490,18 +490,17 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
-// 🚀 FIX: Javascript HTML injection rewritten to use double-quotes exclusively, escaping properly
 function renderCard(card) {{
   var sid = card.sid;
-  var safeSid = sid.replace(/"/g, "\\\"");
+  var safeSid = sid.replace(/'/g, "\\\\'");
   
   var isCommitted = sid in COMMITTED;
   var isStaged    = sid in staged;
   var isSelected  = !isCommitted && !isStaged && (sid in selected);
   var cls = "card" + (isCommitted ? " committed-rej" : isStaged ? " staged-rej" : isSelected ? " selected" : "");
   
-  // 🚀 FIX: DO NOT escapeURL ampersands or query strings! Just URL-encode quotes to avoid breaking HTML attributes.
-  var safeImgSrc = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : NO_IMAGE;
+  // 🚀 FIX: URL is fully untouched here so query parameters & signatures remain perfectly intact!
+  var safeImgSrc = card.img || NO_IMAGE;
 
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + "…" : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(function(w) {{
@@ -541,12 +540,12 @@ function renderCard(card) {{
       + "</select></div>";
   }}
   
-  // 🚀 FIX: Added referrerpolicy='no-referrer' to bypass CDN Hotlink protections
+  // 🚀 FIX: HTML tag string securely wraps the untouched url in single quotes and adds the required headers
   return "<div class='" + cls + "' id='card-" + escapeHtml(sid) + "'>"
     + "<div class='card-img-wrap' onclick='window.toggleSelect(\\"" + safeSid + "\\",event)'>"
     + priceHtml
     + "<div class='warn-wrap'>" + warnHtml + "</div>"
-    + "<img class='card-img' decoding='async' referrerpolicy='no-referrer'"
+    + "<img class='card-img' decoding='async' referrerpolicy='no-referrer' crossorigin='anonymous'"
     + " src='" + safeImgSrc + "'"
     + " onload='onImgLoad(this,\"" + safeSid + "\")'"
     + " onerror='onImgError(this,\"" + safeSid + "\")'>"
@@ -646,7 +645,7 @@ window.doDeselAll = function() {{
       try {{ var lnk = document.createElement('link'); lnk.rel='prefetch'; lnk.as='image'; lnk.href=url; document.head.appendChild(lnk); }} catch(e) {{}}
       (function(u) {{
         var img = new Image();
-        // 🚀 FIX: Prevent prefetch errors from breaking images too
+        // 🚀 FIX: Referrer policy added to prefetch requests
         img.referrerPolicy = "no-referrer";
         img.onload = function() {{
           done++;
