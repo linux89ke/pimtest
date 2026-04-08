@@ -23,6 +23,16 @@ from PIL import Image
 
 from translations import LANGUAGES, get_translation
 
+# ── NEW IMPORTS FOR COUNTRY-SPECIFIC RULES ────────────────────────────────────
+from nigeria_rules import (
+    load_nigeria_qc_rules, check_nigeria_gift_card, check_nigeria_books,
+    check_nigeria_tvs, check_nigeria_hp_toners, check_nigeria_apple,
+    check_nigeria_xmas_tree, check_nigeria_rice, check_nigeria_powerbanks
+)
+from morocco_rules import (
+    load_morocco_qc_rules, check_morocco_prohibited_brands
+)
+
 try:
     from postqc import detect_file_type, normalize_post_qc, run_checks as run_post_qc_checks, render_post_qc_section, load_category_map
 except ImportError:
@@ -702,263 +712,6 @@ def load_suspected_fake_from_local() -> Dict:
     return result
 
 # -------------------------------------------------
-# NIGERIA QC RULES LOADER
-# -------------------------------------------------
-@st.cache_data(ttl=3600)
-def load_nigeria_qc_rules() -> Dict:
-    FILE_NAME = "Nigeria_QC_Rules.xlsx"
-    result: Dict = {
-        "gift_card":  {"sellers": set(), "category_codes": set()},
-        "books":      {},   # book_name_lower -> approved_seller_lower | None (nobody)
-        "tvs":        {"category_codes": set(), "brand_sellers": {}},
-        "hp_toners":  {"sellers": set(), "category_codes": set()},
-        "apple":      {"sellers": set()},
-        "xmas_tree":  {"sellers": set(), "keywords": set()},
-        "rice":       {},   # brand_lower -> {"sellers": set, "category_codes": set}
-        "powerbanks": {"brands": set(), "category_codes": set()},
-    }
-
-    if not os.path.exists(FILE_NAME):
-        logger.warning("Nigeria_QC_Rules.xlsx not found — NG-specific checks will be skipped.")
-        return result
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="Gift card")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            seller_col, cat_col = df.columns[0], df.columns[1]
-            result["gift_card"]["sellers"] = (
-                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
-                - {"", "nan", "seller"}
-            )
-            result["gift_card"]["category_codes"] = (
-                set(df[cat_col].dropna().astype(str).apply(clean_category_code))
-                - {"", "nan"}
-            )
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules gift_card: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="Books")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            name_col, seller_col = df.columns[0], df.columns[1]
-            for _, row in df.iterrows():
-                book = str(row[name_col]).strip().lower()
-                if not book or book == "nan":
-                    continue
-                raw_seller = str(row.get(seller_col, "")).strip().lower()
-                result["books"][book] = None if (not raw_seller or raw_seller == "nan") else raw_seller
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules books: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="TVs")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            cat_col    = df.columns[0]
-            brand_cols = df.columns[1:]
-            result["tvs"]["category_codes"] = (
-                set(df[cat_col].dropna().astype(str).apply(clean_category_code))
-                - {"", "nan"}
-            )
-            for bc in brand_cols:
-                brand_lower = bc.strip().lower()
-                result["tvs"]["brand_sellers"][brand_lower] = (
-                    set(df[bc].dropna().astype(str).str.strip().str.lower())
-                    - {"", "nan", brand_lower}
-                )
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules tvs: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="HP ink toners")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            seller_col = df.columns[0]
-            cat_col    = df.columns[1] if len(df.columns) > 1 else None
-            result["hp_toners"]["sellers"] = (
-                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
-                - {"", "nan", "seller"}
-            )
-            if cat_col:
-                result["hp_toners"]["category_codes"] = (
-                    set(df[cat_col].dropna().astype(str).apply(clean_category_code))
-                    - {"", "nan"}
-                )
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules hp_toners: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="Apple")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            seller_col = df.columns[0]
-            result["apple"]["sellers"] = (
-                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
-                - {"", "nan", "seller"}
-            )
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules apple: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="Xmas Tree")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            seller_col = df.columns[0]
-            kw_col     = df.columns[1] if len(df.columns) > 1 else None
-            result["xmas_tree"]["sellers"] = (
-                set(df[seller_col].dropna().astype(str).str.strip().str.lower())
-                - {"", "nan", "seller"}
-            )
-            if kw_col:
-                result["xmas_tree"]["keywords"] = (
-                    set(df[kw_col].dropna().astype(str).str.strip().str.lower())
-                    - {"", "nan", "keyword", "keywords"}
-                )
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules xmas_tree: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="Rice")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            brand_col   = df.columns[0]
-            sellers_col = df.columns[1]
-            cat_col     = df.columns[2] if len(df.columns) > 2 else None
-            for _, row in df.iterrows():
-                brand = str(row[brand_col]).strip().lower()
-                if not brand or brand == "nan":
-                    continue
-                raw_sellers = str(row.get(sellers_col, "")).strip()
-                sellers = set()
-                if raw_sellers and raw_sellers.lower() != "nan":
-                    sellers = {s.strip().lower() for s in raw_sellers.split(",") if s.strip()}
-                cat_code = ""
-                if cat_col:
-                    raw_cat = str(row.get(cat_col, "")).strip()
-                    if raw_cat and raw_cat.lower() != "nan":
-                        cat_code = clean_category_code(raw_cat)
-                if brand not in result["rice"]:
-                    result["rice"][brand] = {"sellers": set(), "category_codes": set()}
-                result["rice"][brand]["sellers"].update(sellers)
-                if cat_code:
-                    result["rice"][brand]["category_codes"].add(cat_code)
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules rice: {e}")
-
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="20,000mah Powerbanks")
-        if not df.empty:
-            df.columns = [str(c).strip() for c in df.columns]
-            brand_col = df.columns[0]
-            cat_col   = df.columns[1] if len(df.columns) > 1 else None
-            result["powerbanks"]["brands"] = (
-                set(df[brand_col].dropna().astype(str).str.strip().str.lower())
-                - {"", "nan", "brand"}
-            )
-            if cat_col:
-                result["powerbanks"]["category_codes"] = (
-                    set(df[cat_col].dropna().astype(str).apply(clean_category_code))
-                    - {"", "nan"}
-                )
-    except Exception as e:
-        logger.warning(f"load_nigeria_qc_rules powerbanks: {e}")
-
-    return result
-
-@st.cache_data(ttl=3600)
-def load_morocco_qc_rules() -> Dict:
-    """
-    Reads Morocco_rules.xlsx and returns:
-
-      "restricted"  -> list of dicts  {brand, brand_raw, sellers, ...}
-                       brands that have at least one authorised vendor
-                       (fed into the existing check_restricted_brands logic)
-
-      "prohibited_brands"  -> set of str (lower-cased)
-                              brands with ZERO authorised vendors — nobody allowed
-
-      "prohibited_keywords" -> list of str (lower-cased)
-                               from the 'keywords' sheet — replaces the MA tab
-                               of Prohibbited.xlsx for Morocco
-    """
-    FILE_NAME = "Morocco_rules.xlsx"
-    result: Dict = {
-        "restricted":          [],
-        "prohibited_brands":   set(),
-        "prohibited_keywords": [],
-    }
-
-    if not os.path.exists(FILE_NAME):
-        logger.warning("Morocco_rules.xlsx not found — MA-specific checks skipped.")
-        return result
-
-    # ── brands sheet ──────────────────────────────────────────────────────────
-    try:
-        df = safe_excel_read(FILE_NAME, sheet_name="brands")
-        if not df.empty:
-            df.columns = [str(c).strip().lower() for c in df.columns]
-            brand_col  = next((c for c in df.columns if "brand"       in c), df.columns[0])
-            vendor_col = next((c for c in df.columns if "vendor"      in c
-                                                      or "seller"     in c
-                                                      or "authorized" in c), df.columns[1])
-
-            brand_dict: dict = {}
-            for _, row in df.iterrows():
-                brand = str(row.get(brand_col, "")).strip()
-                if not brand or brand.lower() in ("nan", "restricted brand", "brand"):
-                    continue
-                b_lower = brand.lower()
-                if b_lower not in brand_dict:
-                    brand_dict[b_lower] = {"brand_raw": brand, "sellers": set()}
-                vendor = str(row.get(vendor_col, "")).strip()
-                if vendor and vendor.lower() not in ("nan", "none", "authorized vendors", ""):
-                    brand_dict[b_lower]["sellers"].add(vendor.strip().lower())
-
-            for b_lower, data in brand_dict.items():
-                if data["sellers"]:
-                    # Has approved sellers → restricted brand check
-                    result["restricted"].append({
-                        "brand":      b_lower,
-                        "brand_raw":  data["brand_raw"],
-                        "sellers":    data["sellers"],
-                        "categories": set(),          # no category filter for MA
-                        "variations": [],
-                        "has_blank_category": True,   # treat as apply-to-all-categories
-                    })
-                else:
-                    # Zero approved sellers → fully prohibited
-                    result["prohibited_brands"].add(b_lower)
-
-            logger.info(
-                f"[MoroccoRules] brands loaded: "
-                f"{len(result['restricted'])} restricted, "
-                f"{len(result['prohibited_brands'])} fully prohibited."
-            )
-    except Exception as e:
-        logger.warning(f"load_morocco_qc_rules brands: {e}")
-
-    # ── keywords sheet ────────────────────────────────────────────────────────
-    try:
-        df_kw = safe_excel_read(FILE_NAME, sheet_name="keywords")
-        if not df_kw.empty:
-            df_kw.columns = [str(c).strip().lower() for c in df_kw.columns]
-            kw_col = df_kw.columns[0]
-            result["prohibited_keywords"] = [
-                str(v).strip().lower()
-                for v in df_kw[kw_col].dropna()
-                if str(v).strip().lower() not in ("", "nan", "keyword", "keywords")
-            ]
-            logger.info(
-                f"[MoroccoRules] {len(result['prohibited_keywords'])} prohibited keywords loaded."
-            )
-    except Exception as e:
-        logger.warning(f"load_morocco_qc_rules keywords: {e}")
-
-    return result
-
-# -------------------------------------------------
 # LOAD FLAGS MAPPING (WITH MULTI-LINGUAL SUPPORT)
 # -------------------------------------------------
 @st.cache_data(ttl=3600)
@@ -1043,7 +796,6 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
             'يرجى مراجعة المحتوى بعناية، وحذف أو استبدال تلك الكلمات بكلمات دقيقة ومصرح بها.'
         ),
     }
-    # ── End Morocco flags ──────────────────────────────────────────────────────
 
     try:
         if os.path.exists(filename):
@@ -1106,8 +858,6 @@ def load_all_support_files() -> Dict:
     _cat_path_to_code: dict[str, str] = {}
     _code_to_path: dict[str, str] = {}
 
-    # Load category_map.xlsx ONCE — builds categories_names_list, cat_path_to_code,
-    # and code_to_path all in a single pass.
     _cm_path = "category_map.xlsx"
     try:
         if os.path.exists(_cm_path):
@@ -1137,8 +887,8 @@ def load_all_support_files() -> Dict:
                         _p = str(_row[_path_col]).strip()
                         _c = str(_row[_code_col]).strip().split(".")[0]
                         if _p and _c:
-                            _cat_path_to_code[_p.lower()] = _c  # lowercase for lookups
-                            _code_to_path[_c] = _p               # original case
+                            _cat_path_to_code[_p.lower()] = _c  
+                            _code_to_path[_c] = _p               
 
                 logger.info(
                     f"[CategoryMap] Built: {len(_cat_names)} category paths, "
@@ -1166,7 +916,6 @@ def load_all_support_files() -> Dict:
         f"cat_path_to_code={len(_cat_path_to_code)}, code_to_path={len(_code_to_path)}"
     )
 
-    # Compile JSON boost rules now that code_to_path is available
     support['compiled_json_rules'] = load_and_compile_json_rules("category_qc_weighted.json")
     return support
 
@@ -1827,7 +1576,6 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     d['_norm_brand']  = d['BRAND'].astype(str).str.lower().str.strip()
     d['_norm_seller'] = d['SELLER_NAME'].astype(str).str.lower().str.strip()
 
-    # Build color key from COLOR or COLOR_FAMILY if color not already in name
     _color_list = known_colors or []
     _color_pattern = re.compile(
         r'\b(' + '|'.join(re.escape(c) for c in sorted(_color_list, key=len, reverse=True)) + r')\b',
@@ -1836,10 +1584,8 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
 
     def _extract_color_key(row):
         name_lower = str(row.get('NAME', '')).lower()
-        # If a known color word already appears in the name, name carries it — no need to add
         if _color_pattern and _color_pattern.search(name_lower):
             return ''
-        # Try COLOR column first, fall back to COLOR_FAMILY
         for col in ('COLOR', 'COLOR_FAMILY'):
             val = str(row.get(col, '')).strip().lower()
             if val and val not in ('nan', 'none', '', 'n/a'):
@@ -1863,196 +1609,6 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-# -------------------------------------------------
-# NIGERIA-SPECIFIC QC CHECKS
-# -------------------------------------------------
-def check_nigeria_gift_card(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    rules            = ng_rules.get("gift_card", {})
-    cat_codes        = rules.get("category_codes", set())
-    approved_sellers = rules.get("sellers", set())
-    if not cat_codes or not approved_sellers: return pd.DataFrame(columns=data.columns)
-    if not {"CATEGORY_CODE", "SELLER_NAME"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    in_scope = data[data["CATEGORY_CODE"].apply(clean_category_code).isin(cat_codes)].copy()
-    if in_scope.empty: return pd.DataFrame(columns=data.columns)
-    flagged = in_scope[~in_scope["SELLER_NAME"].astype(str).str.strip().str.lower().isin(approved_sellers)].copy()
-    if not flagged.empty: flagged["Comment_Detail"] = "Seller not authorised for Gift Card categories: " + flagged["SELLER_NAME"].astype(str)
-    return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_books(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    book_rules = ng_rules.get("books", {})
-    if not book_rules or not {"NAME", "SELLER_NAME"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    d = data.copy()
-    d["_name_l"]   = d["NAME"].astype(str).str.strip().str.lower()
-    d["_seller_l"] = d["SELLER_NAME"].astype(str).str.strip().str.lower()
-    flagged_idx, comment_map = [], {}
-    for idx, row in d.iterrows():
-        name_l, seller_l = row["_name_l"], row["_seller_l"]
-        for book_name, allowed_seller in book_rules.items():
-            if book_name in name_l:
-                if allowed_seller is None:
-                    flagged_idx.append(idx)
-                    comment_map[idx] = f"No seller authorised for book: '{book_name[:60]}'"
-                elif seller_l != allowed_seller:
-                    flagged_idx.append(idx)
-                    comment_map[idx] = f"Only '{allowed_seller}' may sell '{book_name[:40]}'"
-                break
-    if not flagged_idx: return pd.DataFrame(columns=data.columns)
-    result = data.loc[flagged_idx].copy()
-    result["Comment_Detail"] = result.index.map(comment_map)
-    return result.drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_tvs(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    tv_rules      = ng_rules.get("tvs", {})
-    cat_codes     = tv_rules.get("category_codes", set())
-    brand_sellers = tv_rules.get("brand_sellers", {})
-    if not cat_codes or not brand_sellers or not {"CATEGORY_CODE", "BRAND", "SELLER_NAME"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    in_scope = data[data["CATEGORY_CODE"].apply(clean_category_code).isin(cat_codes)].copy()
-    if in_scope.empty: return pd.DataFrame(columns=data.columns)
-    in_scope["_brand_l"]  = in_scope["BRAND"].astype(str).str.strip().str.lower()
-    in_scope["_seller_l"] = in_scope["SELLER_NAME"].astype(str).str.strip().str.lower()
-    chunks = []
-    for brand_lower, approved in brand_sellers.items():
-        if not approved: continue
-        brand_rows = in_scope[in_scope["_brand_l"] == brand_lower]
-        if brand_rows.empty: continue
-        bad = brand_rows[~brand_rows["_seller_l"].isin(approved)].copy()
-        if not bad.empty:
-            bad["Comment_Detail"] = f"Seller not authorised for {brand_lower.upper()} TVs: " + bad["SELLER_NAME"].astype(str)
-            chunks.append(bad)
-    if not chunks: return pd.DataFrame(columns=data.columns)
-    return pd.concat(chunks).drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_hp_toners(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    rules            = ng_rules.get("hp_toners", {})
-    cat_codes        = rules.get("category_codes", set())
-    approved_sellers = rules.get("sellers", set())
-    if not cat_codes or not approved_sellers or not {"CATEGORY_CODE", "BRAND", "SELLER_NAME"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    d = data.copy()
-    d["_cat"]      = d["CATEGORY_CODE"].apply(clean_category_code)
-    d["_brand_l"]  = d["BRAND"].astype(str).str.strip().str.lower()
-    d["_seller_l"] = d["SELLER_NAME"].astype(str).str.strip().str.lower()
-    in_scope = d[d["_cat"].isin(cat_codes) & (d["_brand_l"] == "hp")].copy()
-    if in_scope.empty: return pd.DataFrame(columns=data.columns)
-    flagged = in_scope[~in_scope["_seller_l"].isin(approved_sellers)].copy()
-    if not flagged.empty: flagged["Comment_Detail"] = "Seller not authorised for HP Ink/Toners: " + flagged["SELLER_NAME"].astype(str)
-    return flagged[[c for c in data.columns if c in flagged.columns] + ["Comment_Detail"]].drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_apple(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    approved_sellers = ng_rules.get("apple", {}).get("sellers", set())
-    if not approved_sellers or not {"BRAND", "SELLER_NAME"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    apple = data[data["BRAND"].astype(str).str.strip().str.lower() == "apple"].copy()
-    if apple.empty: return pd.DataFrame(columns=data.columns)
-    flagged = apple[~apple["SELLER_NAME"].astype(str).str.strip().str.lower().isin(approved_sellers)].copy()
-    if not flagged.empty: flagged["Comment_Detail"] = "Seller not authorised to sell Apple products: " + flagged["SELLER_NAME"].astype(str)
-    return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_xmas_tree(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    rules            = ng_rules.get("xmas_tree", {})
-    approved_sellers = rules.get("sellers", set())
-    keywords         = rules.get("keywords", set())
-    if not approved_sellers or not keywords or not {"NAME", "SELLER_NAME"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    kw_pattern = re.compile(r"(?<!\w)(" + "|".join(re.escape(k) for k in sorted(keywords, key=len, reverse=True)) + r")(?!\w)", re.IGNORECASE)
-    in_scope = data[data["NAME"].astype(str).str.contains(kw_pattern, na=False)].copy()
-    if in_scope.empty: return pd.DataFrame(columns=data.columns)
-    flagged = in_scope[~in_scope["SELLER_NAME"].astype(str).str.strip().str.lower().isin(approved_sellers)].copy()
-    if not flagged.empty:
-        def _comment(row):
-            m = kw_pattern.search(str(row["NAME"]))
-            kw = m.group(0) if m else "?"
-            return f"Seller not authorised for Xmas Tree products (keyword '{kw}'): {row['SELLER_NAME']}"
-        flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
-    return flagged.drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_rice(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    rice_rules = ng_rules.get("rice", {})
-    if not rice_rules or not {"BRAND", "SELLER_NAME", "CATEGORY_CODE"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    d = data.copy()
-    d["_brand_l"]  = d["BRAND"].astype(str).str.strip().str.lower()
-    d["_seller_l"] = d["SELLER_NAME"].astype(str).str.strip().str.lower()
-    d["_cat"]      = d["CATEGORY_CODE"].apply(clean_category_code)
-    chunks = []
-    for brand_lower, rules in rice_rules.items():
-        approved  = rules.get("sellers", set())
-        cat_codes = rules.get("category_codes", set())
-        brand_rows = d[d["_brand_l"] == brand_lower].copy()
-        if brand_rows.empty: continue
-        if cat_codes: brand_rows = brand_rows[brand_rows["_cat"].isin(cat_codes)]
-        if brand_rows.empty: continue
-        bad = brand_rows[~brand_rows["_seller_l"].isin(approved)].copy()
-        if not bad.empty:
-            bad["Comment_Detail"] = f"Seller not authorised to sell {brand_lower.title()} rice: " + bad["SELLER_NAME"].astype(str)
-            chunks.append(bad)
-    if not chunks: return pd.DataFrame(columns=data.columns)
-    return pd.concat(chunks).drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_nigeria_powerbanks(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame:
-    pb_rules       = ng_rules.get("powerbanks", {})
-    allowed_brands = pb_rules.get("brands", set())
-    cat_codes      = pb_rules.get("category_codes", set())
-    MIN_MAH        = 20_000
-    if not allowed_brands or not {"CATEGORY_CODE", "NAME", "BRAND"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    _mah_pat = re.compile(r'\b(\d[\d,]*)\s*mah\b', re.IGNORECASE)
-    def _exceeds_threshold(name: str) -> bool:
-        for m in _mah_pat.finditer(str(name)):
-            try:
-                val = int(m.group(1).replace(',', ''))
-                if val >= MIN_MAH: return True
-            except ValueError: pass
-        return False
-    d = data.copy()
-    d["_cat"]      = d["CATEGORY_CODE"].apply(clean_category_code)
-    d["_name"]     = d["NAME"].astype(str)
-    d["_brand_l"]  = d["BRAND"].astype(str).str.strip().str.lower()
-    in_scope = d[d["_cat"].isin(cat_codes)].copy() if cat_codes else d.copy()
-    if in_scope.empty: return pd.DataFrame(columns=data.columns)
-    high_cap = in_scope[in_scope["_name"].apply(_exceeds_threshold)].copy()
-    if high_cap.empty: return pd.DataFrame(columns=data.columns)
-    flagged = high_cap[~high_cap["_brand_l"].isin(allowed_brands)].copy()
-    if not flagged.empty:
-        def _comment(row):
-            m = _mah_pat.search(row["_name"])
-            mah_str = m.group(0) if m else ">=20,000mAh"
-            return f"Brand '{row['BRAND']}' not approved for {mah_str} powerbanks. Approved: {', '.join(b.title() for b in sorted(allowed_brands))}"
-        flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
-    return flagged[[c for c in data.columns if c in flagged.columns] + ["Comment_Detail"]].drop_duplicates(subset=["PRODUCT_SET_SID"])
-
-def check_morocco_prohibited_brands(data: pd.DataFrame, ma_rules: Dict) -> pd.DataFrame:
-    """
-    Flags products whose brand (or name) matches a Morocco brand
-    that has ZERO authorised vendors — nobody is allowed to sell it.
-    """
-    prohibited = ma_rules.get("prohibited_brands", set())
-    if not prohibited or not {"BRAND", "NAME"}.issubset(data.columns):
-        return pd.DataFrame(columns=data.columns)
-
-    d = data.copy()
-    d["_brand_l"] = d["BRAND"].astype(str).str.strip().str.lower()
-    d["_name_l"]  = d["NAME"].astype(str).str.lower()
-
-    sorted_brands = sorted(prohibited, key=len, reverse=True)
-    pattern = re.compile(
-        r"(?<!\w)(" + "|".join(re.escape(b) for b in sorted_brands) + r")(?!\w)",
-        re.IGNORECASE,
-    )
-
-    brand_match = d["_brand_l"].isin(prohibited)
-    name_match  = (~brand_match) & d["_name_l"].str.contains(pattern, na=False)
-    flagged     = d[brand_match | name_match].copy()
-
-    if not flagged.empty:
-        def _comment(row):
-            if row["_brand_l"] in prohibited:
-                return f"Marque interdite : {row['BRAND']}"
-            m = pattern.search(row["_name_l"])
-            kw = m.group(0).title() if m else row["BRAND"]
-            return f"Marque interdite détectée dans le nom : {kw}"
-        flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
-
-    return (
-        flagged
-        .drop(columns=["_brand_l", "_name_l"], errors="ignore")
-        .drop_duplicates(subset=["PRODUCT_SET_SID"])
-    )
 
 if _reg is not None:
     _reg.REGISTRY.update({
@@ -2147,8 +1703,6 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     if country_validator.code == "MA":
         _ma = load_morocco_qc_rules()
 
-        # Override the restricted-brands rules for MA — use Morocco_rules.xlsx
-        # instead of whatever was loaded from Restricted_Brands.xlsx for MA.
         validations = [
             (name, func, kwargs) for name, func, kwargs in validations
             if name != "Restricted brands"
@@ -2159,8 +1713,6 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             {"country_rules": _ma["restricted"]},
         ))
 
-        # Override prohibited-products keywords for MA — use Morocco_rules.xlsx
-        # keywords sheet instead of Prohibbited.xlsx MA tab.
         ma_prohibited_rules = [
             {"keyword": kw, "categories": set()}
             for kw in _ma["prohibited_keywords"]
@@ -2175,7 +1727,6 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             {"prohibited_rules": ma_prohibited_rules},
         ))
 
-        # Add the fully-prohibited brands check (no vendors at all)
         validations.append((
             "MA - Marque Interdite",
             check_morocco_prohibited_brands,
@@ -2334,7 +1885,6 @@ def prepare_full_data_merged(data_df, final_report_df):
         d_cp['PRODUCT_SET_SID'] = d_cp['PRODUCT_SET_SID'].astype(str).str.strip()
         r_cp['ProductSetSid'] = r_cp['ProductSetSid'].astype(str).str.strip()
         
-        # Build full category path column
         _code_to_path = st.session_state.get('support_files', {}).get('code_to_path', {})
         if _code_to_path and 'CATEGORY_CODE' in d_cp.columns:
             d_cp['FULL_CATEGORY_PATH'] = d_cp['CATEGORY_CODE'].apply(
