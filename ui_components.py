@@ -1,9 +1,17 @@
+"""
+ui_components.py - All Streamlit UI rendering components, dialogs, and the image grid
+"""
+
 import re
 import json
 import logging
+import concurrent.futures
 import pandas as pd
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
+import base64
+from PIL import Image
 
 from constants import JUMIA_COLORS, GRID_COLS
 from data_utils import clean_category_code, df_hash, format_local_price
@@ -11,16 +19,9 @@ from export_utils import generate_smart_export, prepare_full_data_merged
 
 logger = logging.getLogger(__name__)
 
-# Inline SVG placeholder — no external HTTP dependency
-_NO_IMAGE_SVG = (
-    "data:image/svg+xml;utf8,"
-    "<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'>"
-    "<rect width='150' height='150' fill='%23f0f0f0'/>"
-    "<text x='75' y='75' text-anchor='middle' dominant-baseline='central' "
-    "font-size='12' font-family='sans-serif' fill='%23999'>No Image</text>"
-    "</svg>"
-)
-
+# 🚀 FIX: Convert to Base64 to make it 100% immune to HTML escaping bugs
+_SVG_RAW = "<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><rect width='150' height='150' fill='#f0f0f0'/><text x='75' y='75' text-anchor='middle' dominant-baseline='central' font-size='12' font-family='sans-serif' fill='#999'>No Image</text></svg>"
+_NO_IMAGE_SVG = f"data:image/svg+xml;base64,{base64.b64encode(_SVG_RAW.encode('utf-8')).decode('utf-8')}"
 
 def _t(key):
     from translations import get_translation
@@ -298,7 +299,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
     """
     Build the image grid HTML.
-    - page_warnings: pass {} — image quality checks now run in JS via onload/onerror
+    - page_warnings: pass {} — image quality checks now run natively in JS via onload/onerror
     - prefetch_urls: optional list of image URLs to prefetch for the next pages
     """
     O = JUMIA_COLORS["primary_orange"]
@@ -313,7 +314,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
-        # Normalise to HTTPS; blank stays blank — JS supplies the SVG placeholder
         img_url = img_url.replace("http://", "https://", 1)
         if not img_url.startswith("https"):
             img_url = ""
@@ -336,8 +336,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         })
 
     cards_json = json.dumps(cards_data)
-
-    # Inline SVG data URI — zero external HTTP dependency
     no_img_svg = _NO_IMAGE_SVG
 
     return f"""<!DOCTYPE html>
@@ -359,13 +357,12 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-  /* ── Image wrapper with skeleton shimmer ── */
+  /* 🚀 FIX: Removed opacity:0 from .card-img so it defaults visible even if scripts stall */
   .card-img-wrap{{position:relative;cursor:pointer;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;}}
   .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;border-radius:6px;}}
   .card-img-wrap.img-loaded::before{{display:none;}}
   @keyframes shimmer{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
-  .card-img{{width:100%;height:180px;object-fit:contain;border-radius:6px;display:block;position:relative;z-index:2;opacity:0;transition:opacity .25s ease,transform .2s ease-out,box-shadow .2s ease-out;}}
-  .card-img.img-loaded{{opacity:1;}}
+  .card-img{{width:100%;height:180px;object-fit:contain;border-radius:6px;display:block;position:relative;z-index:2;transition:transform .2s ease-out,box-shadow .2s ease-out;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
   .card-img.locally-zoomed{{transform:scale(2.3);box-shadow:0 15px 50px rgba(0,0,0,0.6);border:2px solid {O};background:#fff;position:relative;z-index:9999;border-radius:8px;}}
   .zoom-btn{{position:absolute;bottom:6px;left:6px;width:28px;height:28px;background:rgba(255,255,255,0.95);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3);z-index:10000;font-size:14px;}}
@@ -417,7 +414,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// ── Data ──────────────────────────────────────────────────────────────────────
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 
 var CARDS    = {cards_json};
@@ -430,7 +426,6 @@ window._stagedRejections = window._stagedRejections || {{}};
 var selected = window._gridSelected;
 var staged   = window._stagedRejections;
 
-// ── Bridge (Streamlit ↔ JS) ───────────────────────────────────────────────────
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
@@ -454,9 +449,8 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
-// ── Client-side image quality check (replaces server HTTP downloads) ──────────
+// 🚀 FIX: Error handling rewritten to completely avoid infinite loops
 function onImgLoad(img, sid) {{
-  img.classList.add('img-loaded');
   var wrap = img.closest('.card-img-wrap');
   if (wrap) wrap.classList.add('img-loaded');
 
@@ -472,8 +466,8 @@ function onImgLoad(img, sid) {{
 }}
 
 function onImgError(img, sid) {{
+  img.onerror = null; // Instantly kill the error handler to prevent infinite loops
   img.src = NO_IMAGE;
-  img.classList.add('img-loaded');
   var wrap = img.closest('.card-img-wrap');
   if (wrap) wrap.classList.add('img-loaded');
   addWarnings(sid, ['Broken Image']);
@@ -490,14 +484,16 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
-// ── Card rendering ────────────────────────────────────────────────────────────
 function renderCard(card) {{
   var sid = card.sid;
   var isCommitted = sid in COMMITTED;
   var isStaged    = sid in staged;
   var isSelected  = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
-  var imgSrc = card.img || NO_IMAGE;
+  
+  // Only escape if it's a real image, else bypass escapeHtml for the SVG base64
+  var safeImgSrc = card.img ? escapeHtml(card.img) : NO_IMAGE;
+
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + '…' : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(function(w) {{
     return '<span class="warn-badge">' + escapeHtml(w) + '</span>';
@@ -507,6 +503,7 @@ function renderCard(card) {{
     + '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
     + '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>';
   var overlayHtml = '', actHtml = '';
+  
   if (isCommitted) {{
     overlayHtml = '<div class="rej-overlay">'
       + '<div class="rej-badge">{rejected_label}</div>'
@@ -532,12 +529,14 @@ function renderCard(card) {{
       + '<option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option>'
       + '</select></div>';
   }}
+  
+  // 🚀 FIX: Removed loading="lazy" to guarantee onload triggers inside iframes
   return '<div class="' + cls + '" id="card-' + sid + '">'
     + '<div class="card-img-wrap" onclick="window.toggleSelect(\'' + sid + '\',event)">'
     + priceHtml
     + '<div class="warn-wrap">' + warnHtml + '</div>'
-    + '<img class="card-img" loading="lazy" decoding="async"'
-    + ' src="' + escapeHtml(imgSrc) + '"'
+    + '<img class="card-img" decoding="async"'
+    + ' src="' + safeImgSrc + '"'
     + ' onload="onImgLoad(this,\'' + sid + '\')"'
     + ' onerror="onImgError(this,\'' + sid + '\')">'
     + zoomHtml
@@ -554,7 +553,6 @@ function renderCard(card) {{
     + '</div>';
 }}
 
-// ── Grid management ───────────────────────────────────────────────────────────
 function updateSelCount() {{
   document.getElementById('sel-count-bar').textContent =
     (Object.keys(selected).length + Object.keys(staged).length) + ' {_t("items_pending")}';
@@ -746,7 +744,7 @@ def render_image_grid(support_files):
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
 
-    # ── No server-side image downloading — JS handles quality checks ──────────
+    # ── No server-side image downloading — JS handles quality checks natively ──
     page_warnings = {}
 
     # ── Prefetch URLs for next 2 pages ────────────────────────────────────────
@@ -777,15 +775,16 @@ def render_image_grid(support_files):
         f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
         f"_r{len(rejected_state)}"
     )
+    
     if _grid_cache_key not in st.session_state:
         cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
         st.session_state[_grid_cache_key] = build_fast_grid_html(
-            page_data,
-            support_files["flags_mapping"],
-            st.session_state.get('selected_country', 'Kenya'),
-            page_warnings,
-            rejected_state,
-            cols_per_row,
+            page_data=page_data,
+            flags_mapping=support_files.get("flags_mapping", {}),
+            country=st.session_state.get('selected_country', 'Kenya'),
+            page_warnings=page_warnings,
+            rejected_state=rejected_state,
+            cols_per_row=cols_per_row,
             prefetch_urls=prefetch_urls,
         )
 
@@ -801,7 +800,7 @@ def render_image_grid(support_files):
     if st.session_state.get("do_scroll_top", False):
         components.html(
             "<script>window.parent.document.querySelector('.main')"
-            ".scrollTo({{top:0,behavior:'smooth'}});</script>",
+            ".scrollTo({top:0,behavior:'smooth'});</script>",
             height=0,
         )
         st.session_state.do_scroll_top = False
