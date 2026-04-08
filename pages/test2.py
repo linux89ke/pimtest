@@ -1,3 +1,7 @@
+"""
+main.py - Main Streamlit Application Entry Point
+"""
+
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -22,20 +26,17 @@ import base64
 from translations import LANGUAGES, get_translation
 
 # ── NEW MODULAR IMPORTS ───────────────────────────────────────────────────────
-from constants import JUMIA_COLORS, PARQUET_CACHE_DIR, FLAG_CACHE_DIR
+from constants import JUMIA_COLORS, PARQUET_CACHE_DIR, FLAG_CACHE_DIR, REASON_MAP, GRID_COLS
 from data_utils import (
     clean_category_code, df_hash, standardize_input_data, validate_input_schema, 
     filter_by_country, propagate_metadata, create_match_key, normalize_text,
     _detect_and_read_csv, _repair_mojibake
 )
 from loaders import load_support_files_lazy, compile_regex_patterns
-from ui_components import (
-    render_image_grid, render_exports_section, render_flag_expander, 
-    REASON_MAP, restore_single_item
-)
+from ui_components import render_image_grid, render_exports_section, render_flag_expander
 
 from nigeria_rules import (
-    check_nigeria_gift_card, check_nigeria_books,
+    load_nigeria_qc_rules, check_nigeria_gift_card, check_nigeria_books,
     check_nigeria_tvs, check_nigeria_hp_toners, check_nigeria_apple,
     check_nigeria_xmas_tree, check_nigeria_rice, check_nigeria_powerbanks
 )
@@ -115,7 +116,6 @@ def load_df_parquet(filename):
         try: return pd.read_parquet(path)
         except Exception as e: logger.warning(f"Failed to load parquet {filename}: {e}")
     return None
-
 
 class CountryValidator:
     COUNTRY_CONFIG = {
@@ -558,7 +558,6 @@ def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[
         r"|\d+\s*(?:\xc2\xb5g|\xce\xbcg|\xb5g|\u00b5g|\u03bcg|mcg|µg|μg)",
         re.IGNORECASE
     )
-    # Optimized: Vectorized search instead of .apply
     return target[~target['_name_lower'].str.contains(pat, na=False)].drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_codes: List[str]) -> pd.DataFrame:
@@ -570,7 +569,6 @@ def check_incomplete_smartphone_name(data: pd.DataFrame, smartphone_category_cod
     if not flagged.empty: flagged['Comment_Detail'] = "Name missing Storage/Memory spec (e.g., 64GB)"
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
-# OPTIMIZED: Highly vectorized duplicate product checker
 def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = None, similarity_threshold: float = 0.70, known_colors: List[str] = None, **kwargs) -> pd.DataFrame:
     if not {'NAME', 'SELLER_NAME', 'BRAND'}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
     d = data.copy()
@@ -578,7 +576,6 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
         d = d[~d['_cat_clean'].isin(set(clean_category_code(c) for c in exempt_categories))]
     if d.empty: return pd.DataFrame(columns=data.columns)
 
-    # 🚀 VECTORIZED FAST-CLEANING 🚀
     d['_norm_name'] = d['NAME'].astype(str).str.lower()
     d['_norm_name'] = d['_norm_name'].str.replace(r'\b(new|sale|original|genuine|authentic|official|premium|quality|best|hot|2024|2025)\b', '', regex=True)
     d['_norm_name'] = d['_norm_name'].str.replace(r'[^\w\s]', '', regex=True)
@@ -609,13 +606,53 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 
+if _reg is not None:
+    _reg.REGISTRY.update({
+        'check_restricted_brands':           check_restricted_brands,
+        'check_suspected_fake_products':     check_suspected_fake_products,
+        'check_refurb_seller_approval':      check_refurb_seller_approval,
+        'check_product_warranty':            check_product_warranty,
+        'check_seller_approved_for_books':   check_seller_approved_for_books,
+        'check_seller_approved_for_perfume': check_seller_approved_for_perfume,
+        'check_perfume_tester':              check_perfume_tester,
+        'check_counterfeit_sneakers':        check_counterfeit_sneakers,
+        'check_counterfeit_jerseys':         check_counterfeit_jerseys,
+        'check_prohibited_products':         check_prohibited_products,
+        'check_unnecessary_words':           check_unnecessary_words,
+        'check_single_word_name':            check_single_word_name,
+        'check_generic_brand_issues':        check_generic_brand_issues,
+        'check_fashion_brand_issues':        check_fashion_brand_issues,
+        'check_brand_in_name':               check_brand_in_name,
+        'check_wrong_variation':             check_wrong_variation,
+        'check_generic_with_brand_in_name':  check_generic_with_brand_in_name,
+        'check_missing_color':               check_missing_color,
+        'check_weight_volume_in_name':       check_weight_volume_in_name,
+        'check_incomplete_smartphone_name':  check_incomplete_smartphone_name,
+        'check_duplicate_products':          check_duplicate_products,
+        'check_miscellaneous_category':      check_miscellaneous_category,
+        'check_wrong_price':                 check_wrong_price,
+        'check_category_max_price':          check_category_max_price,
+        'compile_regex_patterns':            compile_regex_patterns,
+        'check_nigeria_gift_card':           check_nigeria_gift_card,
+        'check_nigeria_books':               check_nigeria_books,
+        'check_nigeria_tvs':                 check_nigeria_tvs,
+        'check_nigeria_hp_toners':           check_nigeria_hp_toners,
+        'check_nigeria_apple':               check_nigeria_apple,
+        'check_nigeria_xmas_tree':           check_nigeria_xmas_tree,
+        'check_nigeria_rice':                check_nigeria_rice,
+        'check_nigeria_powerbanks':          check_nigeria_powerbanks,
+        'load_nigeria_qc_rules':             load_nigeria_qc_rules,
+        'check_morocco_prohibited_brands':   check_morocco_prohibited_brands,
+        'load_morocco_qc_rules':             load_morocco_qc_rules,
+    })
+
 # -------------------------------------------------
 # MASTER VALIDATION RUNNER
 # -------------------------------------------------
 def validate_products(data: pd.DataFrame, support_files: Dict, country_validator: CountryValidator, data_has_warranty_cols: bool, common_sids: Optional[set] = None, skip_validators: Optional[List[str]] = None):
     data['PRODUCT_SET_SID'] = data['PRODUCT_SET_SID'].astype(str).str.strip()
     
-    # 🚀 MASSIVE PERFORMANCE BOOST: Pre-calculate string lowers & category code extraction ONCE
+    # Pre-calculate optimized lower-cased columns for speed
     data['_name_lower'] = data['NAME'].astype(str).str.lower().fillna('')
     data['_brand_lower'] = data['BRAND'].astype(str).str.lower().str.strip().fillna('')
     data['_seller_lower'] = data['SELLER_NAME'].astype(str).str.lower().str.strip().fillna('')
@@ -629,7 +666,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     validations = [
         ("Wrong Category", check_miscellaneous_category, {
             'categories_list': support_files.get('categories_names_list', []),
-            'compiled_rules': support_files.get('compiled_json_rules', {}),
+            'compiled_rules': st.session_state.get('compiled_json_rules', {}),
             'cat_path_to_code': support_files.get('cat_path_to_code', {}),
             'code_to_path': support_files.get('code_to_path', {}),
         }),
@@ -676,10 +713,11 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
 
     if country_validator.code == "MA":
         _ma = load_morocco_qc_rules()
-        validations = [v for v in validations if v[0] != "Restricted brands"]
-        validations.insert(1, ("Restricted brands", check_restricted_brands, {"country_rules": _ma["restricted"]}))
 
-        ma_prohibited_rules = [{"keyword": kw, "categories": set()} for kw in _ma["prohibited_keywords"]]
+        validations = [v for v in validations if v[0] != "Restricted brands"]
+        validations.insert(1, ("Restricted brands", check_restricted_brands, {"country_rules": _ma.get("restricted", [])}))
+
+        ma_prohibited_rules = [{"keyword": kw, "categories": set()} for kw in _ma.get("prohibited_keywords", [])]
         validations = [v for v in validations if v[0] != "Prohibited products"]
         validations.append(("Prohibited products", check_prohibited_products, {"prohibited_rules": ma_prohibited_rules}))
 
@@ -784,7 +822,6 @@ def cached_validate_products(data_hash: str, _data: pd.DataFrame, _support_files
 # APP INITIALIZATION & UI
 # ==========================================
 
-# Initialize Session States
 if 'layout_mode' not in st.session_state: st.session_state.layout_mode = "wide"
 if 'ui_lang' not in st.session_state: st.session_state.ui_lang = "en"
 if 'final_report' not in st.session_state: st.session_state.final_report = pd.DataFrame()
@@ -1057,6 +1094,13 @@ if st.session_state.get('last_processed_files') != process_signature:
                 st.code(traceback.format_exc())
                 st.session_state.last_processed_files = "error"
 
+def restore_single_item(sid):
+    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
+    st.session_state.pop(f"quick_rej_{sid}", None)
+    st.session_state.pop(f"quick_rej_reason_{sid}", None)
+    st.session_state.exports_cache.clear()
+    st.session_state.display_df_cache.clear()
+    st.session_state.main_toasts.append("Restored item to previous state!")
 
 # -------------------------------------------------
 # JTBRIDGE (HTML GRID MESSAGE HANDLER)
@@ -1116,7 +1160,6 @@ if _bridge_val:
     except Exception as _e:
         logger.error(f"Bridge parse error: {_e}")
 
-
 # ==========================================
 # RESULTS SECTION
 # ==========================================
@@ -1155,7 +1198,6 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
         for title in rej_df['FLAG'].unique():
             df_flagged = rej_df[rej_df['FLAG'] == title]
             with st.expander(f"{title} ({len(df_flagged)})", key=f"exp_{title}"):
-                # IMPORTANT: Pass `cached_validate_products` down so ui_components.py doesn't have to import it
                 render_flag_expander(title, df_flagged, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator, cached_validate_products)
     else:
         st.success("All products passed validation — no rejections found.")
