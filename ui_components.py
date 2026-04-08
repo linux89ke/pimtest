@@ -419,7 +419,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// Keep escapeHtml strictly for non-URL text to prevent HTML injection
+// 🚀 FIX: Keep escapeHtml strictly for non-URL text to prevent HTML injection
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 
 var CARDS    = {cards_json};
@@ -490,77 +490,78 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
+// 🚀 FIX: Javascript HTML injection rewritten to use double-quotes exclusively, escaping properly
 function renderCard(card) {{
   var sid = card.sid;
-  var safeSid = sid.replace(/'/g, "\\\\'");
+  var safeSid = sid.replace(/"/g, "\\\"");
   
   var isCommitted = sid in COMMITTED;
   var isStaged    = sid in staged;
   var isSelected  = !isCommitted && !isStaged && (sid in selected);
-  var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
+  var cls = "card" + (isCommitted ? " committed-rej" : isStaged ? " staged-rej" : isSelected ? " selected" : "");
   
-  // 🚀 FIX: Do NOT escape URL ampersands or query strings! Just escape quotes to avoid breaking HTML.
-  var safeImgSrc = card.img ? card.img.replace(/"/g, '&quot;') : NO_IMAGE;
+  // 🚀 FIX: DO NOT escapeURL ampersands or query strings! Just URL-encode quotes to avoid breaking HTML attributes.
+  var safeImgSrc = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : NO_IMAGE;
 
-  var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + '…' : escapeHtml(card.name);
+  var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + "…" : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(function(w) {{
-    return '<span class="warn-badge">' + escapeHtml(w) + '</span>';
-  }}).join('');
-  var priceHtml = card.price ? '<div class="price-badge">' + escapeHtml(card.price) + '</div>' : '';
+    return "<span class='warn-badge'>" + escapeHtml(w) + "</span>";
+  }}).join("");
+  var priceHtml = card.price ? "<div class='price-badge'>" + escapeHtml(card.price) + "</div>" : "";
   
-  var zoomHtml = '<div class="zoom-btn" onclick="event.stopPropagation();window.toggleZoom(\\'' + safeSid + '\\')">'
-    + '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
-    + '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>';
+  var zoomHtml = "<div class='zoom-btn' onclick='event.stopPropagation();window.toggleZoom(\\"" + safeSid + "\\")'>"
+    + "<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'>"
+    + "<circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg></div>";
     
-  var overlayHtml = '', actHtml = '';
+  var overlayHtml = "", actHtml = "";
   
   if (isCommitted) {{
-    overlayHtml = '<div class="rej-overlay">'
-      + '<div class="rej-badge">' + escapeHtml(LABELS.rejected) + '</div>'
-      + '<div class="rej-label">' + escapeHtml((COMMITTED[sid] || '').replace(/_/g, ' ')) + '</div>'
-      + '<button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\\'' + safeSid + '\\')">' + escapeHtml(LABELS.undo) + '</button>'
-      + '</div>';
+    overlayHtml = "<div class='rej-overlay'>"
+      + "<div class='rej-badge'>" + escapeHtml(LABELS.rejected) + "</div>"
+      + "<div class='rej-label'>" + escapeHtml((COMMITTED[sid] || "").replace(/_/g, " ")) + "</div>"
+      + "<button class='undo-btn' onclick='event.stopPropagation();window.undoReject(\\"" + safeSid + "\\")'>" + escapeHtml(LABELS.undo) + "</button>"
+      + "</div>";
   }} else if (isStaged) {{
-    overlayHtml = '<div class="rej-overlay staged">'
-      + '<div class="rej-badge pending">PENDING</div>'
-      + '<div class="rej-label">' + escapeHtml((staged[sid] || '').replace(/_/g, ' ')) + '</div>'
-      + '<button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\\'' + safeSid + '\\')">' + escapeHtml(LABELS.clear_sel) + '</button>'
-      + '</div>';
+    overlayHtml = "<div class='rej-overlay staged'>"
+      + "<div class='rej-badge pending'>PENDING</div>"
+      + "<div class='rej-label'>" + escapeHtml((staged[sid] || "").replace(/_/g, " ")) + "</div>"
+      + "<button class='undo-btn' onclick='event.stopPropagation();window.clearStaged(\\"" + safeSid + "\\")'>" + escapeHtml(LABELS.clear_sel) + "</button>"
+      + "</div>";
   }} else {{
-    actHtml = '<div class="acts">'
-      + '<button class="act-btn" onclick="event.stopPropagation();window.stageReject(\\'' + safeSid + '\\',\\'REJECT_POOR_IMAGE\\')">' + escapeHtml(LABELS.poor_img) + '</button>'
-      + '<select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\\'' + safeSid + '\\',this.value);this.value=\\'\\'}}">'
-      + '<option value="">' + escapeHtml(LABELS.more_options) + '</option>'
-      + '<option value="REJECT_WRONG_CAT">' + escapeHtml(LABELS.wrong_cat) + '</option>'
-      + '<option value="REJECT_FAKE">' + escapeHtml(LABELS.fake_prod) + '</option>'
-      + '<option value="REJECT_BRAND">' + escapeHtml(LABELS.restr_brand) + '</option>'
-      + '<option value="REJECT_PROHIBITED">' + escapeHtml(LABELS.prohibited) + '</option>'
-      + '<option value="REJECT_COLOR">' + escapeHtml(LABELS.missing_color) + '</option>'
-      + '<option value="REJECT_WRONG_BRAND">' + escapeHtml(LABELS.wrong_brand) + '</option>'
-      + '</select></div>';
+    actHtml = "<div class='acts'>"
+      + "<button class='act-btn' onclick='event.stopPropagation();window.stageReject(\\"" + safeSid + "\\",\"REJECT_POOR_IMAGE\")'>" + escapeHtml(LABELS.poor_img) + "</button>"
+      + "<select class='act-more' onchange='if(this.value){{event.stopPropagation();window.stageReject(\\"" + safeSid + "\\",this.value);this.value=\"\";}}'>"
+      + "<option value=''>" + escapeHtml(LABELS.more_options) + "</option>"
+      + "<option value='REJECT_WRONG_CAT'>" + escapeHtml(LABELS.wrong_cat) + "</option>"
+      + "<option value='REJECT_FAKE'>" + escapeHtml(LABELS.fake_prod) + "</option>"
+      + "<option value='REJECT_BRAND'>" + escapeHtml(LABELS.restr_brand) + "</option>"
+      + "<option value='REJECT_PROHIBITED'>" + escapeHtml(LABELS.prohibited) + "</option>"
+      + "<option value='REJECT_COLOR'>" + escapeHtml(LABELS.missing_color) + "</option>"
+      + "<option value='REJECT_WRONG_BRAND'>" + escapeHtml(LABELS.wrong_brand) + "</option>"
+      + "</select></div>";
   }}
   
-  // 🚀 FIX: Added referrerpolicy="no-referrer" to the img tag directly!
-  return '<div class="' + cls + '" id="card-' + escapeHtml(sid) + '">'
-    + '<div class="card-img-wrap" onclick="window.toggleSelect(\\'' + safeSid + '\\',event)">'
+  // 🚀 FIX: Added referrerpolicy='no-referrer' to bypass CDN Hotlink protections
+  return "<div class='" + cls + "' id='card-" + escapeHtml(sid) + "'>"
+    + "<div class='card-img-wrap' onclick='window.toggleSelect(\\"" + safeSid + "\\",event)'>"
     + priceHtml
-    + '<div class="warn-wrap">' + warnHtml + '</div>'
-    + '<img class="card-img" decoding="async" referrerpolicy="no-referrer"'
-    + ' src="' + safeImgSrc + '"'
-    + ' onload="onImgLoad(this,\\'' + safeSid + '\\')"'
-    + ' onerror="onImgError(this,\\'' + safeSid + '\\')">'
+    + "<div class='warn-wrap'>" + warnHtml + "</div>"
+    + "<img class='card-img' decoding='async' referrerpolicy='no-referrer'"
+    + " src='" + safeImgSrc + "'"
+    + " onload='onImgLoad(this,\"" + safeSid + "\")'"
+    + " onerror='onImgError(this,\"" + safeSid + "\")'>"
     + zoomHtml
     + overlayHtml
-    + '<div class="tick">&#10003;</div>'
-    + '</div>'
-    + '<div class="meta">'
-    + '<div class="nm" title="' + escapeHtml(card.name) + '">' + shortName + '</div>'
-    + '<div class="br">' + escapeHtml(card.brand) + '</div>'
-    + '<div class="ct">' + escapeHtml(card.cat) + '</div>'
-    + '<div class="sl">' + escapeHtml(card.seller) + '</div>'
-    + '</div>'
+    + "<div class='tick'>&#10003;</div>"
+    + "</div>"
+    + "<div class='meta'>"
+    + "<div class='nm' title='" + escapeHtml(card.name) + "'>" + shortName + "</div>"
+    + "<div class='br'>" + escapeHtml(card.brand) + "</div>"
+    + "<div class='ct'>" + escapeHtml(card.cat) + "</div>"
+    + "<div class='sl'>" + escapeHtml(card.seller) + "</div>"
+    + "</div>"
     + actHtml
-    + '</div>';
+    + "</div>";
 }}
 
 function updateSelCount() {{
