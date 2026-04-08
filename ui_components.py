@@ -313,7 +313,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     }
     labels_json = json.dumps(labels_dict)
 
-    # Stylish Jumia-branded low-res placeholder SVG
     _PLACEHOLDER_SVG = (
         "data:image/svg+xml;utf8,"
         "<svg xmlns='http://www.w3.org/2000/svg' width='300' height='180' viewBox='0 0 300 180'>"
@@ -398,8 +397,10 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
   
-  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:28px;height:28px;background:rgba(0,0,0,0.65);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .2s;}}
-  .zoom-btn:hover{{background:rgba(0,0,0,0.9);}}
+  /* 🚀 SUBTLE ZOOM BUTTON */
+  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;background:rgba(0,0,0,0.4);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .2s;}}
+  .zoom-btn:hover{{background:rgba(0,0,0,0.7);}}
+  .zoom-btn svg{{width:12px;height:12px;flex-shrink:0;}}
   
   .tick{{position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
   .card.selected .tick{{background:{G};color:#fff;}}
@@ -499,7 +500,7 @@ var LABELS = {labels_json};
 
 window._gridSelected = window._gridSelected || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
-window.currentZoomSid = null; // Track current zoom state for toggle
+window.currentZoomSid = null;
 
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
@@ -580,9 +581,9 @@ function renderCard(card) {{
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
 
-  // Pass event directly so we can calculate coordinates and toggle!
+  // SUBTLE ZOOM ICON
   var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
     </svg></button>`;
@@ -622,16 +623,12 @@ function renderCard(card) {{
   </div>`;
 }}
 
-/* ── Floating Zoom Tooltip Logic with Toggle & Outside Click ── */
 window.showZoom = function(sid, event) {{
   var tooltip = document.getElementById('zoom-tooltip');
-  
-  // TOGGLE: If clicking the same item's icon while it's already open, close it.
   if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
       closeZoom();
       return;
   }}
-
   var card = CARDS.find(c => c.sid === sid);
   if (!card) return;
   var img = document.getElementById('tooltip-img');
@@ -642,10 +639,8 @@ window.showZoom = function(sid, event) {{
   tooltip.style.display = 'block';
   window.currentZoomSid = sid;
 
-  // Dimensions of the tooltip box
   var tw = 360; 
   var th = 360; 
-  
   var x = event.clientX;
   var y = event.clientY;
 
@@ -667,10 +662,8 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
-// Close tooltip when clicking anywhere outside of it
 document.addEventListener('click', function(e) {{
   var tooltip = document.getElementById('zoom-tooltip');
-  // Close if it's visible, the click is NOT inside the tooltip, AND the click is NOT on a zoom button
   if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
     closeZoom();
   }}
