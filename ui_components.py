@@ -206,7 +206,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         "Poor images", "Perfume Tester", "NG - Gift Card Seller", "NG - Books Seller",
         "NG - TV Brand Seller", "NG - HP Toners Seller", "NG - Apple Seller",
         "NG - Xmas Tree Seller", "NG - Rice Brand Seller", "NG - Powerbank Capacity",
-        "Wrong Price", "Category Max Price Exceeded", "Other Reason (Custom)",
+        "Wrong Price", "Category Max Price Exceeded", "Color Mismatch", "Other Reason (Custom)",
     ]
 
     btn_col1, btn_col2 = st.columns(2)
@@ -305,7 +305,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     prefetch_json = json.dumps(prefetch_urls or [])
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
 
-    # 🚀 FIX: We pass ALL translations securely as JSON to avoid JS string crashing 
     labels_dict = {
         "poor_img": _t("poor_img"), "wrong_cat": _t("wrong_cat"),
         "fake_prod": _t("fake_prod"), "restr_brand": _t("restr_brand"),
@@ -420,6 +419,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
+// Keep escapeHtml strictly for non-URL text to prevent HTML injection
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 
 var CARDS    = {cards_json};
@@ -490,7 +490,6 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
-// 🚀 FIX: Properly escaped Javascript HTML injection!
 function renderCard(card) {{
   var sid = card.sid;
   var safeSid = sid.replace(/'/g, "\\\\'");
@@ -500,7 +499,8 @@ function renderCard(card) {{
   var isSelected  = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
   
-  var safeImgSrc = card.img ? escapeHtml(card.img) : NO_IMAGE;
+  // 🚀 FIX: Do NOT escape URL ampersands or query strings! Just escape quotes to avoid breaking HTML.
+  var safeImgSrc = card.img ? card.img.replace(/"/g, '&quot;') : NO_IMAGE;
 
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + '…' : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(function(w) {{
@@ -540,11 +540,12 @@ function renderCard(card) {{
       + '</select></div>';
   }}
   
+  // 🚀 FIX: Added referrerpolicy="no-referrer" to the img tag directly!
   return '<div class="' + cls + '" id="card-' + escapeHtml(sid) + '">'
     + '<div class="card-img-wrap" onclick="window.toggleSelect(\\'' + safeSid + '\\',event)">'
     + priceHtml
     + '<div class="warn-wrap">' + warnHtml + '</div>'
-    + '<img class="card-img" decoding="async"'
+    + '<img class="card-img" decoding="async" referrerpolicy="no-referrer"'
     + ' src="' + safeImgSrc + '"'
     + ' onload="onImgLoad(this,\\'' + safeSid + '\\')"'
     + ' onerror="onImgError(this,\\'' + safeSid + '\\')">'
@@ -644,6 +645,8 @@ window.doDeselAll = function() {{
       try {{ var lnk = document.createElement('link'); lnk.rel='prefetch'; lnk.as='image'; lnk.href=url; document.head.appendChild(lnk); }} catch(e) {{}}
       (function(u) {{
         var img = new Image();
+        // 🚀 FIX: Prevent prefetch errors from breaking images too
+        img.referrerPolicy = "no-referrer";
         img.onload = function() {{
           done++;
           if (status) status.textContent = 'Prefetched ' + done + ' / ' + total + ' next-page images';
@@ -755,7 +758,7 @@ def render_image_grid(support_files):
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
 
-    # No Python-side warning checking needed, Javascript handles it all now!
+    # ── No server-side image downloading — JS handles quality checks natively ──
     page_warnings = {}
 
     # ── Prefetch URLs for next 2 pages ────────────────────────────────────────
@@ -786,15 +789,16 @@ def render_image_grid(support_files):
         f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
         f"_r{len(rejected_state)}"
     )
+    
     if _grid_cache_key not in st.session_state:
         cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
         st.session_state[_grid_cache_key] = build_fast_grid_html(
-            page_data,
-            support_files.get("flags_mapping", {}),
-            st.session_state.get('selected_country', 'Kenya'),
-            page_warnings,
-            rejected_state,
-            cols_per_row,
+            page_data=page_data,
+            flags_mapping=support_files.get("flags_mapping", {}),
+            country=st.session_state.get('selected_country', 'Kenya'),
+            page_warnings=page_warnings,
+            rejected_state=rejected_state,
+            cols_per_row=cols_per_row,
             prefetch_urls=prefetch_urls,
         )
 
