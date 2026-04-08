@@ -293,7 +293,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
-    
+
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
@@ -313,14 +313,17 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     }
     labels_json = json.dumps(labels_dict)
 
-    # 🚀 NEW DESIGN: Whitish-Orange Soft Placeholder with "Loading..."
     _PLACEHOLDER_SVG = (
         "data:image/svg+xml;utf8,"
         "<svg xmlns='http://www.w3.org/2000/svg' width='300' height='180' viewBox='0 0 300 180'>"
-        "<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23FFF8F2'/><stop offset='100%' stop-color='%23FFEFE5'/></linearGradient></defs>"
+        "<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'>"
+        "<stop offset='0%' stop-color='%23FFF8F2'/>"
+        "<stop offset='100%' stop-color='%23FFEFE5'/></linearGradient></defs>"
         "<rect width='300' height='180' rx='12' fill='url(%23g)'/>"
-        "<text x='150' y='80' text-anchor='middle' font-family='sans-serif' font-size='34' font-weight='800' fill='%23FF8800' letter-spacing='-1'>JUMIA</text>"
-        "<text x='150' y='110' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='600' fill='%23FF8800' opacity='0.7'>Loading...</text>"
+        "<text x='150' y='80' text-anchor='middle' font-family='sans-serif' font-size='34' "
+        "font-weight='800' fill='%23FF8800' letter-spacing='-1'>JUMIA</text>"
+        "<text x='150' y='110' text-anchor='middle' font-family='sans-serif' font-size='14' "
+        "font-weight='600' fill='%23FF8800' opacity='0.7'>Loading...</text>"
         "</svg>"
     )
 
@@ -364,17 +367,14 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
-  
+
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
-  
-  /* 🚀 NEW DESIGN: Bigger Green Glow */
   .card.selected{{border-color:{G};box-shadow:0 0 0 5px rgba(76,175,80,.45);background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 4px rgba(231,60,23,.3);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-  
-  /* 🚀 NEW DESIGN: Thin Black Frame around image */
-  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden; border:1px solid #111;}}
+
+  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;border:1px solid #111;}}
   .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#FFF8F2 25%,#FFEFE5 50%,#FFF8F2 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;}}
   .card-img-wrap.img-loaded::before{{display:none;}}
   @keyframes shimmer{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
@@ -382,63 +382,106 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card-img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:2;opacity:0;transition:opacity .4s ease;}}
   .card-img.img-loaded{{opacity:1;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
-  
-  /* Warnings & Badges */
+
   .warn-wrap{{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;z-index:10;pointer-events:none;}}
   .warn-badge{{background:linear-gradient(90deg,#FFC107,#FF9800);color:#313133;font-size:9px;font-weight:800;padding:3px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(255,152,0,.3);animation:pulse 2s infinite;}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.85}}}}
   .price-badge{{position:absolute;top:8px;left:8px;background:rgba(76,175,80,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:9999px;z-index:10;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.2);}}
-  
-  /* Meta text below image */
+
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;word-break:break-word;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;cursor:help;}}
-  
-  /* Bottom actions */
+
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
-  
-  /* 🚀 NEW DESIGN: Zoom button styling (bottom right, dark bg) */
-  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:28px;height:28px;background:rgba(0,0,0,0.65);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;transition:background .2s;}}
-  .zoom-btn:hover{{background:rgba(0,0,0,0.9);}}
-  
+
+  /* ── Zoom button on card image (bottom-right corner) ── */
+  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:26px;height:26px;background:rgba(0,0,0,0.55);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .15s;}}
+  .zoom-btn:hover{{background:rgba(0,0,0,0.82);}}
+  .zoom-btn svg{{width:14px;height:14px;flex-shrink:0;}}
+
   .tick{{position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
   .card.selected .tick{{background:{G};color:#fff;}}
-  
-  /* 🚀 NEW DESIGN: Big Reject Overlays */
+
   .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:8px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:12px;text-align:center;}}
   .card.committed-rej .rej-overlay{{display:flex;}}
-  
-  /* Staged Red Translucent Background */
-  .card.staged-rej .rej-overlay.staged{{display:flex; background:rgba(211,47,47,0.85);}}
-  
-  /* Big White Fonts for staged */
-  .card.staged-rej .rej-badge.pending{{background:transparent; color:#fff; font-size:22px; font-weight:900; padding:0; letter-spacing:1px;}}
-  .card.staged-rej .rej-label{{color:#fff; font-size:13px; font-weight:600; line-height:1.2; max-width:140px;}}
-  
-  /* Standard badge for committed */
+  .card.staged-rej .rej-overlay.staged{{display:flex;background:rgba(211,47,47,0.85);}}
+  .card.staged-rej .rej-badge.pending{{background:transparent;color:#fff;font-size:22px;font-weight:900;padding:0;letter-spacing:1px;}}
+  .card.staged-rej .rej-label{{color:#fff;font-size:13px;font-weight:600;line-height:1.2;max-width:140px;}}
   .card.committed-rej .rej-badge{{background:{R};color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:800;letter-spacing:0.5px;}}
   .card.committed-rej .rej-label{{font-size:12px;color:{R};font-weight:700;max-width:130px;}}
-  
-  /* Undo buttons inside overlay */
   .undo-btn{{margin-top:8px;padding:6px 14px;background:#313133;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:bold;cursor:pointer;}}
   .undo-btn:hover{{background:#000;}}
-  .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
+  .card.staged-rej .undo-btn{{background:#fff;color:#D32F2F;box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
-  
-  /* 🚀 NEW DESIGN: Contained Zoom Modal */
-  #zoom-modal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100000;align-items:center;justify-content:center;transition:opacity .3s ease;}}
-  #zoom-modal.show{{display:flex;}}
-  #zoom-content{{position:relative;width:550px;max-width:92%;max-height:85vh;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5);background:#fff;display:flex;align-items:center;justify-content:center;padding:15px;}}
-  #modal-img{{max-width:100%;max-height:80vh;display:block;object-fit:contain;}}
-  .modal-close{{position:absolute;top:10px;right:10px;width:36px;height:36px;background:rgba(0,0,0,0.1);color:#333;border:none;border-radius:50%;font-size:24px;line-height:1;cursor:pointer;transition:background 0.2s;}}
-  .modal-close:hover{{background:rgba(0,0,0,0.2);}}
-  
+
+  /* ── Zoom panel — sticky inline card, NOT a fullscreen overlay ── */
+  #zoom-panel{{
+    display:none;
+    position:sticky;
+    bottom:12px;
+    z-index:9999;
+    margin:14px 0 2px;
+    border:1px solid #ddd;
+    border-radius:12px;
+    background:#fff;
+    box-shadow:0 6px 24px rgba(0,0,0,0.12);
+    overflow:hidden;
+  }}
+  #zoom-panel.show{{display:block;}}
+  #zoom-panel-inner{{display:flex;align-items:stretch;position:relative;min-height:190px;}}
+  #zoom-img-col{{
+    flex:0 0 220px;
+    max-width:220px;
+    background:#f8f8f8;
+    border-right:1px solid #efefef;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:12px;
+  }}
+  #modal-img{{
+    max-width:196px;
+    max-height:200px;
+    display:block;
+    object-fit:contain;
+    border-radius:6px;
+  }}
+  #zoom-meta-col{{
+    flex:1;
+    padding:14px 40px 14px 16px;
+    min-width:0;
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+  }}
+  #zoom-meta-brand{{font-size:12px;font-weight:700;color:{O};}}
+  #zoom-meta-name{{font-size:13px;font-weight:700;color:#1a1a1a;line-height:1.4;word-break:break-word;}}
+  #zoom-meta-price{{font-size:13px;font-weight:800;color:#2a9d2a;margin-top:2px;}}
+  #zoom-meta-cat{{font-size:11px;color:#777;word-break:break-word;margin-top:2px;}}
+  #zoom-meta-sid{{font-size:10px;color:#bbb;font-family:monospace;margin-top:4px;}}
+  #zoom-meta-seller{{
+    font-size:11px;color:#aaa;
+    border-top:1px dashed #eee;
+    padding-top:8px;margin-top:auto;
+  }}
+  .zoom-close-btn{{
+    position:absolute;top:8px;right:8px;
+    width:26px;height:26px;
+    background:#f0f0f0;color:#666;
+    border:none;border-radius:50%;
+    font-size:16px;line-height:1;
+    cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    z-index:10;
+  }}
+  .zoom-close-btn:hover{{background:#e0e0e0;color:#222;}}
+
   #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
-  .debug-hud{{position:absolute; inset:0; background:rgba(0,0,0,0.85); color:#0f0; font-family:monospace; font-size:9px; padding:5px; display:none; word-break:break-all; z-index:100;}}
+  .debug-hud{{position:absolute;inset:0;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:9px;padding:5px;display:none;word-break:break-all;z-index:100;}}
 </style>
 </head>
 <body>
@@ -458,15 +501,27 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
 </div>
 <div class="grid" id="card-grid"></div>
-<div id="prefetch-status"></div>
-<div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
-<div id="zoom-modal" onclick="if(event.target.id==='zoom-modal')closeZoom()">
-  <div id="zoom-content" onclick="event.stopImmediatePropagation()">
-    <img id="modal-img" alt="Zoomed product" referrerpolicy="no-referrer">
-    <button class="modal-close" onclick="closeZoom()">×</button>
+<!-- Zoom panel: sticky inline card that appears below the grid, no fullscreen overlay -->
+<div id="zoom-panel">
+  <div id="zoom-panel-inner">
+    <div id="zoom-img-col">
+      <img id="modal-img" alt="Zoomed product image" referrerpolicy="no-referrer">
+    </div>
+    <div id="zoom-meta-col">
+      <div id="zoom-meta-brand"></div>
+      <div id="zoom-meta-name"></div>
+      <div id="zoom-meta-price"></div>
+      <div id="zoom-meta-cat"></div>
+      <div id="zoom-meta-sid"></div>
+      <div id="zoom-meta-seller"></div>
+    </div>
+    <button class="zoom-close-btn" onclick="closeZoom()" title="Close">×</button>
   </div>
 </div>
+
+<div id="prefetch-status"></div>
+<div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
@@ -526,7 +581,6 @@ function onImgError(img, sid) {{
   img.src = PLACEHOLDER;
   img.classList.add('img-loaded');
   addWarnings(sid, ['Broken Image']);
-  
   var debugDiv = document.getElementById('debug-' + escapeHtml(sid));
   if (debugDiv) {{
       debugDiv.style.display = 'block';
@@ -552,43 +606,42 @@ function renderCard(card) {{
   var isStaged = sid in staged;
   var isSelected = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
-  
+
   var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
-  var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '…' : escapeHtml(card.name);
+  var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '\u2026' : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
-  
-  // 🚀 NEW DESIGN: Zoom icon in bottom right
-  var zoomHtml = `<div class="zoom-btn" onclick="event.stopPropagation();showZoom(\\'${{safeSid}}\\')">
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
-    </svg></div>`;
+
+  var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}')" title="Preview">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+    </svg></button>`;
 
   var overlayHtml = '', actHtml = '';
   if (isCommitted) {{
-    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{escapeHtml(LABELS.rejected)}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\\'${{safeSid}}\\')">${{escapeHtml(LABELS.undo)}}</button></div>`;
+    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{escapeHtml(LABELS.rejected)}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{safeSid}}')">${{escapeHtml(LABELS.undo)}}</button></div>`;
   }} else if (isStaged) {{
-    // 🚀 NEW DESIGN: White pending reasons with "REJECTED" header
     overlayHtml = `<div class="rej-overlay staged">
       <div class="rej-badge pending">${{escapeHtml(LABELS.rejected)}}</div>
       <div class="rej-label">Pending reason:<br>${{escapeHtml((staged[sid]||'').replace(/_/g,' '))}}</div>
-      <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\\'${{safeSid}}\\')">${{escapeHtml(LABELS.clear_sel)}}</button>
-      </div>`;
+      <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{safeSid}}')">${{escapeHtml(LABELS.clear_sel)}}</button>
+    </div>`;
   }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject(\\'${{safeSid}}\\',\\'REJECT_POOR_IMAGE\\')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\\'${{safeSid}}\\',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option></select></div>`;
+    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option></select></div>`;
   }}
 
   return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
-    <div class="card-img-wrap" onclick="window.toggleSelect(\\'${{safeSid}}\\',event)">
+    <div class="card-img-wrap" onclick="window.toggleSelect('${{safeSid}}',event)">
       ${{priceHtml}}
       <div class="warn-wrap">${{warnHtml}}</div>
       <div id="debug-${{escapeHtml(sid)}}" class="debug-hud"></div>
       <img class="card-img-placeholder" src="${{PLACEHOLDER}}" alt="">
-      <img class="card-img" decoding="async" src="${{safeImgSrcForHtml}}" referrerpolicy="no-referrer" 
-           onload="onImgLoad(this,\\'${{safeSid}}\\')" onerror="onImgError(this,\\'${{safeSid}}\\')">
+      <img class="card-img" decoding="async" src="${{safeImgSrcForHtml}}" referrerpolicy="no-referrer"
+           onload="onImgLoad(this,'${{safeSid}}')" onerror="onImgError(this,'${{safeSid}}')">
       ${{zoomHtml}}
       ${{overlayHtml}}
-      <div class="tick">✔</div>
+      <div class="tick">\u2714</div>
     </div>
     <div class="meta">
       <div class="nm" title="${{escapeHtml(card.name)}}">${{shortName}}</div>
@@ -600,28 +653,37 @@ function renderCard(card) {{
   </div>`;
 }}
 
+/* ── Zoom panel: no fullscreen, just a sticky card that scrolls into view ── */
 window.showZoom = function(sid) {{
   var card = CARDS.find(c => c.sid === sid);
   if (!card) return;
-  var modal = document.getElementById('zoom-modal');
-  var img = document.getElementById('modal-img');
+  var panel = document.getElementById('zoom-panel');
+  var img   = document.getElementById('modal-img');
   img.src = card.img || PLACEHOLDER;
-  modal.classList.add('show');
+  img.onerror = function() {{ img.src = PLACEHOLDER; img.onerror = null; }};
+  document.getElementById('zoom-meta-brand').textContent  = card.brand  || '';
+  document.getElementById('zoom-meta-name').textContent   = card.name   || '';
+  document.getElementById('zoom-meta-price').textContent  = card.price  || '';
+  document.getElementById('zoom-meta-cat').textContent    = card.cat    || '';
+  document.getElementById('zoom-meta-sid').textContent    = 'SID: ' + sid;
+  document.getElementById('zoom-meta-seller').textContent = card.seller || '';
+  panel.classList.add('show');
+  panel.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
 }};
 window.closeZoom = function() {{
-  document.getElementById('zoom-modal').classList.remove('show');
+  document.getElementById('zoom-panel').classList.remove('show');
 }};
 
 function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
-function replaceCard(sid) {{ 
+function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
   var card = CARDS.find(c => c.sid === sid);
   if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
 }}
 window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
-window.toggleSelect = function(sid, e) {{ 
+window.toggleSelect = function(sid, e) {{
   if (sid in COMMITTED) return;
   if (sid in staged) delete staged[sid];
   else if (sid in selected) delete selected[sid];
@@ -648,8 +710,7 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
   var i = 0, total = PREFETCH_URLS.length, done = 0;
   var runner = window.requestIdleCallback || function(fn){{setTimeout(fn,300);}};
   function prefetchBatch() {{
-    var limit = 4;
-    var processed = 0;
+    var limit = 4, processed = 0;
     while (i < total && processed < limit) {{
       var url = PREFETCH_URLS[i++]; processed++;
       var img = new Image();
