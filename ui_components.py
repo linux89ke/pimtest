@@ -360,7 +360,9 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <meta name="referrer" content="no-referrer">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
-  body{{background:#f5f5f5;padding:8px;}}
+  /* 🚀 FIX: Massive bottom padding so the iframe can scroll past the last row without cutting off tooltips */
+  body{{background:#f5f5f5;padding:8px; padding-bottom: 250px;}}
+  
   .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;}}
@@ -422,10 +424,10 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
   
-  /* ── Floating Tooltip ── */
+  /* 🚀 FIX: Absolute positioning to follow scroll height perfectly */
   #zoom-tooltip {{
     display: none;
-    position: fixed;
+    position: absolute; 
     z-index: 100000;
     background: #fff;
     padding: 10px;
@@ -493,31 +495,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// 🚀 ULTIMATE STREAMLIT DIALOG LOCK
-// This captures all clicks at the highest DOM level and kills them 
-// if they hit the Streamlit modal's gray backdrop.
-try {{
-  var par = window.parent.document;
-  if (!par.window.__stModalLocked) {{
-    par.window.__stModalLocked = true;
-    
-    function blockOutsideClicks(e) {{
-      var dialog = par.querySelector('[data-testid="stDialog"]');
-      // If the dialog exists, and the user clicked outside the white dialog box
-      if (dialog && !dialog.contains(e.target)) {{
-        e.stopPropagation();
-        e.preventDefault();
-      }}
-    }}
-    
-    // Listen in the CAPTURE phase (the 'true' parameter) to stop the event before Streamlit sees it
-    par.addEventListener('mousedown', blockOutsideClicks, true);
-    par.addEventListener('mouseup', blockOutsideClicks, true);
-    par.addEventListener('click', blockOutsideClicks, true);
-  }}
-}} catch(e) {{ console.error("Could not lock dialog", e); }}
-
-
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
@@ -549,45 +526,6 @@ function sendMsg(type, payload) {{
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     setTimeout(() => {{ bridge.blur(); bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}})); }}, 150);
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
-}}
-
-function updateParentPagination() {{
-  var pending = Object.keys(selected).length + Object.keys(staged).length;
-  try {{
-    var par = window.parent.document;
-    
-    var buttons = par.querySelectorAll('button');
-    buttons.forEach(b => {{
-      var txt = b.innerText || "";
-      if (txt.includes('Prev Page') || txt.includes('Next Page')) {{
-        if (pending > 0) {{
-          b.style.pointerEvents = 'none';
-          b.style.opacity = '0.3';
-          b.title = "Confirm or clear your selections before navigating.";
-        }} else {{
-          b.style.pointerEvents = 'auto';
-          b.style.opacity = '1';
-          b.title = "";
-        }}
-      }}
-    }});
-    
-    var inputs = par.querySelectorAll('input[type="number"]');
-    inputs.forEach(inp => {{
-      var wrapper = inp.closest('div[data-testid="stNumberInput"]');
-      if (wrapper && wrapper.innerText.includes('Jump to Page')) {{
-        if (pending > 0) {{
-          wrapper.style.pointerEvents = 'none';
-          wrapper.style.opacity = '0.3';
-          wrapper.title = "Confirm or clear your selections before navigating.";
-        }} else {{
-          wrapper.style.pointerEvents = 'auto';
-          wrapper.style.opacity = '1';
-          wrapper.title = "";
-        }}
-      }}
-    }});
-  }} catch(e) {{}}
 }}
 
 function onImgLoad(img, sid) {{
@@ -688,6 +626,7 @@ function renderCard(card) {{
   </div>`;
 }}
 
+/* 🚀 FIX: Tooltip uses absolute positioning based on document scroll! */
 window.showZoom = function(sid, event) {{
   var tooltip = document.getElementById('zoom-tooltip');
   if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
@@ -706,17 +645,18 @@ window.showZoom = function(sid, event) {{
 
   var tw = 360; 
   var th = 360; 
-  var x = event.clientX;
-  var y = event.clientY;
+  // pageX/pageY considers how far the user has scrolled down
+  var x = event.pageX; 
+  var y = event.pageY; 
 
   var left = x + 15;
-  if (left + tw > window.innerWidth) {{
+  if (left + tw > document.body.scrollWidth) {{
       left = x - tw - 15;
   }}
 
   var top = y - (th / 2);
   if (top < 10) top = 10;
-  if (top + th > window.innerHeight) top = window.innerHeight - th - 10;
+  if (top + th > document.body.scrollHeight) top = document.body.scrollHeight - th - 10;
 
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
@@ -729,7 +669,6 @@ window.closeZoom = function() {{
 
 function updateSelCount() {{ 
   document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
-  updateParentPagination();
 }}
 
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
@@ -900,7 +839,7 @@ def visual_review_modal(support_files):
     )
 
     n_rows       = -(-len(page_data) // cols_per_row)
-    grid_height  = min(n_rows * 320 + 140, 800)
+    grid_height  = min(n_rows * 320 + 200, 850) # 🚀 FIX: Taller height buffer to allow scrolling easily to the bottom
 
     components.html(grid_html, height=grid_height, scrolling=True)
 
