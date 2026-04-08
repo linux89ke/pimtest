@@ -526,13 +526,11 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
-// 🚀 Lock pagination natively in the parent Streamlit DOM when items are pending
 function updateParentPagination() {{
   var pending = Object.keys(selected).length + Object.keys(staged).length;
   try {{
     var par = window.parent.document;
     
-    // Disable prev/next buttons
     var buttons = par.querySelectorAll('button');
     buttons.forEach(b => {{
       var txt = b.innerText || "";
@@ -549,7 +547,6 @@ function updateParentPagination() {{
       }}
     }});
     
-    // Disable the Jump to Page input
     var inputs = par.querySelectorAll('input[type="number"]');
     inputs.forEach(inp => {{
       var wrapper = inp.closest('div[data-testid="stNumberInput"]');
@@ -705,9 +702,16 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
+document.addEventListener('click', function(e) {{
+  var tooltip = document.getElementById('zoom-tooltip');
+  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
+    closeZoom();
+  }}
+}});
+
 function updateSelCount() {{ 
   document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
-  updateParentPagination(); // Trigger pagination lock check
+  updateParentPagination();
 }}
 
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
@@ -880,8 +884,7 @@ def visual_review_modal(support_files):
     n_rows       = -(-len(page_data) // cols_per_row)
     grid_height  = min(n_rows * 320 + 140, 800)
 
-    # 🚀 FIX: Using modern st.iframe instead of components.html
-    st.iframe(html=grid_html, height=grid_height, scrolling=True)
+    components.html(grid_html, height=grid_height, scrolling=True)
 
 @st.fragment
 def render_image_grid(support_files):
