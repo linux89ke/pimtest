@@ -31,7 +31,7 @@ def _clear_flag_df_selection(title: str):
     if f"df_{title}" in st.session_state:
         del st.session_state[f"df_{title}"]
 
-@st.dialog("Confirm Bulk Approval")
+@st.dialog("Confirm Bulk Approval", icon=":material/check_circle:")
 def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check,
                         support_files, country_validator, validation_runner):
     try:
@@ -140,9 +140,10 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     else:
         df_display = st.session_state.display_df_cache[cache_key]
 
-    c1, c2 = st.columns(2)
+    # 🚀 2026 UX: Adjusted column gaps and added input icons
+    c1, c2 = st.columns(2, gap="large")
     with c1:
-        search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", key=f"s_{title}")
+        search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", icon=":material/search:", key=f"s_{title}")
     with c2:
         seller_filter = st.multiselect(
             "Filter by Seller",
@@ -217,7 +218,9 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                 support_files, country_validator, validation_runner)
 
     with btn_col2:
-        with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection):
+        # 🚀 2026 UX: Programmatic Popover control via key
+        popover_key = f"popover_rej_{title}"
+        with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection, key=popover_key):
             chosen_reason = st.selectbox(
                 "Reason", _reason_options,
                 key=f"rej_reason_dd_{title}", label_visibility="collapsed"
@@ -242,6 +245,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
+                    st.session_state[popover_key] = False # Close popover
                     st.rerun()
             else:
                 _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
@@ -289,6 +293,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
+                    st.session_state[popover_key] = False # Close popover
                     st.rerun()
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
@@ -660,6 +665,13 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
+document.addEventListener('click', function(e) {{
+  var tooltip = document.getElementById('zoom-tooltip');
+  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
+    closeZoom();
+  }}
+}});
+
 function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
 function replaceCard(sid) {{
@@ -716,7 +728,7 @@ renderAll();
 </body>
 </html>"""
 
-@st.dialog("🔍 Visual Review Mode", width="large")
+@st.dialog("Visual Review Mode", width="large", icon=":material/pageview:")
 def visual_review_modal(support_files):
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
@@ -727,11 +739,14 @@ def visual_review_modal(support_files):
     }
     valid_grid_df = fr[(fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))]
 
-    c1, c2, c3 = st.columns([1.5, 1.5, 2])
+    # 🚀 2026 UX: gap="large" added for spacing
+    c1, c2, c3 = st.columns([1.5, 1.5, 2], gap="large")
     with c1:
-        search_n = st.text_input("Search by Name", placeholder="Product name…")
+        # 🚀 2026 UX: Native Search Icon
+        search_n = st.text_input("Search by Name", placeholder="Product name…", icon=":material/search:")
     with c2:
-        search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
+        # 🚀 2026 UX: Native Store Icon
+        search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…", icon=":material/store:")
     with c3:
         st.session_state.grid_items_per_page = st.select_slider(
             "Items per page", options=[20, 50, 100, 200],
@@ -773,10 +788,14 @@ def visual_review_modal(support_files):
     if st.session_state.get('grid_page', 0) >= total_pages:
         st.session_state.grid_page = 0
 
-    pg_cols = st.columns([1, 2, 1], vertical_alignment="center")
+    # 🚀 2026 UX: Added gap="small"
+    pg_cols = st.columns([1, 2, 1], vertical_alignment="center", gap="small")
     with pg_cols[0]:
-        if st.button("◀ Prev Page", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
+        # 🚀 2026 UX: Arrow Back Icon positioned on left
+        if st.button("Prev Page", icon=":material/arrow_back:", icon_position="left", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
             st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
+            st.session_state.do_scroll_top = True
+            st.rerun(scope="fragment")
     with pg_cols[1]:
         new_page = st.number_input(
             f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
@@ -785,9 +804,14 @@ def visual_review_modal(support_files):
         )
         if new_page - 1 != st.session_state.grid_page:
             st.session_state.grid_page = new_page - 1
+            st.session_state.do_scroll_top = True
+            st.rerun(scope="fragment")
     with pg_cols[2]:
-        if st.button("Next Page ▶", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
+        # 🚀 2026 UX: Arrow Forward Icon positioned on right
+        if st.button("Next Page", icon=":material/arrow_forward:", icon_position="right", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
             st.session_state.grid_page += 1
+            st.session_state.do_scroll_top = True
+            st.rerun(scope="fragment")
 
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
@@ -837,12 +861,14 @@ def render_image_grid(support_files):
 
     st.markdown("---")
     
-    c1, c2 = st.columns([3, 1])
+    # 🚀 2026 UX: Gap size implemented
+    c1, c2 = st.columns([3, 1], gap="medium")
     with c1:
         st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
         st.caption("Open Focus Mode to rapidly visually review and reject products.")
     with c2:
-        if st.button("🔍 Start Visual Review", type="primary", use_container_width=True):
+        # 🚀 2026 UX: Button anchored icon added
+        if st.button("Start Visual Review", type="primary", icon=":material/pageview:", icon_position="left", use_container_width=True):
             visual_review_modal(support_files)
 
 @st.fragment
@@ -915,7 +941,7 @@ def render_exports_section(support_files, country_validator):
                         )
                         if title not in st.session_state.exports_cache:
                             if st.button("Generate", key=f"gen_{title}", type="primary",
-                                         use_container_width=True, icon=":material/download:"):
+                                         use_container_width=True, icon=":material/download:", icon_position="left"):
                                 with st.spinner("Generating all reports…"):
                                     for t2, d2, _, f2 in exports_config:
                                         if t2 not in st.session_state.exports_cache:
