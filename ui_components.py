@@ -1,7 +1,3 @@
-"""
-ui_components.py - All Streamlit UI rendering components, dialogs, and the image grid
-"""
-
 import re
 import json
 import logging
@@ -18,57 +14,31 @@ from export_utils import generate_smart_export, prepare_full_data_merged
 
 logger = logging.getLogger(__name__)
 
-# -------------------------------------------------
-# TRANSLATION HELPER (injected from main)
-# -------------------------------------------------
-
 def _t(key):
     from translations import get_translation
     return get_translation(st.session_state.get('ui_lang', 'en'), key)
 
-
-# -------------------------------------------------
-# IMAGE QUALITY ANALYSIS
-# -------------------------------------------------
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def analyze_image_quality_cached(url: str):
-    if not url or not str(url).startswith("http"):
-        return []
+    if not url or not str(url).startswith("http"): return []
     warnings = []
     try:
         resp = requests.get(url, timeout=1, stream=True)
         if resp.status_code == 200:
             img = Image.open(resp.raw)
             w, h = img.size
-            if w < 300 or h < 300:
-                warnings.append("Low Resolution")
+            if w < 300 or h < 300: warnings.append("Low Resolution")
             ratio = h / w if w > 0 else 1
-            if ratio > 1.5:
-                warnings.append("Tall (Screenshot?)")
-            elif ratio < 0.6:
-                warnings.append("Wide Aspect")
-    except Exception:
-        pass
+            if ratio > 1.5: warnings.append("Tall (Screenshot?)")
+            elif ratio < 0.6: warnings.append("Wide Aspect")
+    except Exception: pass
     return warnings
 
-
-# -------------------------------------------------
-# HELPER
-# -------------------------------------------------
-
 def _clear_flag_df_selection(title: str):
-    if f"df_{title}" in st.session_state:
-        del st.session_state[f"df_{title}"]
-
-
-# -------------------------------------------------
-# BULK APPROVE DIALOG
-# -------------------------------------------------
+    if f"df_{title}" in st.session_state: del st.session_state[f"df_{title}"]
 
 @st.dialog("Confirm Bulk Approval")
-def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator):
-    from cache_utils import cached_validate_products
+def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator, validation_runner):
     try:
         from category_matcher_engine import get_engine
         _CAT_MATCHER_AVAILABLE = True
@@ -79,7 +49,9 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
     if st.button(_t("approve_btn"), type="primary", use_container_width=True):
         with st.spinner("Processing..."):
             data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
-            new_report, _ = cached_validate_products(
+            
+            # Using the passed validation_runner instead of a circular import
+            new_report, _ = validation_runner(
                 data_hash, subset_data, support_files,
                 country_validator.code, data_has_warranty_cols_check,
                 skip_validators=[title]
@@ -88,20 +60,13 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             for sid in sids_to_process:
                 new_row = new_report[new_report['ProductSetSid'] == sid]
                 if new_row.empty or not str(new_row.iloc[0]['FLAG']):
-                    st.session_state.final_report.loc[
-                        st.session_state.final_report['ProductSetSid'] == sid,
-                        ['Status', 'Reason', 'Comment', 'FLAG']
-                    ] = ['Approved', '', '', 'Approved by User']
+                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
                     msg_approved += 1
                 else:
                     new_flag = str(new_row.iloc[0]['FLAG'])
-                    st.session_state.final_report.loc[
-                        st.session_state.final_report['ProductSetSid'] == sid,
-                        ['Status', 'Reason', 'Comment', 'FLAG']
-                    ] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
+                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
 
-            # Category matcher learning
             if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                 try:
                     engine = get_engine()
@@ -109,11 +74,9 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                         learned = 0
                         for sid in sids_to_process:
                             row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
-                            if row.empty:
-                                continue
+                            if row.empty: continue
                             name = str(row.iloc[0].get('NAME', '')).strip()
-                            if not name:
-                                continue
+                            if not name: continue
                             engine.set_compiled_rules(st.session_state.get('compiled_json_rules', {}))
                             predicted = engine.get_category_with_boost(name)
                             if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
@@ -122,13 +85,10 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                         if learned:
                             engine.save_learning_db()
                             st.session_state.main_toasts.append(f"🧠 Engine learned {learned} correction(s) from your approvals.")
-                except Exception as _le:
-                    logger.warning("Wrong Category approval learning failed: %s", _le)
+                except Exception as _le: logger.warning("Wrong Category approval learning failed: %s", _le)
 
-            if msg_approved > 0:
-                st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
-            for flag, count in msg_moved.items():
-                st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
+            if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
+            for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
 
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
@@ -136,31 +96,22 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             _clear_flag_df_selection(title)
         st.rerun()
 
-
-# -------------------------------------------------
-# FLAG EXPANDER
-# -------------------------------------------------
-
-def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check, support_files, country_validator):
+def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check, support_files, country_validator, validation_runner):
     try:
         from category_matcher_engine import get_engine
         _CAT_MATCHER_AVAILABLE = True
-    except ImportError:
-        _CAT_MATCHER_AVAILABLE = False
+    except ImportError: _CAT_MATCHER_AVAILABLE = False
 
     cache_key = f"display_df_{title}"
-    base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR',
-                         'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
+    base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR', 'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
     current_display_cols = base_display_cols.copy()
     if title == "Wrong Variation":
         for col in ('COUNT_VARIATIONS', 'LIST_VARIATIONS'):
-            if col in data.columns:
-                current_display_cols.append(col)
+            if col in data.columns: current_display_cols.append(col)
 
     if cache_key not in st.session_state.display_df_cache:
         _extra_cols = [c for c in current_display_cols if c in data.columns]
-        if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols:
-            _extra_cols.append('CATEGORY_CODE')
+        if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols: _extra_cols.append('CATEGORY_CODE')
         df_display = pd.merge(
             df_flagged_sids[['ProductSetSid']], data,
             left_on='ProjectSetSid' if 'ProjectSetSid' in df_flagged_sids.columns else 'ProductSetSid',
@@ -169,46 +120,31 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
         _code_to_path = support_files.get('code_to_path', {})
         if _code_to_path and 'CATEGORY_CODE' in df_display.columns:
-            df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(
-                lambda c: _code_to_path.get(str(c).strip(), '') if pd.notna(c) else ''
-            )
+            df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(lambda c: _code_to_path.get(str(c).strip(), '') if pd.notna(c) else '')
             df_display = df_display.drop(columns=['CATEGORY_CODE'])
-
         df_display = df_display[[c for c in current_display_cols if c in df_display.columns]]
         st.session_state.display_df_cache[cache_key] = df_display
-    else:
-        df_display = st.session_state.display_df_cache[cache_key]
+    else: df_display = st.session_state.display_df_cache[cache_key]
 
     c1, c2 = st.columns(2)
-    with c1:
-        search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", key=f"s_{title}")
-    with c2:
-        seller_filter = st.multiselect("Filter by Seller", sorted(df_display['SELLER_NAME'].astype(str).unique()), key=f"f_{title}")
+    with c1: search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", key=f"s_{title}")
+    with c2: seller_filter = st.multiselect("Filter by Seller", sorted(df_display['SELLER_NAME'].astype(str).unique()), key=f"f_{title}")
 
     df_view = df_display.copy()
-    if search_term:
-        df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
-    if seller_filter:
-        df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
+    if search_term: df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
+    if seller_filter: df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
     df_view = df_view.reset_index(drop=True)
 
-    if 'NAME' in df_view.columns:
-        df_view['NAME'] = df_view['NAME'].apply(lambda t: re.sub('<[^<]+?>', '', t) if isinstance(t, str) else t)
-
+    if 'NAME' in df_view.columns: df_view['NAME'] = df_view['NAME'].apply(lambda t: re.sub('<[^<]+?>', '', t) if isinstance(t, str) else t)
     if 'GLOBAL_PRICE' in df_view.columns and 'GLOBAL_SALE_PRICE' in df_view.columns:
         def _local_p(row):
             sp, rp = row.get('GLOBAL_SALE_PRICE'), row.get('GLOBAL_PRICE')
             val = sp if pd.notna(sp) and str(sp).strip() != "" else rp
             return format_local_price(val, country_validator.country)
-        try:
-            loc_idx = df_view.columns.get_loc('GLOBAL_PRICE') + 1
-            df_view.insert(loc_idx, 'Local Price', df_view.apply(_local_p, axis=1))
-        except Exception:
-            df_view['Local Price'] = df_view.apply(_local_p, axis=1)
+        df_view.insert(df_view.columns.get_loc('GLOBAL_PRICE') + 1 if 'GLOBAL_PRICE' in df_view.columns else len(df_view.columns), 'Local Price', df_view.apply(_local_p, axis=1))
 
     event = st.dataframe(
-        df_view, hide_index=True, use_container_width=True,
-        selection_mode="multi-row", on_select="rerun",
+        df_view, hide_index=True, use_container_width=True, selection_mode="multi-row", on_select="rerun",
         column_config={
             "PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True),
             "NAME": st.column_config.TextColumn(pinned=True),
@@ -216,8 +152,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             "GLOBAL_SALE_PRICE": st.column_config.NumberColumn("Sale Price (USD)", format="$%.2f"),
             "GLOBAL_PRICE": st.column_config.NumberColumn("Price (USD)", format="$%.2f"),
             "Local Price": st.column_config.TextColumn(f"Local Price ({country_validator.country})"),
-        },
-        key=f"df_{title}"
+        }, key=f"df_{title}"
     )
     raw_selected = list(event.selection.rows)
     selected_indices = [i for i in raw_selected if i < len(df_view)]
@@ -234,8 +169,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         "Incomplete Smartphone Name", "Duplicate product", "Poor images", "Perfume Tester",
         "NG - Gift Card Seller", "NG - Books Seller", "NG - TV Brand Seller",
         "NG - HP Toners Seller", "NG - Apple Seller", "NG - Xmas Tree Seller",
-        "NG - Rice Brand Seller", "NG - Powerbank Capacity",
-        "Wrong Price", "Category Max Price Exceeded",
+        "NG - Rice Brand Seller", "NG - Powerbank Capacity", "Wrong Price", "Category Max Price Exceeded",
         "Other Reason (Custom)",
     ]
 
@@ -245,7 +179,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
             _clear_flag_df_selection(title)
-            bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator)
+            bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator, validation_runner)
 
     with btn_col2:
         with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection):
@@ -257,10 +191,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                 if st.button("Apply", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     final_comment = custom_comment.strip() if custom_comment.strip() else "Other Reason"
-                    st.session_state.final_report.loc[
-                        st.session_state.final_report['ProductSetSid'].isin(to_reject),
-                        ['Status', 'Reason', 'Comment', 'FLAG']
-                    ] = ['Rejected', '1000007 - Other Reason', final_comment, 'Other Reason (Custom)']
+                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', '1000007 - Other Reason', final_comment, 'Other Reason (Custom)']
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected with custom reason.")
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
@@ -274,28 +205,21 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                 st.caption(f"Code: {_rcode[:40]}...")
                 if st.button("Apply", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
-                    st.session_state.final_report.loc[
-                        st.session_state.final_report['ProductSetSid'].isin(to_reject),
-                        ['Status', 'Reason', 'Comment', 'FLAG']
-                    ] = ['Rejected', _rcode, _rcmt, chosen_reason]
+                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
 
-                    # Wrong Category learning on manual rejection
                     if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
                         try:
                             engine = get_engine()
                             _cats = support_files.get('categories_names_list', [])
                             if engine is not None and _cats:
-                                if not engine._tfidf_built:
-                                    engine.build_tfidf_index(_cats)
+                                if not engine._tfidf_built: engine.build_tfidf_index(_cats)
                                 learned = 0
                                 for sid in to_reject:
                                     prod_row = data[data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
-                                    if prod_row.empty:
-                                        continue
+                                    if prod_row.empty: continue
                                     name = str(prod_row.iloc[0].get('NAME', '')).strip()
-                                    if not name:
-                                        continue
+                                    if not name: continue
                                     engine.set_compiled_rules(st.session_state.get('compiled_json_rules', {}))
                                     predicted = engine.get_category_with_boost(name)
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
@@ -304,8 +228,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                 if learned:
                                     engine.save_learning_db()
                                     st.session_state.main_toasts.append(f"🧠 Engine noted {learned} missed Wrong Category item(s).")
-                        except Exception as _le:
-                            logger.warning("Wrong Category manual rejection learning failed: %s", _le)
+                        except Exception as _le: logger.warning("Wrong Category manual rejection learning failed: %s", _le)
 
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
@@ -313,10 +236,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     _clear_flag_df_selection(title)
                     st.rerun()
 
-
-# -------------------------------------------------
-# IMAGE GRID HTML BUILDER
-# -------------------------------------------------
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejected_state, cols_per_row):
     O = JUMIA_COLORS["primary_orange"]
@@ -330,10 +249,8 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings, rejec
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
-        if img_url.startswith("http://"):
-            img_url = img_url.replace("http://", "https://")
-        if not img_url.startswith("http"):
-            img_url = "https://via.placeholder.com/150?text=No+Image"
+        if img_url.startswith("http://"): img_url = img_url.replace("http://", "https://")
+        if not img_url.startswith("http"): img_url = "https://via.placeholder.com/150?text=No+Image"
         sale_p = row.get("GLOBAL_SALE_PRICE")
         reg_p = row.get("GLOBAL_PRICE")
         usd_val = sale_p if pd.notna(sale_p) and str(sale_p).strip() != "" else reg_p
@@ -479,45 +396,30 @@ renderAll();
 </body>
 </html>"""
 
-
-# -------------------------------------------------
-# IMAGE GRID FRAGMENT
-# -------------------------------------------------
-
 @st.fragment
 def render_image_grid(support_files):
-    if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc":
-        return
+    if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc": return
 
     st.markdown("---")
     st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
 
     fr = st.session_state.final_report
     data = st.session_state.all_data_map
-    committed_rej_sids = {
-        k.replace("quick_rej_", "")
-        for k in st.session_state.keys()
-        if k.startswith("quick_rej_") and "reason" not in k
-    }
-    mask = (fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))
-    valid_grid_df = fr[mask]
+    committed_rej_sids = {k.replace("quick_rej_", "") for k in st.session_state.keys() if k.startswith("quick_rej_") and "reason" not in k}
+    valid_grid_df = fr[(fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))]
 
     c1, c2, c3 = st.columns([1.5, 1.5, 2])
-    with c1:
-        search_n = st.text_input("Search by Name", placeholder="Product name…")
-    with c2:
-        search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
+    with c1: search_n = st.text_input("Search by Name", placeholder="Product name…")
+    with c2: search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
     with c3:
         st.session_state.grid_items_per_page = st.select_slider(
             "Items per page", options=[20, 50, 100, 200],
             value=st.session_state.get('grid_items_per_page', 50),
         )
 
-    if 'MAIN_IMAGE' not in data.columns:
-        data['MAIN_IMAGE'] = ''
+    if 'MAIN_IMAGE' not in data.columns: data['MAIN_IMAGE'] = ''
     available_cols = [c for c in GRID_COLS if c in data.columns]
-    if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
-        available_cols.append('CATEGORY_CODE')
+    if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols: available_cols.append('CATEGORY_CODE')
 
     review_data = pd.merge(
         valid_grid_df[["ProductSetSid"]], data[available_cols],
@@ -526,12 +428,9 @@ def render_image_grid(support_files):
     _code_to_path = support_files.get('code_to_path', {})
     if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
         review_data = review_data.copy()
-        review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(
-            lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ''
-        )
+        review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else '')
 
-    if search_n:
-        review_data = review_data[review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)]
+    if search_n: review_data = review_data[review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)]
     if search_sc:
         mc = review_data["CATEGORY"].astype(str).str.contains(search_sc, case=False, na=False) if "CATEGORY" in review_data.columns else pd.Series(False, index=review_data.index)
         ms = review_data["SELLER_NAME"].astype(str).str.contains(search_sc, case=False, na=False)
@@ -539,8 +438,7 @@ def render_image_grid(support_files):
 
     ipp = st.session_state.get('grid_items_per_page', 50)
     total_pages = max(1, (len(review_data) + ipp - 1) // ipp)
-    if st.session_state.get('grid_page', 0) >= total_pages:
-        st.session_state.grid_page = 0
+    if st.session_state.get('grid_page', 0) >= total_pages: st.session_state.grid_page = 0
 
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center")
     with pg_cols[0]:
@@ -569,44 +467,23 @@ def render_image_grid(support_files):
 
     page_warnings = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        future_to_sid = {
-            ex.submit(analyze_image_quality_cached, str(r.get("MAIN_IMAGE", "")).strip()): str(r["PRODUCT_SET_SID"])
-            for _, r in page_data.iterrows()
-        }
+        future_to_sid = {ex.submit(analyze_image_quality_cached, str(r.get("MAIN_IMAGE", "")).strip()): str(r["PRODUCT_SET_SID"]) for _, r in page_data.iterrows()}
         for future in concurrent.futures.as_completed(future_to_sid):
             warns = future.result()
-            if warns:
-                page_warnings[future_to_sid[future]] = warns
+            if warns: page_warnings[future_to_sid[future]] = warns
 
-    rejected_state = {
-        sid: st.session_state[f"quick_rej_reason_{sid}"]
-        for sid in page_data["PRODUCT_SET_SID"].astype(str)
-        if st.session_state.get(f"quick_rej_{sid}")
-    }
+    rejected_state = {sid: st.session_state[f"quick_rej_reason_{sid}"] for sid in page_data["PRODUCT_SET_SID"].astype(str) if st.session_state.get(f"quick_rej_{sid}")}
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
-    grid_html = build_fast_grid_html(
-        page_data, support_files["flags_mapping"],
-        st.session_state.get('selected_country', 'Kenya'),
-        page_warnings, rejected_state, cols_per_row,
-    )
+    grid_html = build_fast_grid_html(page_data, support_files["flags_mapping"], st.session_state.get('selected_country', 'Kenya'), page_warnings, rejected_state, cols_per_row)
     components.html(grid_html, height=800, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
-        components.html(
-            "<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>",
-            height=0,
-        )
+        components.html("<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>", height=0)
         st.session_state.do_scroll_top = False
-
-
-# -------------------------------------------------
-# EXPORTS FRAGMENT
-# -------------------------------------------------
 
 @st.fragment
 def render_exports_section(support_files, country_validator):
-    if st.session_state.final_report.empty or st.session_state.get('file_mode') == 'post_qc':
-        return
+    if st.session_state.final_report.empty or st.session_state.get('file_mode') == 'post_qc': return
 
     from datetime import datetime
     fr = st.session_state.final_report
