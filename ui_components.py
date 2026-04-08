@@ -19,7 +19,7 @@ from export_utils import generate_smart_export, prepare_full_data_merged
 
 logger = logging.getLogger(__name__)
 
-# 🚀 FIX: Convert to Base64 to make it 100% immune to HTML escaping bugs
+# Inline SVG placeholder — securely encoded to Base64 to prevent HTML injection errors
 _SVG_RAW = "<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><rect width='150' height='150' fill='#f0f0f0'/><text x='75' y='75' text-anchor='middle' dominant-baseline='central' font-size='12' font-family='sans-serif' fill='#999'>No Image</text></svg>"
 _NO_IMAGE_SVG = f"data:image/svg+xml;base64,{base64.b64encode(_SVG_RAW.encode('utf-8')).decode('utf-8')}"
 
@@ -297,18 +297,26 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
-    """
-    Build the image grid HTML.
-    - page_warnings: pass {} — image quality checks now run natively in JS via onload/onerror
-    - prefetch_urls: optional list of image URLs to prefetch for the next pages
-    """
+    
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
     committed_json = json.dumps(rejected_state)
     prefetch_json = json.dumps(prefetch_urls or [])
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
-    rejected_label = str(_t('rejected') or 'REJECTED').upper()
+
+    # 🚀 FIX: We pass ALL translations securely as JSON to avoid JS string crashing 
+    labels_dict = {
+        "poor_img": _t("poor_img"), "wrong_cat": _t("wrong_cat"),
+        "fake_prod": _t("fake_prod"), "restr_brand": _t("restr_brand"),
+        "wrong_brand": _t("wrong_brand"), "prohibited": _t("prohibited"),
+        "missing_color": _t("missing_color"), "more_options": _t("more_options"),
+        "undo": _t("undo"), "clear_sel": _t("clear_sel"),
+        "items_pending": _t("items_pending"), "batch_reject": _t("batch_reject"),
+        "select_all": _t("select_all"), "deselect_all": _t("deselect_all"),
+        "rejected": str(_t('rejected') or 'REJECTED').upper()
+    }
+    labels_json = json.dumps(labels_dict)
 
     cards_data = []
     for _, row in page_data.iterrows():
@@ -331,17 +339,16 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
             "brand": str(row.get("BRAND", "Unknown Brand")),
             "cat": str(row.get("CATEGORY", "Unknown Category")),
             "seller": str(row.get("SELLER_NAME", "Unknown Seller")),
-            "warnings": page_warnings.get(sid, []),
             "price": price_str,
         })
 
     cards_json = json.dumps(cards_data)
-    no_img_svg = _NO_IMAGE_SVG
 
     return f"""<!DOCTYPE html>
 <html dir="{html_dir}">
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
   body{{background:#f5f5f5;padding:8px;}}
@@ -357,7 +364,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-  /* 🚀 FIX: Removed opacity:0 from .card-img so it defaults visible even if scripts stall */
   .card-img-wrap{{position:relative;cursor:pointer;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;}}
   .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;border-radius:6px;}}
   .card-img-wrap.img-loaded::before{{display:none;}}
@@ -419,7 +425,8 @@ function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/
 var CARDS    = {cards_json};
 var COMMITTED= {committed_json};
 var PREFETCH_URLS = {prefetch_json};
-var NO_IMAGE = "{no_img_svg}";
+var LABELS = {labels_json};
+var NO_IMAGE = "{_NO_IMAGE_SVG}";
 
 window._gridSelected     = window._gridSelected     || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
@@ -449,7 +456,6 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
-// 🚀 FIX: Error handling rewritten to completely avoid infinite loops
 function onImgLoad(img, sid) {{
   var wrap = img.closest('.card-img-wrap');
   if (wrap) wrap.classList.add('img-loaded');
@@ -457,20 +463,20 @@ function onImgLoad(img, sid) {{
   var w = img.naturalWidth, h = img.naturalHeight;
   var warns = [];
   if (w > 0 && h > 0) {{
-    if (w < 300 || h < 300) warns.push('Low Resolution');
+    if (w < 300 || h < 300) warns.push('Low Res');
     var ratio = h / w;
-    if (ratio > 1.5) warns.push('Tall (Screenshot?)');
-    else if (ratio < 0.6) warns.push('Wide Aspect');
+    if (ratio > 1.5) warns.push('Tall');
+    else if (ratio < 0.6) warns.push('Wide');
   }}
   if (warns.length) addWarnings(sid, warns);
 }}
 
 function onImgError(img, sid) {{
-  img.onerror = null; // Instantly kill the error handler to prevent infinite loops
+  img.onerror = null; 
   img.src = NO_IMAGE;
   var wrap = img.closest('.card-img-wrap');
   if (wrap) wrap.classList.add('img-loaded');
-  addWarnings(sid, ['Broken Image']);
+  addWarnings(sid, ['Broken Link']);
 }}
 
 function addWarnings(sid, warns) {{
@@ -484,14 +490,16 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
+// 🚀 FIX: Properly escaped Javascript HTML injection!
 function renderCard(card) {{
   var sid = card.sid;
+  var safeSid = sid.replace(/'/g, "\\\\'");
+  
   var isCommitted = sid in COMMITTED;
   var isStaged    = sid in staged;
   var isSelected  = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
   
-  // Only escape if it's a real image, else bypass escapeHtml for the SVG base64
   var safeImgSrc = card.img ? escapeHtml(card.img) : NO_IMAGE;
 
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + '…' : escapeHtml(card.name);
@@ -499,46 +507,47 @@ function renderCard(card) {{
     return '<span class="warn-badge">' + escapeHtml(w) + '</span>';
   }}).join('');
   var priceHtml = card.price ? '<div class="price-badge">' + escapeHtml(card.price) + '</div>' : '';
-  var zoomHtml = '<div class="zoom-btn" onclick="event.stopPropagation();window.toggleZoom(\'' + sid + '\')">'
+  
+  var zoomHtml = '<div class="zoom-btn" onclick="event.stopPropagation();window.toggleZoom(\\'' + safeSid + '\\')">'
     + '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
     + '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>';
+    
   var overlayHtml = '', actHtml = '';
   
   if (isCommitted) {{
     overlayHtml = '<div class="rej-overlay">'
-      + '<div class="rej-badge">{rejected_label}</div>'
+      + '<div class="rej-badge">' + escapeHtml(LABELS.rejected) + '</div>'
       + '<div class="rej-label">' + escapeHtml((COMMITTED[sid] || '').replace(/_/g, ' ')) + '</div>'
-      + '<button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\'' + sid + '\')">{_t('undo')}</button>'
+      + '<button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\\'' + safeSid + '\\')">' + escapeHtml(LABELS.undo) + '</button>'
       + '</div>';
   }} else if (isStaged) {{
     overlayHtml = '<div class="rej-overlay staged">'
       + '<div class="rej-badge pending">PENDING</div>'
       + '<div class="rej-label">' + escapeHtml((staged[sid] || '').replace(/_/g, ' ')) + '</div>'
-      + '<button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\'' + sid + '\')">{_t('clear_sel')}</button>'
+      + '<button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\\'' + safeSid + '\\')">' + escapeHtml(LABELS.clear_sel) + '</button>'
       + '</div>';
   }} else {{
     actHtml = '<div class="acts">'
-      + '<button class="act-btn" onclick="event.stopPropagation();window.stageReject(\'' + sid + '\',\'REJECT_POOR_IMAGE\')">{_t('poor_img')}</button>'
-      + '<select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\'' + sid + '\',this.value);this.value=\'\'}}">'
-      + '<option value="">{_t('more_options')}</option>'
-      + '<option value="REJECT_WRONG_CAT">{_t('wrong_cat')}</option>'
-      + '<option value="REJECT_FAKE">{_t('fake_prod')}</option>'
-      + '<option value="REJECT_BRAND">{_t('restr_brand')}</option>'
-      + '<option value="REJECT_PROHIBITED">{_t('prohibited')}</option>'
-      + '<option value="REJECT_COLOR">{_t('missing_color')}</option>'
-      + '<option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option>'
+      + '<button class="act-btn" onclick="event.stopPropagation();window.stageReject(\\'' + safeSid + '\\',\\'REJECT_POOR_IMAGE\\')">' + escapeHtml(LABELS.poor_img) + '</button>'
+      + '<select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\\'' + safeSid + '\\',this.value);this.value=\\'\\'}}">'
+      + '<option value="">' + escapeHtml(LABELS.more_options) + '</option>'
+      + '<option value="REJECT_WRONG_CAT">' + escapeHtml(LABELS.wrong_cat) + '</option>'
+      + '<option value="REJECT_FAKE">' + escapeHtml(LABELS.fake_prod) + '</option>'
+      + '<option value="REJECT_BRAND">' + escapeHtml(LABELS.restr_brand) + '</option>'
+      + '<option value="REJECT_PROHIBITED">' + escapeHtml(LABELS.prohibited) + '</option>'
+      + '<option value="REJECT_COLOR">' + escapeHtml(LABELS.missing_color) + '</option>'
+      + '<option value="REJECT_WRONG_BRAND">' + escapeHtml(LABELS.wrong_brand) + '</option>'
       + '</select></div>';
   }}
   
-  // 🚀 FIX: Removed loading="lazy" to guarantee onload triggers inside iframes
-  return '<div class="' + cls + '" id="card-' + sid + '">'
-    + '<div class="card-img-wrap" onclick="window.toggleSelect(\'' + sid + '\',event)">'
+  return '<div class="' + cls + '" id="card-' + escapeHtml(sid) + '">'
+    + '<div class="card-img-wrap" onclick="window.toggleSelect(\\'' + safeSid + '\\',event)">'
     + priceHtml
     + '<div class="warn-wrap">' + warnHtml + '</div>'
     + '<img class="card-img" decoding="async"'
     + ' src="' + safeImgSrc + '"'
-    + ' onload="onImgLoad(this,\'' + sid + '\')"'
-    + ' onerror="onImgError(this,\'' + sid + '\')">'
+    + ' onload="onImgLoad(this,\\'' + safeSid + '\\')"'
+    + ' onerror="onImgError(this,\\'' + safeSid + '\\')">'
     + zoomHtml
     + overlayHtml
     + '<div class="tick">&#10003;</div>'
@@ -555,18 +564,21 @@ function renderCard(card) {{
 
 function updateSelCount() {{
   document.getElementById('sel-count-bar').textContent =
-    (Object.keys(selected).length + Object.keys(staged).length) + ' {_t("items_pending")}';
+    (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending;
 }}
+
 function renderAll() {{
   document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join('');
   updateSelCount();
 }}
+
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + sid);
   if (!el) return;
   var card = CARDS.find(function(c) {{ return c.sid === sid; }});
   if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
 }}
+
 window.toggleZoom = function(sid) {{
   var img = document.querySelector('#card-' + sid + ' .card-img');
   if (!img) return;
@@ -616,7 +628,6 @@ window.doDeselAll = function() {{
   renderAll(); updateSelCount();
 }};
 
-// ── Background prefetch (next pages) ─────────────────────────────────────────
 (function() {{
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
   var container = document.getElementById('prefetch-container');
@@ -744,7 +755,7 @@ def render_image_grid(support_files):
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
 
-    # ── No server-side image downloading — JS handles quality checks natively ──
+    # No Python-side warning checking needed, Javascript handles it all now!
     page_warnings = {}
 
     # ── Prefetch URLs for next 2 pages ────────────────────────────────────────
@@ -775,16 +786,15 @@ def render_image_grid(support_files):
         f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
         f"_r{len(rejected_state)}"
     )
-    
     if _grid_cache_key not in st.session_state:
         cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
         st.session_state[_grid_cache_key] = build_fast_grid_html(
-            page_data=page_data,
-            flags_mapping=support_files.get("flags_mapping", {}),
-            country=st.session_state.get('selected_country', 'Kenya'),
-            page_warnings=page_warnings,
-            rejected_state=rejected_state,
-            cols_per_row=cols_per_row,
+            page_data,
+            support_files.get("flags_mapping", {}),
+            st.session_state.get('selected_country', 'Kenya'),
+            page_warnings,
+            rejected_state,
+            cols_per_row,
             prefetch_urls=prefetch_urls,
         )
 
