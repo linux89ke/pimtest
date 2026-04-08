@@ -363,12 +363,18 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   body{{background:#f5f5f5;padding:8px;}}
   
   .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
+  
+  /* 🚀 NEW: Bottom control bar styling */
+  .bottom-bar {{position: relative; border-bottom: none; border-top: 2px solid {O}; margin-top: 16px; margin-bottom: 0; z-index: 10; box-shadow: 0 -4px 16px rgba(0,0,0,0.05);}}
+  
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;}}
   .batch-btn{{padding:7px 14px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:12px;cursor:pointer;}}
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
+  .top-btn {{margin-left: auto; background: #313133; color: white; border-color: #313133; font-weight: bold;}}
+  .top-btn:hover {{background: #000; color: white;}}
   
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
@@ -423,9 +429,10 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
   
+  /* ── Floating Tooltip ── */
   #zoom-tooltip {{
     display: none;
-    position: fixed;
+    position: absolute;
     z-index: 100000;
     background: #fff;
     padding: 10px;
@@ -468,8 +475,8 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 </head>
 <body>
 <div class="ctrl-bar">
-  <span class="sel-count" id="sel-count-bar">0 {_t("items_pending")}</span>
-  <select class="reason-sel" id="batch-reason">
+  <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
+  <select class="reason-sel" id="batch-reason-top">
     <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
     <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
     <option value="REJECT_FAKE">{_t("fake_prod")}</option>
@@ -478,11 +485,29 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
     <option value="REJECT_COLOR">{_t("missing_color")}</option>
   </select>
-  <button class="batch-btn" onclick="doBatchReject()">{_t("batch_reject")}</button>
+  <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
 </div>
+
 <div class="grid" id="card-grid"></div>
+
+<div class="ctrl-bar bottom-bar">
+  <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
+  <select class="reason-sel" id="batch-reason-bottom">
+    <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
+    <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
+    <option value="REJECT_FAKE">{_t("fake_prod")}</option>
+    <option value="REJECT_BRAND">{_t("restr_brand")}</option>
+    <option value="REJECT_WRONG_BRAND">{_t("wrong_brand")}</option>
+    <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
+    <option value="REJECT_COLOR">{_t("missing_color")}</option>
+  </select>
+  <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
+  <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
+  <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
+  <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
+</div>
 
 <div id="zoom-tooltip">
   <img id="tooltip-img" alt="Zoomed product" referrerpolicy="no-referrer">
@@ -524,6 +549,56 @@ function sendMsg(type, payload) {{
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     setTimeout(() => {{ bridge.blur(); bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}})); }}, 150);
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
+}}
+
+// 🚀 Natively scroll the Streamlit dialog back to the top!
+function scrollToTop() {{
+  try {{
+    var dialog = window.parent.document.querySelector('[role="dialog"]');
+    if (dialog) {{
+      var title = dialog.querySelector('h2');
+      if (title) title.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+      else dialog.scrollTo({{top: 0, behavior: 'smooth'}});
+    }}
+  }} catch(e) {{}}
+}}
+
+function updateParentPagination() {{
+  var pending = Object.keys(selected).length + Object.keys(staged).length;
+  try {{
+    var par = window.parent.document;
+    var buttons = par.querySelectorAll('button');
+    buttons.forEach(b => {{
+      var txt = b.innerText || "";
+      if (txt.includes('Prev Page') || txt.includes('Next Page')) {{
+        if (pending > 0) {{
+          b.style.pointerEvents = 'none';
+          b.style.opacity = '0.3';
+          b.title = "Confirm or clear your selections before navigating.";
+        }} else {{
+          b.style.pointerEvents = 'auto';
+          b.style.opacity = '1';
+          b.title = "";
+        }}
+      }}
+    }});
+    
+    var inputs = par.querySelectorAll('input[type="number"]');
+    inputs.forEach(inp => {{
+      var wrapper = inp.closest('div[data-testid="stNumberInput"]');
+      if (wrapper && wrapper.innerText.includes('Jump to Page')) {{
+        if (pending > 0) {{
+          wrapper.style.pointerEvents = 'none';
+          wrapper.style.opacity = '0.3';
+          wrapper.title = "Confirm or clear your selections before navigating.";
+        }} else {{
+          wrapper.style.pointerEvents = 'auto';
+          wrapper.style.opacity = '1';
+          wrapper.title = "";
+        }}
+      }}
+    }});
+  }} catch(e) {{}}
 }}
 
 function onImgLoad(img, sid) {{
@@ -624,7 +699,6 @@ function renderCard(card) {{
   </div>`;
 }}
 
-/* Tooltip uses fixed positioning — stays visible without scroll tricks */
 window.showZoom = function(sid, event) {{
   var tooltip = document.getElementById('zoom-tooltip');
   if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
@@ -641,19 +715,19 @@ window.showZoom = function(sid, event) {{
   tooltip.style.display = 'block';
   window.currentZoomSid = sid;
 
-  var tw = 360;
-  var th = 360;
-  var x = event.clientX;
-  var y = event.clientY;
+  var tw = 360; 
+  var th = 360; 
+  var x = event.pageX; 
+  var y = event.pageY; 
 
   var left = x + 15;
-  if (left + tw > window.innerWidth) {{
+  if (left + tw > document.body.scrollWidth) {{
       left = x - tw - 15;
   }}
 
   var top = y - (th / 2);
   if (top < 10) top = 10;
-  if (top + th > window.innerHeight - 10) top = window.innerHeight - th - 10;
+  if (top + th > document.body.scrollHeight) top = document.body.scrollHeight - th - 10;
 
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
@@ -665,7 +739,9 @@ window.closeZoom = function() {{
 }};
 
 function updateSelCount() {{ 
-  document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
+  var pendingText = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
+  document.querySelectorAll('.sel-count-text').forEach(el => el.textContent = pendingText);
+  updateParentPagination();
 }}
 
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
@@ -686,14 +762,24 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{ sendMsg('undo', {{[sid]: true}}); delete COMMITTED[sid]; replaceCard(sid); updateSelCount(); }};
-window.doBatchReject = function() {{
-  var br = document.getElementById('batch-reason').value, payload = {{}}, count = 0;
+
+// 🚀 Updated to support triggering from Top or Bottom bars
+window.doBatchReject = function(pos) {{
+  var selectId = pos === 'top' ? 'batch-reason-top' : 'batch-reason-bottom';
+  var br = document.getElementById(selectId).value;
+  var payload = {{}}, count = 0;
+  
   for (var s in staged) {{ payload[s] = staged[s]; count++; }}
   for (var s in selected) {{ payload[s] = br; count++; }}
+  
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
-  sendMsg('reject', payload); renderAll(); updateSelCount();
+  
+  sendMsg('reject', payload); 
+  renderAll(); 
+  updateSelCount();
 }};
+
 window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
 
 (function() {{
@@ -723,9 +809,16 @@ renderAll();
 </body>
 </html>"""
 
-# FIX: dismissible=False prevents closing on outside click (only X button closes)
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
+    # 🚀 If user clicked "Next Page", jump to the top automatically
+    if st.session_state.get("do_scroll_top", False):
+        components.html(
+            "<script>try { window.parent.document.querySelector('[role=\"dialog\"] h2').scrollIntoView({behavior:'instant'}); } catch(e) {}</script>",
+            height=0,
+        )
+        st.session_state.do_scroll_top = False
+
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
     committed_rej_sids = {
@@ -781,23 +874,28 @@ def visual_review_modal(support_files):
     if st.session_state.get('grid_page', 0) >= total_pages:
         st.session_state.grid_page = 0
 
+    # 🚀 TOP PAGINATION
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center", gap="small")
     with pg_cols[0]:
-        if st.button("Prev Page", icon=":material/arrow_back:", icon_position="left", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
+        if st.button("Prev Page", key="prev_top", icon=":material/arrow_back:", icon_position="left", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
             st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
+            st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols[1]:
         new_page = st.number_input(
             f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
             min_value=1, max_value=max(1, total_pages),
             value=st.session_state.grid_page + 1, step=1,
+            key="jump_top"
         )
         if new_page - 1 != st.session_state.grid_page:
             st.session_state.grid_page = new_page - 1
+            st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols[2]:
-        if st.button("Next Page", icon=":material/arrow_forward:", icon_position="right", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
+        if st.button("Next Page", key="next_top", icon=":material/arrow_forward:", icon_position="right", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
             st.session_state.grid_page += 1
+            st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
 
     page_start = st.session_state.grid_page * ipp
@@ -836,11 +934,36 @@ def visual_review_modal(support_files):
         prefetch_urls=prefetch_urls,
     )
 
-    # No height cap — iframe expands to fit all cards so the outer page scrolls naturally
-    n_rows      = -(-len(page_data) // cols_per_row)
-    grid_height = n_rows * 340 + 220
+    # Grow height infinitely
+    n_rows = -(-len(page_data) // cols_per_row)
+    grid_height = n_rows * 340 + 200 
 
     components.html(grid_html, height=grid_height, scrolling=False)
+
+    # 🚀 BOTTOM PAGINATION
+    st.markdown("---")
+    pg_cols_bot = st.columns([1, 2, 1], vertical_alignment="center", gap="small")
+    with pg_cols_bot[0]:
+        if st.button("Prev Page", key="prev_bot", icon=":material/arrow_back:", icon_position="left", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
+            st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
+            st.session_state.do_scroll_top = True
+            st.rerun(scope="fragment")
+    with pg_cols_bot[1]:
+        new_page_bot = st.number_input(
+            f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
+            min_value=1, max_value=max(1, total_pages),
+            value=st.session_state.grid_page + 1, step=1,
+            key="jump_bot"
+        )
+        if new_page_bot - 1 != st.session_state.grid_page:
+            st.session_state.grid_page = new_page_bot - 1
+            st.session_state.do_scroll_top = True
+            st.rerun(scope="fragment")
+    with pg_cols_bot[2]:
+        if st.button("Next Page", key="next_bot", icon=":material/arrow_forward:", icon_position="right", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
+            st.session_state.grid_page += 1
+            st.session_state.do_scroll_top = True
+            st.rerun(scope="fragment")
 
 @st.fragment
 def render_image_grid(support_files):
