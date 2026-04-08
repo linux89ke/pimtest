@@ -293,23 +293,13 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
-    """
-    Progressive + Branded Ultra-Fast Grid
-    • Low-res Jumia-branded SVG placeholder
-    • Real image progressive fade-in
-    • Animated gradient warning badges
-    • Hover tooltips (full name + seller)
-    • New smooth floating zoom tooltip beside the card
-    """
+    
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
-
     committed_json = json.dumps(rejected_state)
     prefetch_json = json.dumps(prefetch_urls or [])
-
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
-    rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
     labels_dict = {
         "poor_img": _t("poor_img"), "wrong_cat": _t("wrong_cat"),
@@ -319,17 +309,15 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         "undo": _t("undo"), "clear_sel": _t("clear_sel"),
         "items_pending": _t("items_pending"), "batch_reject": _t("batch_reject"),
         "select_all": _t("select_all"), "deselect_all": _t("deselect_all"),
-        "rejected": rejected_label
+        "rejected": str(_t('rejected') or 'REJECTED').upper()
     }
     labels_json = json.dumps(labels_dict)
 
-    # ── Stylish Jumia-branded low-res placeholder SVG ─────────────────────
+    # Stylish Jumia-branded low-res placeholder SVG
     _PLACEHOLDER_SVG = (
         "data:image/svg+xml;utf8,"
         "<svg xmlns='http://www.w3.org/2000/svg' width='300' height='180' viewBox='0 0 300 180'>"
-        "<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'>"
-        "<stop offset='0%' stop-color='%23FFF8F2'/>"
-        "<stop offset='100%' stop-color='%23FFEFE5'/></linearGradient></defs>"
+        "<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23FFF8F2'/><stop offset='100%' stop-color='%23FFEFE5'/></linearGradient></defs>"
         "<rect width='300' height='180' rx='12' fill='url(%23g)'/>"
         "<text x='150' y='80' text-anchor='middle' font-family='sans-serif' font-size='34' "
         "font-weight='800' fill='%23FF8800' letter-spacing='-1'>JUMIA</text>"
@@ -378,14 +366,15 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
-
+  
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
+  
   .card.selected{{border-color:{G};box-shadow:0 0 0 5px rgba(76,175,80,.45);background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 4px rgba(231,60,23,.3);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-
-  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;border:1px solid #111;}}
+  
+  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden; border:1px solid #111;}}
   .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#FFF8F2 25%,#FFEFE5 50%,#FFF8F2 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;}}
   .card-img-wrap.img-loaded::before{{display:none;}}
   @keyframes shimmer{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
@@ -393,43 +382,44 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card-img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:2;opacity:0;transition:opacity .4s ease;}}
   .card-img.img-loaded{{opacity:1;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
-
+  
   .warn-wrap{{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;z-index:10;pointer-events:none;}}
   .warn-badge{{background:linear-gradient(90deg,#FFC107,#FF9800);color:#313133;font-size:9px;font-weight:800;padding:3px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(255,152,0,.3);animation:pulse 2s infinite;}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.85}}}}
   .price-badge{{position:absolute;top:8px;left:8px;background:rgba(76,175,80,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:9999px;z-index:10;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.2);}}
-
+  
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;word-break:break-word;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;cursor:help;}}
-
+  
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
-
-  /* ── Zoom button on card image (bottom-right corner) ── */
-  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:26px;height:26px;background:rgba(0,0,0,0.55);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .15s;}}
-  .zoom-btn:hover{{background:rgba(0,0,0,0.82);}}
-  .zoom-btn svg{{width:14px;height:14px;flex-shrink:0;}}
-
+  
+  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:28px;height:28px;background:rgba(0,0,0,0.65);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .2s;}}
+  .zoom-btn:hover{{background:rgba(0,0,0,0.9);}}
+  
   .tick{{position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
   .card.selected .tick{{background:{G};color:#fff;}}
-
+  
   .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:8px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:12px;text-align:center;}}
   .card.committed-rej .rej-overlay{{display:flex;}}
-  .card.staged-rej .rej-overlay.staged{{display:flex;background:rgba(211,47,47,0.85);}}
-  .card.staged-rej .rej-badge.pending{{background:transparent;color:#fff;font-size:22px;font-weight:900;padding:0;letter-spacing:1px;}}
-  .card.staged-rej .rej-label{{color:#fff;font-size:13px;font-weight:600;line-height:1.2;max-width:140px;}}
+  
+  .card.staged-rej .rej-overlay.staged{{display:flex; background:rgba(211,47,47,0.85);}}
+  .card.staged-rej .rej-badge.pending{{background:transparent; color:#fff; font-size:22px; font-weight:900; padding:0; letter-spacing:1px;}}
+  .card.staged-rej .rej-label{{color:#fff; font-size:13px; font-weight:600; line-height:1.2; max-width:140px;}}
+  
   .card.committed-rej .rej-badge{{background:{R};color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:800;letter-spacing:0.5px;}}
   .card.committed-rej .rej-label{{font-size:12px;color:{R};font-weight:700;max-width:130px;}}
+  
   .undo-btn{{margin-top:8px;padding:6px 14px;background:#313133;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:bold;cursor:pointer;}}
   .undo-btn:hover{{background:#000;}}
-  .card.staged-rej .undo-btn{{background:#fff;color:#D32F2F;box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
+  .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
-
-  /* ── Floating Tooltip (Beside clicked image) ── */
+  
+  /* ── Floating Tooltip ── */
   #zoom-tooltip {{
     display: none;
     position: fixed;
@@ -509,6 +499,8 @@ var LABELS = {labels_json};
 
 window._gridSelected = window._gridSelected || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
+window.currentZoomSid = null; // Track current zoom state for toggle
+
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
@@ -588,7 +580,7 @@ function renderCard(card) {{
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
 
-  // Pass the event directly so we can calculate coordinates!
+  // Pass event directly so we can calculate coordinates and toggle!
   var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -630,33 +622,38 @@ function renderCard(card) {{
   </div>`;
 }}
 
-/* ── Floating Zoom Tooltip Logic ── */
+/* ── Floating Zoom Tooltip Logic with Toggle & Outside Click ── */
 window.showZoom = function(sid, event) {{
+  var tooltip = document.getElementById('zoom-tooltip');
+  
+  // TOGGLE: If clicking the same item's icon while it's already open, close it.
+  if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
+      closeZoom();
+      return;
+  }}
+
   var card = CARDS.find(c => c.sid === sid);
   if (!card) return;
-  var tooltip = document.getElementById('zoom-tooltip');
   var img = document.getElementById('tooltip-img');
   
   img.src = card.img || PLACEHOLDER;
   img.onerror = function() {{ img.src = PLACEHOLDER; img.onerror = null; }};
   
   tooltip.style.display = 'block';
+  window.currentZoomSid = sid;
 
   // Dimensions of the tooltip box
   var tw = 360; 
   var th = 360; 
   
-  // Mouse click coordinates relative to the viewport
   var x = event.clientX;
   var y = event.clientY;
 
-  // Calculate left: try to place to the right, if blocked, place to the left
   var left = x + 15;
   if (left + tw > window.innerWidth) {{
       left = x - tw - 15;
   }}
 
-  // Calculate top: center vertically on cursor, cap to screen edges
   var top = y - (th / 2);
   if (top < 10) top = 10;
   if (top + th > window.innerHeight) top = window.innerHeight - th - 10;
@@ -667,12 +664,14 @@ window.showZoom = function(sid, event) {{
 
 window.closeZoom = function() {{
   document.getElementById('zoom-tooltip').style.display = 'none';
+  window.currentZoomSid = null;
 }};
 
-// Click anywhere else to close the tooltip
+// Close tooltip when clicking anywhere outside of it
 document.addEventListener('click', function(e) {{
   var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && !tooltip.contains(e.target)) {{
+  // Close if it's visible, the click is NOT inside the tooltip, AND the click is NOT on a zoom button
+  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
     closeZoom();
   }}
 }});
@@ -822,6 +821,7 @@ def render_image_grid(support_files):
 
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
+    page_warnings = {}
 
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
@@ -856,7 +856,7 @@ def render_image_grid(support_files):
             page_data=page_data,
             flags_mapping=support_files.get("flags_mapping", {}),
             country=st.session_state.get('selected_country', 'Kenya'),
-            page_warnings={},
+            page_warnings=page_warnings,
             rejected_state=rejected_state,
             cols_per_row=cols_per_row,
             prefetch_urls=prefetch_urls,
