@@ -19,6 +19,10 @@ from export_utils import generate_smart_export, prepare_full_data_merged
 
 logger = logging.getLogger(__name__)
 
+# Securely encoded Base64 placeholder (No Image fallback)
+_SVG_RAW = "<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><rect width='150' height='150' fill='#f0f0f0'/><text x='75' y='75' text-anchor='middle' dominant-baseline='central' font-size='12' font-family='sans-serif' fill='#999'>No Image</text></svg>"
+_NO_IMAGE_SVG = f"data:image/svg+xml;base64,{base64.b64encode(_SVG_RAW.encode('utf-8')).decode('utf-8')}"
+
 def _t(key):
     from translations import get_translation
     return get_translation(st.session_state.get('ui_lang', 'en'), key)
@@ -289,41 +293,41 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
-    """
-    Progressive + Branded Ultra-Fast Grid
-    • Low-res Jumia-branded SVG placeholder
-    • Real image progressive fade-in
-    • Animated gradient warning badges
-    • Hover tooltips (full name + seller)
-    • New smooth zoom modal with backdrop
-    """
+    
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
-
     committed_json = json.dumps(rejected_state)
     prefetch_json = json.dumps(prefetch_urls or [])
-
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
-    rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
-    # ── Stylish Jumia-branded low-res placeholder SVG ─────────────────────
+    labels_dict = {
+        "poor_img": _t("poor_img"), "wrong_cat": _t("wrong_cat"),
+        "fake_prod": _t("fake_prod"), "restr_brand": _t("restr_brand"),
+        "wrong_brand": _t("wrong_brand"), "prohibited": _t("prohibited"),
+        "missing_color": _t("missing_color"), "more_options": _t("more_options"),
+        "undo": _t("undo"), "clear_sel": _t("clear_sel"),
+        "items_pending": _t("items_pending"), "batch_reject": _t("batch_reject"),
+        "select_all": _t("select_all"), "deselect_all": _t("deselect_all"),
+        "rejected": str(_t('rejected') or 'REJECTED').upper()
+    }
+    labels_json = json.dumps(labels_dict)
+
+    # 🚀 NEW DESIGN: Whitish-Orange Soft Placeholder with "Loading..."
     _PLACEHOLDER_SVG = (
         "data:image/svg+xml;utf8,"
         "<svg xmlns='http://www.w3.org/2000/svg' width='300' height='180' viewBox='0 0 300 180'>"
-        "<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23FF6600'/><stop offset='100%' stop-color='%23FF8800'/></linearGradient></defs>"
+        "<defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23FFF8F2'/><stop offset='100%' stop-color='%23FFEFE5'/></linearGradient></defs>"
         "<rect width='300' height='180' rx='12' fill='url(%23g)'/>"
-        "<text x='150' y='72' text-anchor='middle' font-family='sans-serif' font-size='32' font-weight='700' fill='%23fff' letter-spacing='-1'>JUMIA</text>"
-        "<text x='150' y='108' text-anchor='middle' font-family='sans-serif' font-size='13' fill='%23fff' opacity='0.9'>Loading product image...</text>"
-        "<circle cx='150' cy='145' r='8' fill='%23fff' opacity='0.3'/>"
+        "<text x='150' y='80' text-anchor='middle' font-family='sans-serif' font-size='34' font-weight='800' fill='%23FF8800' letter-spacing='-1'>JUMIA</text>"
+        "<text x='150' y='110' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='600' fill='%23FF8800' opacity='0.7'>Loading...</text>"
         "</svg>"
     )
 
     cards_data = []
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
-        img_url = str(row.get("MAIN_IMAGE", "")).strip()
-        img_url = img_url.replace("http://", "https://", 1)
+        img_url = str(row.get("MAIN_IMAGE", "")).strip().replace("http://", "https://", 1)
         if not img_url.startswith("https"):
             img_url = ""
 
@@ -353,45 +357,88 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
   body{{background:#f5f5f5;padding:8px;}}
-  .ctrl-bar{{position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
+  .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;}}
   .batch-btn{{padding:7px 14px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:12px;cursor:pointer;}}
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
+  
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
-  .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);background:rgba(76,175,80,.04);}}
-  .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2);background:rgba(231,60,23,.04);}}
+  
+  /* 🚀 NEW DESIGN: Bigger Green Glow */
+  .card.selected{{border-color:{G};box-shadow:0 0 0 5px rgba(76,175,80,.45);background:rgba(76,175,80,.04);}}
+  .card.staged-rej{{border-color:{R};box-shadow:0 0 0 4px rgba(231,60,23,.3);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-  .card-img-wrap{{position:relative;cursor:pointer;border-radius:12px;background:#f8f8f8;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;}}
-  .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;border-radius:12px;}}
+  
+  /* 🚀 NEW DESIGN: Thin Black Frame around image */
+  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden; border:1px solid #111;}}
+  .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#FFF8F2 25%,#FFEFE5 50%,#FFF8F2 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;}}
   .card-img-wrap.img-loaded::before{{display:none;}}
   @keyframes shimmer{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
   .card-img-placeholder{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:1;}}
-  .card-img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:12px;z-index:2;opacity:0;transition:opacity .4s ease;}}
+  .card-img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:2;opacity:0;transition:opacity .4s ease;}}
   .card-img.img-loaded{{opacity:1;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
+  
+  /* Warnings & Badges */
   .warn-wrap{{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;z-index:10;pointer-events:none;}}
   .warn-badge{{background:linear-gradient(90deg,#FFC107,#FF9800);color:#313133;font-size:9px;font-weight:800;padding:3px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(255,152,0,.3);animation:pulse 2s infinite;}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.85}}}}
   .price-badge{{position:absolute;top:8px;left:8px;background:rgba(76,175,80,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:9999px;z-index:10;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.2);}}
+  
+  /* Meta text below image */
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;word-break:break-word;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;cursor:help;}}
+  
+  /* Bottom actions */
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
-  #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
-  /* ── Zoom Modal ── */
-  #zoom-modal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:100000;align-items:center;justify-content:center;transition:opacity .3s ease;}}
+  
+  /* 🚀 NEW DESIGN: Zoom button styling (bottom right, dark bg) */
+  .zoom-btn{{position:absolute;bottom:6px;right:6px;width:28px;height:28px;background:rgba(0,0,0,0.65);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;transition:background .2s;}}
+  .zoom-btn:hover{{background:rgba(0,0,0,0.9);}}
+  
+  .tick{{position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
+  .card.selected .tick{{background:{G};color:#fff;}}
+  
+  /* 🚀 NEW DESIGN: Big Reject Overlays */
+  .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:8px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:12px;text-align:center;}}
+  .card.committed-rej .rej-overlay{{display:flex;}}
+  
+  /* Staged Red Translucent Background */
+  .card.staged-rej .rej-overlay.staged{{display:flex; background:rgba(211,47,47,0.85);}}
+  
+  /* Big White Fonts for staged */
+  .card.staged-rej .rej-badge.pending{{background:transparent; color:#fff; font-size:22px; font-weight:900; padding:0; letter-spacing:1px;}}
+  .card.staged-rej .rej-label{{color:#fff; font-size:13px; font-weight:600; line-height:1.2; max-width:140px;}}
+  
+  /* Standard badge for committed */
+  .card.committed-rej .rej-badge{{background:{R};color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:800;letter-spacing:0.5px;}}
+  .card.committed-rej .rej-label{{font-size:12px;color:{R};font-weight:700;max-width:130px;}}
+  
+  /* Undo buttons inside overlay */
+  .undo-btn{{margin-top:8px;padding:6px 14px;background:#313133;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:bold;cursor:pointer;}}
+  .undo-btn:hover{{background:#000;}}
+  .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
+  .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
+  
+  /* 🚀 NEW DESIGN: Contained Zoom Modal */
+  #zoom-modal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100000;align-items:center;justify-content:center;transition:opacity .3s ease;}}
   #zoom-modal.show{{display:flex;}}
-  #zoom-content{{position:relative;max-width:92%;max-height:92vh;border-radius:16px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6);}}
-  #modal-img{{max-width:100%;max-height:92vh;display:block;}}
-  .modal-close{{position:absolute;top:16px;right:16px;width:44px;height:44px;background:#fff;color:#333;border:none;border-radius:50%;font-size:28px;line-height:1;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:10;}}
+  #zoom-content{{position:relative;width:550px;max-width:92%;max-height:85vh;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5);background:#fff;display:flex;align-items:center;justify-content:center;padding:15px;}}
+  #modal-img{{max-width:100%;max-height:80vh;display:block;object-fit:contain;}}
+  .modal-close{{position:absolute;top:10px;right:10px;width:36px;height:36px;background:rgba(0,0,0,0.1);color:#333;border:none;border-radius:50%;font-size:24px;line-height:1;cursor:pointer;transition:background 0.2s;}}
+  .modal-close:hover{{background:rgba(0,0,0,0.2);}}
+  
+  #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
+  .debug-hud{{position:absolute; inset:0; background:rgba(0,0,0,0.85); color:#0f0; font-family:monospace; font-size:9px; padding:5px; display:none; word-break:break-all; z-index:100;}}
 </style>
 </head>
 <body>
@@ -416,7 +463,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
 <div id="zoom-modal" onclick="if(event.target.id==='zoom-modal')closeZoom()">
   <div id="zoom-content" onclick="event.stopImmediatePropagation()">
-    <img id="modal-img" alt="Zoomed product">
+    <img id="modal-img" alt="Zoomed product" referrerpolicy="no-referrer">
     <button class="modal-close" onclick="closeZoom()">×</button>
   </div>
 </div>
@@ -427,13 +474,13 @@ var CARDS = {cards_json};
 var COMMITTED = {committed_json};
 var PREFETCH_URLS = {prefetch_json};
 var PLACEHOLDER = "{_PLACEHOLDER_SVG}";
+var LABELS = {labels_json};
 
 window._gridSelected = window._gridSelected || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
-// Bridge to Streamlit (real-time sync ready)
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
@@ -453,7 +500,6 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
-// Progressive image loading + quality check
 function onImgLoad(img, sid) {{
   img.classList.add('img-loaded');
   var wrap = img.closest('.card-img-wrap');
@@ -469,10 +515,8 @@ function onImgLoad(img, sid) {{
   if (warns.length) addWarnings(sid, warns);
 }}
 
-// Add ultimate proxy fallback to prevent infinite shimmering
 function onImgError(img, sid) {{
   var card = CARDS.find(c => c.sid === sid);
-  // Auto fallback to free proxy if Jumia CDN blocks referrers
   if (!img.dataset.triedProxy && card && card.img && card.img.startsWith('http')) {{
       img.dataset.triedProxy = 'true';
       img.src = "https://wsrv.nl/?url=" + encodeURIComponent(card.img);
@@ -482,10 +526,16 @@ function onImgError(img, sid) {{
   img.src = PLACEHOLDER;
   img.classList.add('img-loaded');
   addWarnings(sid, ['Broken Image']);
+  
+  var debugDiv = document.getElementById('debug-' + escapeHtml(sid));
+  if (debugDiv) {{
+      debugDiv.style.display = 'block';
+      debugDiv.innerHTML = "<b>FAILED URL:</b><br>" + escapeHtml(card ? card.img : '');
+  }}
 }}
 
 function addWarnings(sid, warns) {{
-  var wrap = document.querySelector('#card-' + sid + ' .warn-wrap');
+  var wrap = document.querySelector('#card-' + escapeHtml(sid) + ' .warn-wrap');
   if (!wrap) return;
   warns.forEach(w => {{
     var badge = document.createElement('span');
@@ -495,7 +545,6 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
-// Render card with progressive placeholder and strict CDN fixes
 function renderCard(card) {{
   var sid = card.sid;
   var safeSid = sid.replace(/'/g, "\\\\'");
@@ -504,28 +553,36 @@ function renderCard(card) {{
   var isSelected = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
   
-  // CDN Fix: Safely map image without breaking URL parameters (&)
   var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
-  
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '…' : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
-  var zoomHtml = `<div class="zoom-btn" onclick="event.stopPropagation();showZoom(\\'${{safeSid}}\\')"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>`;
+  
+  // 🚀 NEW DESIGN: Zoom icon in bottom right
+  var zoomHtml = `<div class="zoom-btn" onclick="event.stopPropagation();showZoom(\\'${{safeSid}}\\')">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+    </svg></div>`;
 
   var overlayHtml = '', actHtml = '';
   if (isCommitted) {{
-    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{rejected_label}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\\'${{safeSid}}\\')">{_t('undo')}</button></div>`;
+    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{escapeHtml(LABELS.rejected)}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\\'${{safeSid}}\\')">${{escapeHtml(LABELS.undo)}}</button></div>`;
   }} else if (isStaged) {{
-    overlayHtml = `<div class="rej-overlay staged"><div class="rej-badge pending">PENDING</div><div class="rej-label">${{escapeHtml((staged[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\\'${{safeSid}}\\')">{_t('clear_sel')}</button></div>`;
+    // 🚀 NEW DESIGN: White pending reasons with "REJECTED" header
+    overlayHtml = `<div class="rej-overlay staged">
+      <div class="rej-badge pending">${{escapeHtml(LABELS.rejected)}}</div>
+      <div class="rej-label">Pending reason:<br>${{escapeHtml((staged[sid]||'').replace(/_/g,' '))}}</div>
+      <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\\'${{safeSid}}\\')">${{escapeHtml(LABELS.clear_sel)}}</button>
+      </div>`;
   }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject(\\'${{safeSid}}\\',\\'REJECT_POOR_IMAGE\\')">{_t('poor_img')}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\\'${{safeSid}}\\',this.value);this.value=''}}"><option value="">{_t('more_options')}</option><option value="REJECT_WRONG_CAT">{_t('wrong_cat')}</option><option value="REJECT_FAKE">{_t('fake_prod')}</option><option value="REJECT_BRAND">{_t('restr_brand')}</option><option value="REJECT_PROHIBITED">{_t('prohibited')}</option><option value="REJECT_COLOR">{_t('missing_color')}</option><option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option></select></div>`;
+    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject(\\'${{safeSid}}\\',\\'REJECT_POOR_IMAGE\\')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\\'${{safeSid}}\\',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option></select></div>`;
   }}
 
-  // CDN Fixes: Added referrerpolicy='no-referrer', NO lazy loading, and unescaped URL logic
   return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
     <div class="card-img-wrap" onclick="window.toggleSelect(\\'${{safeSid}}\\',event)">
       ${{priceHtml}}
       <div class="warn-wrap">${{warnHtml}}</div>
+      <div id="debug-${{escapeHtml(sid)}}" class="debug-hud"></div>
       <img class="card-img-placeholder" src="${{PLACEHOLDER}}" alt="">
       <img class="card-img" decoding="async" src="${{safeImgSrcForHtml}}" referrerpolicy="no-referrer" 
            onload="onImgLoad(this,\\'${{safeSid}}\\')" onerror="onImgError(this,\\'${{safeSid}}\\')">
@@ -543,7 +600,6 @@ function renderCard(card) {{
   </div>`;
 }}
 
-// Zoom Modal
 window.showZoom = function(sid) {{
   var card = CARDS.find(c => c.sid === sid);
   if (!card) return;
@@ -556,11 +612,10 @@ window.closeZoom = function() {{
   document.getElementById('zoom-modal').classList.remove('show');
 }};
 
-// Rest of your JS functions (unchanged but updated for new modal)
-function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' {_t("items_pending")}'; }}
+function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
 function replaceCard(sid) {{ 
-  var el = document.getElementById('card-' + sid);
+  var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
   var card = CARDS.find(c => c.sid === sid);
   if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
@@ -586,7 +641,6 @@ window.doBatchReject = function() {{
 }};
 window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
 
-// Background prefetch (next pages) with CDN fixes applied
 (function() {{
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
   var container = document.getElementById('prefetch-container');
@@ -601,7 +655,7 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
       var img = new Image();
       img.referrerPolicy = "no-referrer";
       img.onload = () => {{ done++; if (statusEl) statusEl.textContent = `Prefetched ${{done}}/${{total}}`; }};
-      img.style.cssText = 'width:1px;height:1px;opacity:0;';
+      img.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
       container.appendChild(img);
       img.src = url;
     }}
