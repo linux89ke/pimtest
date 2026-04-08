@@ -240,11 +240,12 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
     """
-    Ultra-fast client-side image grid.
-    - All image loading, quality checks, and prefetching happen in the browser.
-    - Inline SVG placeholder (no external calls).
-    - Shimmer skeleton + smooth fade-in.
-    - Background prefetch of next 2 pages using requestIdleCallback.
+    ULTRA-FAST client-side image grid (fixed version)
+    - 100% client-side image loading
+    - Inline SVG placeholder (no extra requests)
+    - Shimmer skeleton + smooth fade-in
+    - Background prefetch for next pages
+    - Image quality checks in browser
     """
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
@@ -252,10 +253,11 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
     committed_json = json.dumps(rejected_state)
     prefetch_json = json.dumps(prefetch_urls or [])
+
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
     rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
-    # Inline SVG placeholder (zero HTTP dependency)
+    # Inline SVG placeholder (zero HTTP requests)
     _NO_IMAGE_SVG = (
         "data:image/svg+xml;utf8,"
         "<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'>"
@@ -271,12 +273,15 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
         img_url = img_url.replace("http://", "https://", 1)
         if not img_url.startswith("https"):
-            img_url = ""  # JS will use inline SVG
+            img_url = ""   # JS will use the inline SVG
 
         sale_p = row.get("GLOBAL_SALE_PRICE")
         reg_p = row.get("GLOBAL_PRICE")
         usd_val = sale_p if pd.notna(sale_p) and str(sale_p).strip() != "" else reg_p
-        price_str = format_local_price(usd_val, st.session_state.get('selected_country', 'Kenya')) if pd.notna(usd_val) else ""
+        price_str = (
+            format_local_price(usd_val, st.session_state.get('selected_country', 'Kenya'))
+            if pd.notna(usd_val) else ""
+        )
 
         cards_data.append({
             "sid": sid,
@@ -285,7 +290,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
             "brand": str(row.get("BRAND", "Unknown Brand")),
             "cat": str(row.get("CATEGORY", "Unknown Category")),
             "seller": str(row.get("SELLER_NAME", "Unknown Seller")),
-            "warnings": page_warnings.get(sid, []),   # kept for backward compat (JS overrides)
+            "warnings": page_warnings.get(sid, []),
             "price": price_str,
         })
 
@@ -365,7 +370,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// ── Data & Bridge (unchanged from your latest version) ───────────────────────
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
@@ -377,10 +381,155 @@ window._stagedRejections = window._stagedRejections || {{}};
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
-// sendMsg, onImgLoad, onImgError, addWarnings, renderCard, updateSelCount, renderAll, replaceCard, toggleZoom, doSelectAll, toggleSelect, stageReject, clearStaged, undoReject, doBatchReject, doDeselAll
-// (all functions from your pasted code – they stay exactly the same)
+// Bridge to Streamlit
+function sendMsg(type, payload) {{
+  try {{
+    var par = window.parent;
+    var inputs = par.document.querySelectorAll('input[type="text"]');
+    var bridge = null;
+    for (var i = 0; i < inputs.length; i++) {{
+      if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
+        bridge = inputs[i]; break;
+      }}
+    }}
+    if (!bridge) return;
+    var msg = JSON.stringify({{action: type, payload: payload}});
+    bridge.focus({{preventScroll: true}});
+    Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set.call(bridge, msg);
+    bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+    setTimeout(function() {{
+      bridge.blur();
+      bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    }}, 150);
+  }} catch(ex) {{ console.error('jtbridge error:', ex); }}
+}}
 
-{'''(paste the entire <script> body from your last version here – from function sendMsg ... to the end of renderAll();)'''}
+// Client-side image quality check
+function onImgLoad(img, sid) {{
+  img.classList.add('img-loaded');
+  var wrap = img.closest('.card-img-wrap');
+  if (wrap) wrap.classList.add('img-loaded');
+  var w = img.naturalWidth, h = img.naturalHeight;
+  var warns = [];
+  if (w > 0 && h > 0) {{
+    if (w < 300 || h < 300) warns.push('Low Resolution');
+    var ratio = h / w;
+    if (ratio > 1.5) warns.push('Tall (Screenshot?)');
+    else if (ratio < 0.6) warns.push('Wide Aspect');
+  }}
+  if (warns.length) addWarnings(sid, warns);
+}}
+function onImgError(img, sid) {{
+  img.src = NO_IMAGE;
+  img.classList.add('img-loaded');
+  var wrap = img.closest('.card-img-wrap');
+  if (wrap) wrap.classList.add('img-loaded');
+  addWarnings(sid, ['Broken Image']);
+}}
+function addWarnings(sid, warns) {{
+  var wrap = document.querySelector('#card-' + sid + ' .warn-wrap');
+  if (!wrap) return;
+  warns.forEach(function(w) {{
+    var badge = document.createElement('span');
+    badge.className = 'warn-badge';
+    badge.textContent = w;
+    wrap.appendChild(badge);
+  }});
+}}
+
+// Render single card
+function renderCard(card) {{
+  var sid = card.sid;
+  var isCommitted = sid in COMMITTED;
+  var isStaged = sid in staged;
+  var isSelected = !isCommitted && !isStaged && (sid in selected);
+  var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
+  var imgSrc = card.img || NO_IMAGE;
+  var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + '…' : escapeHtml(card.name);
+  var warnHtml = (card.warnings || []).map(function(w) {{ return '<span class="warn-badge">' + escapeHtml(w) + '</span>'; }}).join('');
+  var priceHtml = card.price ? '<div class="price-badge">' + escapeHtml(card.price) + '</div>' : '';
+  var zoomHtml = `<div class="zoom-btn" onclick="event.stopPropagation();window.toggleZoom('${{sid}}')"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>`;
+  var overlayHtml = '', actHtml = '';
+  if (isCommitted) {{
+    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">{rejected_label}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid] || '').replace(/_/g, ' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{sid}}')">{_t('undo')}</button></div>`;
+  }} else if (isStaged) {{
+    overlayHtml = `<div class="rej-overlay staged"><div class="rej-badge pending">PENDING</div><div class="rej-label">${{escapeHtml((staged[sid] || '').replace(/_/g, ' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{sid}}')">{_t('clear_sel')}</button></div>`;
+  }} else {{
+    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{sid}}','REJECT_POOR_IMAGE')">{_t('poor_img')}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{sid}}',this.value);this.value=''}}"><option value="">{_t('more_options')}</option><option value="REJECT_WRONG_CAT">{_t('wrong_cat')}</option><option value="REJECT_FAKE">{_t('fake_prod')}</option><option value="REJECT_BRAND">{_t('restr_brand')}</option><option value="REJECT_PROHIBITED">{_t('prohibited')}</option><option value="REJECT_COLOR">{_t('missing_color')}</option><option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option></select></div>`;
+  }}
+  return `<div class="${{cls}}" id="card-${{sid}}"><div class="card-img-wrap" onclick="window.toggleSelect('${{sid}}',event)">${{priceHtml}}<div class="warn-wrap">${{warnHtml}}</div><img class="card-img" loading="lazy" decoding="async" src="${{escapeHtml(imgSrc)}}" onload="onImgLoad(this,'${{sid}}')" onerror="onImgError(this,'${{sid}}')">${{zoomHtml}}${{overlayHtml}}<div class="tick">✔</div></div><div class="meta"><div class="nm" title="${{escapeHtml(card.name)}}">${{shortName}}</div><div class="br">${{escapeHtml(card.brand)}}</div><div class="ct">${{escapeHtml(card.cat)}}</div><div class="sl">${{escapeHtml(card.seller)}}</div></div>${{actHtml}}</div>`;
+}}
+
+function updateSelCount() {{
+  document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' {_t("items_pending")}';
+}}
+function renderAll() {{
+  document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join('');
+  updateSelCount();
+}}
+function replaceCard(sid) {{
+  var el = document.getElementById('card-' + sid);
+  if (!el) return;
+  var card = CARDS.find(c => c.sid === sid);
+  if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
+}}
+window.toggleZoom = function(sid) {{ /* same as before */ 
+  var img = document.querySelector('#card-' + sid + ' .card-img');
+  if (!img) return;
+  if (img.classList.contains('locally-zoomed')) {{
+    img.classList.remove('locally-zoomed');
+    img.closest('.card').style.zIndex = '1';
+  }} else {{
+    document.querySelectorAll('.locally-zoomed').forEach(el => {{ el.classList.remove('locally-zoomed'); if (el.closest('.card')) el.closest('.card').style.zIndex = '1'; }});
+    img.classList.add('locally-zoomed');
+    img.closest('.card').style.zIndex = '999';
+  }}
+}};
+window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
+window.toggleSelect = function(sid, e) {{ 
+  var img = document.querySelector('#card-' + sid + ' .card-img');
+  if (img && img.classList.contains('locally-zoomed')) {{ img.classList.remove('locally-zoomed'); img.closest('.card').style.zIndex = '1'; return; }}
+  if (sid in COMMITTED) return;
+  if (sid in staged) delete staged[sid];
+  else if (sid in selected) delete selected[sid];
+  else selected[sid] = true;
+  replaceCard(sid); updateSelCount();
+}};
+window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
+window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
+window.undoReject = function(sid) {{ sendMsg('undo', {{[sid]: true}}); delete COMMITTED[sid]; replaceCard(sid); updateSelCount(); }};
+window.doBatchReject = function() {{
+  var br = document.getElementById('batch-reason').value, payload = {{}}, count = 0;
+  for (var s in staged) {{ payload[s] = staged[s]; count++; }}
+  for (var s in selected) {{ payload[s] = br; count++; }}
+  if (count === 0) return;
+  for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
+  sendMsg('reject', payload); renderAll(); updateSelCount();
+}};
+window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
+
+// Background prefetch (next pages)
+(function() {{
+  if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
+  var container = document.getElementById('prefetch-container');
+  var statusEl = document.getElementById('prefetch-status');
+  var i = 0, total = PREFETCH_URLS.length, done = 0;
+  var runner = window.requestIdleCallback || function(fn){{setTimeout(fn,300);}};
+  function prefetchBatch() {{
+    var limit = 4;
+    var processed = 0;
+    while (i < total && processed < limit) {{
+      var url = PREFETCH_URLS[i++]; processed++;
+      var img = new Image();
+      img.onload = function() {{ done++; if (statusEl) statusEl.textContent = 'Prefetched ' + done + '/' + total; }};
+      img.style.cssText = 'width:1px;height:1px;opacity:0;';
+      container.appendChild(img);
+      img.src = url;
+    }}
+    if (i < total) runner(prefetchBatch);
+  }}
+  setTimeout(prefetchBatch, 800);
+}})();
 
 renderAll();
 </script>
