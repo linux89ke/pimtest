@@ -140,7 +140,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     else:
         df_display = st.session_state.display_df_cache[cache_key]
 
-    # 🚀 2026 UX: Adjusted column gaps and added input icons
     c1, c2 = st.columns(2, gap="large")
     with c1:
         search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", icon=":material/search:", key=f"s_{title}")
@@ -218,7 +217,6 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                 support_files, country_validator, validation_runner)
 
     with btn_col2:
-        # 🚀 2026 UX: Programmatic Popover control via key
         popover_key = f"popover_rej_{title}"
         with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection, key=popover_key):
             chosen_reason = st.selectbox(
@@ -245,7 +243,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
-                    st.session_state[popover_key] = False # Close popover
+                    st.session_state[popover_key] = False 
                     st.rerun()
             else:
                 _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
@@ -293,7 +291,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
-                    st.session_state[popover_key] = False # Close popover
+                    st.session_state[popover_key] = False 
                     st.rerun()
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
@@ -528,6 +526,48 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
+// 🚀 Lock pagination natively in the parent Streamlit DOM when items are pending
+function updateParentPagination() {{
+  var pending = Object.keys(selected).length + Object.keys(staged).length;
+  try {{
+    var par = window.parent.document;
+    
+    // Disable prev/next buttons
+    var buttons = par.querySelectorAll('button');
+    buttons.forEach(b => {{
+      var txt = b.innerText || "";
+      if (txt.includes('Prev Page') || txt.includes('Next Page')) {{
+        if (pending > 0) {{
+          b.style.pointerEvents = 'none';
+          b.style.opacity = '0.3';
+          b.title = "Confirm or clear your selections before navigating.";
+        }} else {{
+          b.style.pointerEvents = 'auto';
+          b.style.opacity = '1';
+          b.title = "";
+        }}
+      }}
+    }});
+    
+    // Disable the Jump to Page input
+    var inputs = par.querySelectorAll('input[type="number"]');
+    inputs.forEach(inp => {{
+      var wrapper = inp.closest('div[data-testid="stNumberInput"]');
+      if (wrapper && wrapper.innerText.includes('Jump to Page')) {{
+        if (pending > 0) {{
+          wrapper.style.pointerEvents = 'none';
+          wrapper.style.opacity = '0.3';
+          wrapper.title = "Confirm or clear your selections before navigating.";
+        }} else {{
+          wrapper.style.pointerEvents = 'auto';
+          wrapper.style.opacity = '1';
+          wrapper.title = "";
+        }}
+      }}
+    }});
+  }} catch(e) {{}}
+}}
+
 function onImgLoad(img, sid) {{
   img.classList.add('img-loaded');
   var wrap = img.closest('.card-img-wrap');
@@ -665,14 +705,11 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
-document.addEventListener('click', function(e) {{
-  var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
-    closeZoom();
-  }}
-}});
+function updateSelCount() {{ 
+  document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
+  updateParentPagination(); // Trigger pagination lock check
+}}
 
-function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
@@ -739,13 +776,10 @@ def visual_review_modal(support_files):
     }
     valid_grid_df = fr[(fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))]
 
-    # 🚀 2026 UX: gap="large" added for spacing
     c1, c2, c3 = st.columns([1.5, 1.5, 2], gap="large")
     with c1:
-        # 🚀 2026 UX: Native Search Icon
         search_n = st.text_input("Search by Name", placeholder="Product name…", icon=":material/search:")
     with c2:
-        # 🚀 2026 UX: Native Store Icon
         search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…", icon=":material/store:")
     with c3:
         st.session_state.grid_items_per_page = st.select_slider(
@@ -788,13 +822,10 @@ def visual_review_modal(support_files):
     if st.session_state.get('grid_page', 0) >= total_pages:
         st.session_state.grid_page = 0
 
-    # 🚀 2026 UX: Added gap="small"
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center", gap="small")
     with pg_cols[0]:
-        # 🚀 2026 UX: Arrow Back Icon positioned on left
         if st.button("Prev Page", icon=":material/arrow_back:", icon_position="left", use_container_width=True, disabled=st.session_state.get('grid_page', 0) == 0):
             st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
-            st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols[1]:
         new_page = st.number_input(
@@ -804,13 +835,10 @@ def visual_review_modal(support_files):
         )
         if new_page - 1 != st.session_state.grid_page:
             st.session_state.grid_page = new_page - 1
-            st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols[2]:
-        # 🚀 2026 UX: Arrow Forward Icon positioned on right
         if st.button("Next Page", icon=":material/arrow_forward:", icon_position="right", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
             st.session_state.grid_page += 1
-            st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
 
     page_start = st.session_state.grid_page * ipp
@@ -852,7 +880,8 @@ def visual_review_modal(support_files):
     n_rows       = -(-len(page_data) // cols_per_row)
     grid_height  = min(n_rows * 320 + 140, 800)
 
-    components.html(grid_html, height=grid_height, scrolling=True)
+    # 🚀 FIX: Using modern st.iframe instead of components.html
+    st.iframe(html=grid_html, height=grid_height, scrolling=True)
 
 @st.fragment
 def render_image_grid(support_files):
@@ -861,13 +890,11 @@ def render_image_grid(support_files):
 
     st.markdown("---")
     
-    # 🚀 2026 UX: Gap size implemented
     c1, c2 = st.columns([3, 1], gap="medium")
     with c1:
         st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
         st.caption("Open Focus Mode to rapidly visually review and reject products.")
     with c2:
-        # 🚀 2026 UX: Button anchored icon added
         if st.button("Start Visual Review", type="primary", icon=":material/pageview:", icon_position="left", use_container_width=True):
             visual_review_modal(support_files)
 
