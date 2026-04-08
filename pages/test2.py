@@ -1014,7 +1014,14 @@ if country_choice and country_choice != current_country:
     st.toast(f"Switching to {country_choice}…", icon=":material/public:")
 
 country_validator = CountryValidator(st.session_state.selected_country)
-uploaded_files = st.file_uploader("", type=['csv', 'xlsx'], accept_multiple_files=True, key="daily_files")
+# Fix in both files:
+uploaded_files = st.file_uploader(
+    "Upload files",                          # non-empty label
+    type=['csv', 'xlsx'],
+    accept_multiple_files=True,
+    key="daily_files",
+    label_visibility="collapsed"             # hides it visually, same look as before
+)
 
 if uploaded_files:
     st.session_state.cached_uploaded_files = [{"name": uf.name, "bytes": uf.read()} for uf in uploaded_files]
