@@ -660,13 +660,6 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
-document.addEventListener('click', function(e) {{
-  var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
-    closeZoom();
-  }}
-}});
-
 function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
 function replaceCard(sid) {{
@@ -821,7 +814,6 @@ def visual_review_modal(support_files):
         if st.session_state.get(f"quick_rej_{sid}")
     }
     
-    # Do not cache dialog grid html to ensure fresh state on reruns
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
     grid_html = build_fast_grid_html(
         page_data=page_data,
@@ -834,7 +826,7 @@ def visual_review_modal(support_files):
     )
 
     n_rows       = -(-len(page_data) // cols_per_row)
-    grid_height  = min(n_rows * 320 + 140, 800) # Modal keeps a clean height
+    grid_height  = min(n_rows * 320 + 140, 800)
 
     components.html(grid_html, height=grid_height, scrolling=True)
 
