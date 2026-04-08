@@ -353,7 +353,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
     cards_json = json.dumps(cards_data)
 
-    # 🚀 Removed padding-bottom hack since we are expanding the iframe height natively now
     return f"""<!DOCTYPE html>
 <html dir="{html_dir}">
 <head>
@@ -362,6 +361,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
   body{{background:#f5f5f5;padding:8px;}}
+  
   .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;}}
@@ -423,10 +423,9 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
   
-  /* ── Floating Tooltip ── */
   #zoom-tooltip {{
     display: none;
-    position: absolute;
+    position: fixed;
     z-index: 100000;
     background: #fff;
     padding: 10px;
@@ -494,8 +493,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// 🚀 Removed the old DOM click interceptor hack! 
-
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
@@ -527,45 +524,6 @@ function sendMsg(type, payload) {{
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     setTimeout(() => {{ bridge.blur(); bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}})); }}, 150);
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
-}}
-
-function updateParentPagination() {{
-  var pending = Object.keys(selected).length + Object.keys(staged).length;
-  try {{
-    var par = window.parent.document;
-    
-    var buttons = par.querySelectorAll('button');
-    buttons.forEach(b => {{
-      var txt = b.innerText || "";
-      if (txt.includes('Prev Page') || txt.includes('Next Page')) {{
-        if (pending > 0) {{
-          b.style.pointerEvents = 'none';
-          b.style.opacity = '0.3';
-          b.title = "Confirm or clear your selections before navigating.";
-        }} else {{
-          b.style.pointerEvents = 'auto';
-          b.style.opacity = '1';
-          b.title = "";
-        }}
-      }}
-    }});
-    
-    var inputs = par.querySelectorAll('input[type="number"]');
-    inputs.forEach(inp => {{
-      var wrapper = inp.closest('div[data-testid="stNumberInput"]');
-      if (wrapper && wrapper.innerText.includes('Jump to Page')) {{
-        if (pending > 0) {{
-          wrapper.style.pointerEvents = 'none';
-          wrapper.style.opacity = '0.3';
-          wrapper.title = "Confirm or clear your selections before navigating.";
-        }} else {{
-          wrapper.style.pointerEvents = 'auto';
-          wrapper.style.opacity = '1';
-          wrapper.title = "";
-        }}
-      }}
-    }});
-  }} catch(e) {{}}
 }}
 
 function onImgLoad(img, sid) {{
@@ -666,6 +624,7 @@ function renderCard(card) {{
   </div>`;
 }}
 
+/* Tooltip uses fixed positioning — stays visible without scroll tricks */
 window.showZoom = function(sid, event) {{
   var tooltip = document.getElementById('zoom-tooltip');
   if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
@@ -682,19 +641,19 @@ window.showZoom = function(sid, event) {{
   tooltip.style.display = 'block';
   window.currentZoomSid = sid;
 
-  var tw = 360; 
-  var th = 360; 
-  var x = event.pageX; 
-  var y = event.pageY; 
+  var tw = 360;
+  var th = 360;
+  var x = event.clientX;
+  var y = event.clientY;
 
   var left = x + 15;
-  if (left + tw > document.body.scrollWidth) {{
+  if (left + tw > window.innerWidth) {{
       left = x - tw - 15;
   }}
 
   var top = y - (th / 2);
   if (top < 10) top = 10;
-  if (top + th > document.body.scrollHeight) top = document.body.scrollHeight - th - 10;
+  if (top + th > window.innerHeight - 10) top = window.innerHeight - th - 10;
 
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
@@ -705,16 +664,8 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
-document.addEventListener('click', function(e) {{
-  var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
-    closeZoom();
-  }}
-}});
-
 function updateSelCount() {{ 
   document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
-  updateParentPagination();
 }}
 
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
@@ -772,7 +723,7 @@ renderAll();
 </body>
 </html>"""
 
-# 🚀 FIX: Native dismissible=False lock used here
+# FIX: dismissible=False prevents closing on outside click (only X button closes)
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
     fr   = st.session_state.final_report
@@ -885,9 +836,9 @@ def visual_review_modal(support_files):
         prefetch_urls=prefetch_urls,
     )
 
-    # 🚀 FIX: Let the iframe grow to fit everything fully and hand scroll control back to the dialog
-    n_rows = -(-len(page_data) // cols_per_row)
-    grid_height = n_rows * 340 + 220 
+    # No height cap — iframe expands to fit all cards so the outer page scrolls naturally
+    n_rows      = -(-len(page_data) // cols_per_row)
+    grid_height = n_rows * 340 + 220
 
     components.html(grid_html, height=grid_height, scrolling=False)
 
