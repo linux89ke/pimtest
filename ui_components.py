@@ -2,10 +2,8 @@ import re
 import json
 import logging
 import pandas as pd
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image
 
 from constants import JUMIA_COLORS, GRID_COLS
 from data_utils import clean_category_code, df_hash, format_local_price
@@ -13,14 +11,20 @@ from export_utils import generate_smart_export, prepare_full_data_merged
 
 logger = logging.getLogger(__name__)
 
+# Inline SVG placeholder — no external HTTP dependency
+_NO_IMAGE_SVG = (
+    "data:image/svg+xml;utf8,"
+    "<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'>"
+    "<rect width='150' height='150' fill='%23f0f0f0'/>"
+    "<text x='75' y='75' text-anchor='middle' dominant-baseline='central' "
+    "font-size='12' font-family='sans-serif' fill='%23999'>No Image</text>"
+    "</svg>"
+)
+
 
 def _t(key):
     from translations import get_translation
     return get_translation(st.session_state.get('ui_lang', 'en'), key)
-
-
-# ── REMOVED: analyze_image_quality_cached (was doing 50 HTTP downloads per page)
-# Image quality is now checked client-side in JavaScript (zero server cost)
 
 
 def _clear_flag_df_selection(title: str):
@@ -41,7 +45,6 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
     if st.button(_t("approve_btn"), type="primary", use_container_width=True):
         with st.spinner("Processing..."):
             data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
-
             new_report, _ = validation_runner(
                 data_hash, subset_data, support_files,
                 country_validator.code, data_has_warranty_cols_check,
@@ -151,7 +154,9 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
     df_view = df_display.copy()
     if search_term:
-        df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
+        df_view = df_view[df_view.apply(
+            lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1
+        )]
     if seller_filter:
         df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
     df_view = df_view.reset_index(drop=True)
@@ -290,11 +295,17 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
-                          rejected_state, cols_per_row, prefetch_urls=None):
+                         rejected_state, cols_per_row, prefetch_urls=None):
+    """
+    Build the image grid HTML.
+    - page_warnings: pass {} — image quality checks now run in JS via onload/onerror
+    - prefetch_urls: optional list of image URLs to prefetch for the next pages
+    """
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
     committed_json = json.dumps(rejected_state)
+    prefetch_json = json.dumps(prefetch_urls or [])
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
     rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
@@ -302,30 +313,32 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     for _, row in page_data.iterrows():
         sid = str(row["PRODUCT_SET_SID"])
         img_url = str(row.get("MAIN_IMAGE", "")).strip()
-        # ── Normalise to HTTPS in Python (belt-and-suspenders; JS also does it)
+        # Normalise to HTTPS; blank stays blank — JS supplies the SVG placeholder
         img_url = img_url.replace("http://", "https://", 1)
         if not img_url.startswith("https"):
-            img_url = ""          # let JS show placeholder
+            img_url = ""
         sale_p = row.get("GLOBAL_SALE_PRICE")
-        reg_p  = row.get("GLOBAL_PRICE")
+        reg_p = row.get("GLOBAL_PRICE")
         usd_val = sale_p if pd.notna(sale_p) and str(sale_p).strip() != "" else reg_p
         price_str = (
             format_local_price(usd_val, st.session_state.get('selected_country', 'Kenya'))
             if pd.notna(usd_val) else ""
         )
         cards_data.append({
-            "sid":      sid,
-            "img":      img_url,
-            "name":     str(row.get("NAME", "")),
-            "brand":    str(row.get("BRAND", "Unknown Brand")),
-            "cat":      str(row.get("CATEGORY", "Unknown Category")),
-            "seller":   str(row.get("SELLER_NAME", "Unknown Seller")),
-            "warnings": page_warnings.get(sid, []),   # may be empty — JS adds its own
-            "price":    price_str,
+            "sid": sid,
+            "img": img_url,
+            "name": str(row.get("NAME", "")),
+            "brand": str(row.get("BRAND", "Unknown Brand")),
+            "cat": str(row.get("CATEGORY", "Unknown Category")),
+            "seller": str(row.get("SELLER_NAME", "Unknown Seller")),
+            "warnings": page_warnings.get(sid, []),
+            "price": price_str,
         })
 
-    cards_json   = json.dumps(cards_data)
-    prefetch_json = json.dumps(prefetch_urls or [])
+    cards_json = json.dumps(cards_data)
+
+    # Inline SVG data URI — zero external HTTP dependency
+    no_img_svg = _NO_IMAGE_SVG
 
     return f"""<!DOCTYPE html>
 <html dir="{html_dir}">
@@ -346,12 +359,12 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.selected{{border-color:{G};box-shadow:0 0 0 3px rgba(76,175,80,.2);background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 3px rgba(231,60,23,.2);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-  .card-img-wrap{{position:relative;cursor:pointer;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;height:180px;}}
-  /* ── Skeleton shimmer shown while image loads ── */
-  .card-img-wrap::before{{content:'';position:absolute;inset:0;border-radius:6px;background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;}}
-  .card-img-wrap.loaded::before{{display:none;}}
+  /* ── Image wrapper with skeleton shimmer ── */
+  .card-img-wrap{{position:relative;cursor:pointer;border-radius:6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;}}
+  .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;border-radius:6px;}}
+  .card-img-wrap.img-loaded::before{{display:none;}}
   @keyframes shimmer{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
-  .card-img{{width:100%;height:180px;object-fit:contain;border-radius:6px;display:block;transition:transform 0.2s ease-out,box-shadow 0.2s ease-out;position:relative;z-index:2;opacity:0;transition:opacity 0.2s ease,transform 0.2s ease-out;}}
+  .card-img{{width:100%;height:180px;object-fit:contain;border-radius:6px;display:block;position:relative;z-index:2;opacity:0;transition:opacity .25s ease,transform .2s ease-out,box-shadow .2s ease-out;}}
   .card-img.img-loaded{{opacity:1;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
   .card-img.locally-zoomed{{transform:scale(2.3);box-shadow:0 15px 50px rgba(0,0,0,0.6);border:2px solid {O};background:#fff;position:relative;z-index:9999;border-radius:8px;}}
@@ -378,7 +391,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
-  /* ── Prefetch status bar (subtle, bottom of grid) ── */
   #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
 </style>
 </head>
@@ -402,28 +414,23 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
 <div class="grid" id="card-grid"></div>
 <div id="prefetch-status"></div>
-
-<!-- Hidden container for prefetch Image() objects -->
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// ─────────────────────────────────────────────
-// DATA
-// ─────────────────────────────────────────────
+// ── Data ──────────────────────────────────────────────────────────────────────
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 
 var CARDS    = {cards_json};
 var COMMITTED= {committed_json};
-var PREFETCH_URLS = {prefetch_json};   // next 2 pages' image URLs
+var PREFETCH_URLS = {prefetch_json};
+var NO_IMAGE = "{no_img_svg}";
 
-window._gridSelected  = window._gridSelected  || {{}};
+window._gridSelected     = window._gridSelected     || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
 var selected = window._gridSelected;
 var staged   = window._stagedRejections;
 
-// ─────────────────────────────────────────────
-// BRIDGE (Streamlit communication)
-// ─────────────────────────────────────────────
+// ── Bridge (Streamlit ↔ JS) ───────────────────────────────────────────────────
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
@@ -447,15 +454,11 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
-// ─────────────────────────────────────────────
-// CLIENT-SIDE IMAGE QUALITY CHECK
-// Runs in browser — zero server HTTP requests
-// ─────────────────────────────────────────────
-function checkImgQuality(img, sid) {{
-  // Mark the wrapper as loaded (removes skeleton shimmer)
-  var wrap = img.closest('.card-img-wrap');
-  if (wrap) wrap.classList.add('loaded');
+// ── Client-side image quality check (replaces server HTTP downloads) ──────────
+function onImgLoad(img, sid) {{
   img.classList.add('img-loaded');
+  var wrap = img.closest('.card-img-wrap');
+  if (wrap) wrap.classList.add('img-loaded');
 
   var w = img.naturalWidth, h = img.naturalHeight;
   var warns = [];
@@ -469,10 +472,10 @@ function checkImgQuality(img, sid) {{
 }}
 
 function onImgError(img, sid) {{
-  var wrap = img.closest('.card-img-wrap');
-  if (wrap) wrap.classList.add('loaded');
-  img.src = 'https://via.placeholder.com/150?text=No+Image';
+  img.src = NO_IMAGE;
   img.classList.add('img-loaded');
+  var wrap = img.closest('.card-img-wrap');
+  if (wrap) wrap.classList.add('img-loaded');
   addWarnings(sid, ['Broken Image']);
 }}
 
@@ -487,32 +490,22 @@ function addWarnings(sid, warns) {{
   }});
 }}
 
-// ─────────────────────────────────────────────
-// CARD RENDERING
-// ─────────────────────────────────────────────
+// ── Card rendering ────────────────────────────────────────────────────────────
 function renderCard(card) {{
-  var sid        = card.sid;
+  var sid = card.sid;
   var isCommitted = sid in COMMITTED;
   var isStaged    = sid in staged;
   var isSelected  = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
-
-  // Normalise URL to HTTPS in JS too (belt-and-suspenders)
-  var imgSrc = (card.img || '').replace(/^http:\\/\\//i, 'https://');
-  if (!imgSrc) imgSrc = 'https://via.placeholder.com/150?text=No+Image';
-
+  var imgSrc = card.img || NO_IMAGE;
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0, 38)) + '…' : escapeHtml(card.name);
-
-  // Existing Python-side warnings (e.g. from legacy path)
   var warnHtml = (card.warnings || []).map(function(w) {{
     return '<span class="warn-badge">' + escapeHtml(w) + '</span>';
   }}).join('');
-
-  var priceHtml  = card.price ? '<div class="price-badge">' + escapeHtml(card.price) + '</div>' : '';
-  var zoomHtml   = '<div class="zoom-btn" onclick="event.stopPropagation();window.toggleZoom(\'' + sid + '\')">'
-                 + '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
-                 + '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>';
-
+  var priceHtml = card.price ? '<div class="price-badge">' + escapeHtml(card.price) + '</div>' : '';
+  var zoomHtml = '<div class="zoom-btn" onclick="event.stopPropagation();window.toggleZoom(\'' + sid + '\')">'
+    + '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+    + '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>';
   var overlayHtml = '', actHtml = '';
   if (isCommitted) {{
     overlayHtml = '<div class="rej-overlay">'
@@ -539,16 +532,13 @@ function renderCard(card) {{
       + '<option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option>'
       + '</select></div>';
   }}
-
   return '<div class="' + cls + '" id="card-' + sid + '">'
     + '<div class="card-img-wrap" onclick="window.toggleSelect(\'' + sid + '\',event)">'
     + priceHtml
     + '<div class="warn-wrap">' + warnHtml + '</div>'
-    // loading="lazy" → browser only fetches when near viewport
-    // decoding="async" → doesn't block main thread
     + '<img class="card-img" loading="lazy" decoding="async"'
     + ' src="' + escapeHtml(imgSrc) + '"'
-    + ' onload="checkImgQuality(this,\'' + sid + '\')"'
+    + ' onload="onImgLoad(this,\'' + sid + '\')"'
     + ' onerror="onImgError(this,\'' + sid + '\')">'
     + zoomHtml
     + overlayHtml
@@ -564,30 +554,21 @@ function renderCard(card) {{
     + '</div>';
 }}
 
-// ─────────────────────────────────────────────
-// GRID MANAGEMENT
-// ─────────────────────────────────────────────
+// ── Grid management ───────────────────────────────────────────────────────────
 function updateSelCount() {{
   document.getElementById('sel-count-bar').textContent =
     (Object.keys(selected).length + Object.keys(staged).length) + ' {_t("items_pending")}';
 }}
-
 function renderAll() {{
   document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join('');
   updateSelCount();
 }}
-
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + sid);
   if (!el) return;
   var card = CARDS.find(function(c) {{ return c.sid === sid; }});
-  if (card) {{
-    var t = document.createElement('div');
-    t.innerHTML = renderCard(card);
-    el.replaceWith(t.firstElementChild);
-  }}
+  if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
 }}
-
 window.toggleZoom = function(sid) {{
   var img = document.querySelector('#card-' + sid + ' .card-img');
   if (!img) return;
@@ -603,14 +584,10 @@ window.toggleZoom = function(sid) {{
     img.closest('.card').style.zIndex = '999';
   }}
 }};
-
 window.doSelectAll = function() {{
-  CARDS.forEach(function(c) {{
-    if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true;
-  }});
+  CARDS.forEach(function(c) {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }});
   renderAll(); updateSelCount();
 }};
-
 window.toggleSelect = function(sid, e) {{
   var img = document.querySelector('#card-' + sid + ' .card-img');
   if (img && img.classList.contains('locally-zoomed')) {{
@@ -619,99 +596,60 @@ window.toggleSelect = function(sid, e) {{
     return;
   }}
   if (sid in COMMITTED) return;
-  if (sid in staged)        delete staged[sid];
+  if (sid in staged) delete staged[sid];
   else if (sid in selected) delete selected[sid];
-  else                      selected[sid] = true;
+  else selected[sid] = true;
   replaceCard(sid); updateSelCount();
 }};
-
 window.stageReject  = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged  = function(sid)    {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject   = function(sid)    {{ sendMsg('undo', {{[sid]: true}}); delete COMMITTED[sid]; replaceCard(sid); updateSelCount(); }};
-
 window.doBatchReject = function() {{
-  var br = document.getElementById('batch-reason').value;
-  var payload = {{}}, count = 0;
-  for (var s in staged)   {{ payload[s] = staged[s];  count++; }}
-  for (var s in selected) {{ payload[s] = br;         count++; }}
+  var br = document.getElementById('batch-reason').value, payload = {{}}, count = 0;
+  for (var s in staged)   {{ payload[s] = staged[s]; count++; }}
+  for (var s in selected) {{ payload[s] = br;        count++; }}
   if (count === 0) return;
   for (var s in payload)  {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
-  sendMsg('reject', payload);
-  renderAll(); updateSelCount();
+  sendMsg('reject', payload); renderAll(); updateSelCount();
 }};
-
 window.doDeselAll = function() {{
   for (var k in selected) delete selected[k];
   for (var k in staged)   delete staged[k];
   renderAll(); updateSelCount();
 }};
 
-// ─────────────────────────────────────────────
-// BACKGROUND PREFETCH  (next 2 pages)
-// Runs during browser idle time, 800 ms after
-// current page has finished rendering, so it
-// never competes with current-page image loads.
-// ─────────────────────────────────────────────
+// ── Background prefetch (next pages) ─────────────────────────────────────────
 (function() {{
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
-
   var container = document.getElementById('prefetch-container');
   var status    = document.getElementById('prefetch-status');
   var i = 0, total = PREFETCH_URLS.length, done = 0;
-
-  // requestIdleCallback fires when the browser has spare cycles.
-  // Fallback to setTimeout for Safari / older browsers.
   var runner = window.requestIdleCallback
     ? function(fn) {{ window.requestIdleCallback(fn, {{timeout: 3000}}); }}
     : function(fn) {{ setTimeout(fn, 300); }};
-
   function prefetchBatch(deadline) {{
-    // Process up to N URLs per idle slice (avoid monopolising the thread)
     var limit = deadline ? Math.max(3, Math.floor(deadline.timeRemaining() / 8)) : 4;
     var processed = 0;
-
     while (i < total && processed < limit) {{
-      var url = PREFETCH_URLS[i++];
-      processed++;
-
-      // ── Method 1: <link rel="prefetch"> — low-priority cache hint ──
-      try {{
-        var link = document.createElement('link');
-        link.rel  = 'prefetch';
-        link.as   = 'image';
-        link.href = url;
-        document.head.appendChild(link);
-      }} catch(e) {{}}
-
-      // ── Method 2: Image() object — forces actual fetch & browser cache ──
+      var url = PREFETCH_URLS[i++]; processed++;
+      try {{ var lnk = document.createElement('link'); lnk.rel='prefetch'; lnk.as='image'; lnk.href=url; document.head.appendChild(lnk); }} catch(e) {{}}
       (function(u) {{
-        var img    = new Image();
+        var img = new Image();
         img.onload = function() {{
           done++;
           if (status) status.textContent = 'Prefetched ' + done + ' / ' + total + ' next-page images';
-          if (done === total && status) {{
-            setTimeout(function() {{ status.textContent = ''; }}, 3000);
-          }}
+          if (done === total && status) setTimeout(function() {{ status.textContent = ''; }}, 3000);
         }};
-        // Append to hidden DOM container — some browsers skip Image()
-        // objects that are not attached to the document
         img.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
         container.appendChild(img);
-        img.src = u;   // set src AFTER appending so load fires correctly
+        img.src = u;
       }})(url);
     }}
-
-    // Schedule remaining URLs in the next idle slice
     if (i < total) runner(prefetchBatch);
   }}
-
-  // Delay start so current page's own images get full bandwidth first
   setTimeout(function() {{ runner(prefetchBatch); }}, 800);
 }})();
 
-// ─────────────────────────────────────────────
-// BOOT
-// ─────────────────────────────────────────────
 renderAll();
 </script>
 </body>
@@ -781,7 +719,6 @@ def render_image_grid(support_files):
     if st.session_state.get('grid_page', 0) >= total_pages:
         st.session_state.grid_page = 0
 
-    # ── Pagination controls ──
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center")
     with pg_cols[0]:
         if st.button("◀ Prev Page", use_container_width=True,
@@ -809,22 +746,18 @@ def render_image_grid(support_files):
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
 
-    # ── NO more server-side image downloading ──
-    # Quality checks (resolution, aspect ratio, broken URL) now run
-    # entirely in the browser via JS onload/onerror callbacks.
+    # ── No server-side image downloading — JS handles quality checks ──────────
     page_warnings = {}
 
-    # ── Prefetch URLs for next 2 pages (cached per page to avoid recompute) ──
+    # ── Prefetch URLs for next 2 pages ────────────────────────────────────────
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
         prefetch_urls = []
-        for prefetch_page in [st.session_state.grid_page + 1,
-                              st.session_state.grid_page + 2]:
+        for prefetch_page in [st.session_state.grid_page + 1, st.session_state.grid_page + 2]:
             if prefetch_page >= total_pages:
                 break
             p_start = prefetch_page * ipp
-            p_end   = min(p_start + ipp, len(review_data))
-            for url in review_data.iloc[p_start:p_end]["MAIN_IMAGE"].astype(str):
+            for url in review_data.iloc[p_start: p_start + ipp]["MAIN_IMAGE"].astype(str):
                 url = url.strip().replace("http://", "https://", 1)
                 if url.startswith("https"):
                     prefetch_urls.append(url)
@@ -832,31 +765,25 @@ def render_image_grid(support_files):
     else:
         prefetch_urls = st.session_state[_prefetch_cache_key]
 
-    # ── Build + cache grid HTML ──
-    # Cache key includes page index, item count, and SID list so it
-    # invalidates automatically when rejections change the page content.
-    _grid_cache_key = (
-        f"grid_html_{st.session_state.grid_page}"
-        f"_{len(page_data)}"
-        f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
-    )
-    # Rejected state can change between reruns, so always rebuild if any
-    # items on this page have been quick-rejected.
+    # ── Build + cache grid HTML ───────────────────────────────────────────────
     rejected_state = {
         sid: st.session_state[f"quick_rej_reason_{sid}"]
         for sid in page_data["PRODUCT_SET_SID"].astype(str)
         if st.session_state.get(f"quick_rej_{sid}")
     }
-    # Invalidate cache when rejection state changes
-    _grid_cache_key += f"_r{len(rejected_state)}"
-
+    _grid_cache_key = (
+        f"grid_html_{st.session_state.grid_page}"
+        f"_{len(page_data)}"
+        f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
+        f"_r{len(rejected_state)}"
+    )
     if _grid_cache_key not in st.session_state:
         cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
         st.session_state[_grid_cache_key] = build_fast_grid_html(
             page_data,
             support_files["flags_mapping"],
             st.session_state.get('selected_country', 'Kenya'),
-            page_warnings,       # empty dict — JS handles quality warnings
+            page_warnings,
             rejected_state,
             cols_per_row,
             prefetch_urls=prefetch_urls,
@@ -864,11 +791,10 @@ def render_image_grid(support_files):
 
     grid_html = st.session_state[_grid_cache_key]
 
-    # ── Dynamic iframe height (avoids ugly double-scrollbar) ──
+    # ── Dynamic iframe height ─────────────────────────────────────────────────
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
-    card_height  = 320   # approximate px per row of cards
-    n_rows       = -(-len(page_data) // cols_per_row)   # ceiling division
-    grid_height  = min(n_rows * card_height + 140, 2600)
+    n_rows       = -(-len(page_data) // cols_per_row)
+    grid_height  = min(n_rows * 320 + 140, 2600)
 
     components.html(grid_html, height=grid_height, scrolling=True)
 
