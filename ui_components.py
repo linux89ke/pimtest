@@ -293,13 +293,23 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
-
+    """
+    Progressive + Branded Ultra-Fast Grid
+    • Low-res Jumia-branded SVG placeholder
+    • Real image progressive fade-in
+    • Animated gradient warning badges
+    • Hover tooltips (full name + seller)
+    • New smooth floating zoom tooltip beside the card
+    """
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
+
     committed_json = json.dumps(rejected_state)
     prefetch_json = json.dumps(prefetch_urls or [])
+
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
+    rejected_label = str(_t('rejected') or 'REJECTED').upper()
 
     labels_dict = {
         "poor_img": _t("poor_img"), "wrong_cat": _t("wrong_cat"),
@@ -309,10 +319,11 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         "undo": _t("undo"), "clear_sel": _t("clear_sel"),
         "items_pending": _t("items_pending"), "batch_reject": _t("batch_reject"),
         "select_all": _t("select_all"), "deselect_all": _t("deselect_all"),
-        "rejected": str(_t('rejected') or 'REJECTED').upper()
+        "rejected": rejected_label
     }
     labels_json = json.dumps(labels_dict)
 
+    # ── Stylish Jumia-branded low-res placeholder SVG ─────────────────────
     _PLACEHOLDER_SVG = (
         "data:image/svg+xml;utf8,"
         "<svg xmlns='http://www.w3.org/2000/svg' width='300' height='180' viewBox='0 0 300 180'>"
@@ -418,67 +429,45 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card.staged-rej .undo-btn{{background:#fff;color:#D32F2F;box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
 
-  /* ── Zoom panel — sticky inline card, NOT a fullscreen overlay ── */
-  #zoom-panel{{
-    display:none;
-    position:sticky;
-    bottom:12px;
-    z-index:9999;
-    margin:14px 0 2px;
-    border:1px solid #ddd;
-    border-radius:12px;
-    background:#fff;
-    box-shadow:0 6px 24px rgba(0,0,0,0.12);
-    overflow:hidden;
+  /* ── Floating Tooltip (Beside clicked image) ── */
+  #zoom-tooltip {{
+    display: none;
+    position: fixed;
+    z-index: 100000;
+    background: #fff;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+    border: 1px solid #ccc;
+    width: 360px;
+    height: 360px;
+    transition: opacity 0.2s ease;
   }}
-  #zoom-panel.show{{display:block;}}
-  #zoom-panel-inner{{display:flex;align-items:stretch;position:relative;min-height:190px;}}
-  #zoom-img-col{{
-    flex:0 0 220px;
-    max-width:220px;
-    background:#f8f8f8;
-    border-right:1px solid #efefef;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    padding:12px;
+  #tooltip-img {{
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
   }}
-  #modal-img{{
-    max-width:196px;
-    max-height:200px;
-    display:block;
-    object-fit:contain;
-    border-radius:6px;
+  .tooltip-close {{
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    background: #333;
+    color: #fff;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    border: 2px solid #fff;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   }}
-  #zoom-meta-col{{
-    flex:1;
-    padding:14px 40px 14px 16px;
-    min-width:0;
-    display:flex;
-    flex-direction:column;
-    gap:4px;
-  }}
-  #zoom-meta-brand{{font-size:12px;font-weight:700;color:{O};}}
-  #zoom-meta-name{{font-size:13px;font-weight:700;color:#1a1a1a;line-height:1.4;word-break:break-word;}}
-  #zoom-meta-price{{font-size:13px;font-weight:800;color:#2a9d2a;margin-top:2px;}}
-  #zoom-meta-cat{{font-size:11px;color:#777;word-break:break-word;margin-top:2px;}}
-  #zoom-meta-sid{{font-size:10px;color:#bbb;font-family:monospace;margin-top:4px;}}
-  #zoom-meta-seller{{
-    font-size:11px;color:#aaa;
-    border-top:1px dashed #eee;
-    padding-top:8px;margin-top:auto;
-  }}
-  .zoom-close-btn{{
-    position:absolute;top:8px;right:8px;
-    width:26px;height:26px;
-    background:#f0f0f0;color:#666;
-    border:none;border-radius:50%;
-    font-size:16px;line-height:1;
-    cursor:pointer;
-    display:flex;align-items:center;justify-content:center;
-    z-index:10;
-  }}
-  .zoom-close-btn:hover{{background:#e0e0e0;color:#222;}}
+  .tooltip-close:hover {{ background: #000; }}
 
   #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
   .debug-hud{{position:absolute;inset:0;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:9px;padding:5px;display:none;word-break:break-all;z-index:100;}}
@@ -502,22 +491,9 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 </div>
 <div class="grid" id="card-grid"></div>
 
-<!-- Zoom panel: sticky inline card that appears below the grid, no fullscreen overlay -->
-<div id="zoom-panel">
-  <div id="zoom-panel-inner">
-    <div id="zoom-img-col">
-      <img id="modal-img" alt="Zoomed product image" referrerpolicy="no-referrer">
-    </div>
-    <div id="zoom-meta-col">
-      <div id="zoom-meta-brand"></div>
-      <div id="zoom-meta-name"></div>
-      <div id="zoom-meta-price"></div>
-      <div id="zoom-meta-cat"></div>
-      <div id="zoom-meta-sid"></div>
-      <div id="zoom-meta-seller"></div>
-    </div>
-    <button class="zoom-close-btn" onclick="closeZoom()" title="Close">×</button>
-  </div>
+<div id="zoom-tooltip">
+  <img id="tooltip-img" alt="Zoomed product" referrerpolicy="no-referrer">
+  <button class="tooltip-close" onclick="closeZoom()" title="Close">×</button>
 </div>
 
 <div id="prefetch-status"></div>
@@ -612,7 +588,8 @@ function renderCard(card) {{
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
 
-  var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}')" title="Preview">
+  // Pass the event directly so we can calculate coordinates!
+  var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
@@ -653,26 +630,52 @@ function renderCard(card) {{
   </div>`;
 }}
 
-/* ── Zoom panel: no fullscreen, just a sticky card that scrolls into view ── */
-window.showZoom = function(sid) {{
+/* ── Floating Zoom Tooltip Logic ── */
+window.showZoom = function(sid, event) {{
   var card = CARDS.find(c => c.sid === sid);
   if (!card) return;
-  var panel = document.getElementById('zoom-panel');
-  var img   = document.getElementById('modal-img');
+  var tooltip = document.getElementById('zoom-tooltip');
+  var img = document.getElementById('tooltip-img');
+  
   img.src = card.img || PLACEHOLDER;
   img.onerror = function() {{ img.src = PLACEHOLDER; img.onerror = null; }};
-  document.getElementById('zoom-meta-brand').textContent  = card.brand  || '';
-  document.getElementById('zoom-meta-name').textContent   = card.name   || '';
-  document.getElementById('zoom-meta-price').textContent  = card.price  || '';
-  document.getElementById('zoom-meta-cat').textContent    = card.cat    || '';
-  document.getElementById('zoom-meta-sid').textContent    = 'SID: ' + sid;
-  document.getElementById('zoom-meta-seller').textContent = card.seller || '';
-  panel.classList.add('show');
-  panel.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
+  
+  tooltip.style.display = 'block';
+
+  // Dimensions of the tooltip box
+  var tw = 360; 
+  var th = 360; 
+  
+  // Mouse click coordinates relative to the viewport
+  var x = event.clientX;
+  var y = event.clientY;
+
+  // Calculate left: try to place to the right, if blocked, place to the left
+  var left = x + 15;
+  if (left + tw > window.innerWidth) {{
+      left = x - tw - 15;
+  }}
+
+  // Calculate top: center vertically on cursor, cap to screen edges
+  var top = y - (th / 2);
+  if (top < 10) top = 10;
+  if (top + th > window.innerHeight) top = window.innerHeight - th - 10;
+
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
 }};
+
 window.closeZoom = function() {{
-  document.getElementById('zoom-panel').classList.remove('show');
+  document.getElementById('zoom-tooltip').style.display = 'none';
 }};
+
+// Click anywhere else to close the tooltip
+document.addEventListener('click', function(e) {{
+  var tooltip = document.getElementById('zoom-tooltip');
+  if (tooltip.style.display === 'block' && !tooltip.contains(e.target)) {{
+    closeZoom();
+  }}
+}});
 
 function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
@@ -819,7 +822,6 @@ def render_image_grid(support_files):
 
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
-    page_warnings = {}
 
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
@@ -854,7 +856,7 @@ def render_image_grid(support_files):
             page_data=page_data,
             flags_mapping=support_files.get("flags_mapping", {}),
             country=st.session_state.get('selected_country', 'Kenya'),
-            page_warnings=page_warnings,
+            page_warnings={},
             rejected_state=rejected_state,
             cols_per_row=cols_per_row,
             prefetch_urls=prefetch_urls,
