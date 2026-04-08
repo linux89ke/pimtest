@@ -1,3 +1,7 @@
+"""
+ui_components.py - All Streamlit UI rendering components, dialogs, and the image grid
+"""
+
 import re
 import json
 import logging
@@ -6,6 +10,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+import base64
 from PIL import Image
 
 from constants import JUMIA_COLORS, GRID_COLS
@@ -18,27 +23,13 @@ def _t(key):
     from translations import get_translation
     return get_translation(st.session_state.get('ui_lang', 'en'), key)
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def analyze_image_quality_cached(url: str):
-    if not url or not str(url).startswith("http"): return []
-    warnings = []
-    try:
-        resp = requests.get(url, timeout=1, stream=True)
-        if resp.status_code == 200:
-            img = Image.open(resp.raw)
-            w, h = img.size
-            if w < 300 or h < 300: warnings.append("Low Resolution")
-            ratio = h / w if w > 0 else 1
-            if ratio > 1.5: warnings.append("Tall (Screenshot?)")
-            elif ratio < 0.6: warnings.append("Wide Aspect")
-    except Exception: pass
-    return warnings
-
 def _clear_flag_df_selection(title: str):
-    if f"df_{title}" in st.session_state: del st.session_state[f"df_{title}"]
+    if f"df_{title}" in st.session_state:
+        del st.session_state[f"df_{title}"]
 
 @st.dialog("Confirm Bulk Approval")
-def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check, support_files, country_validator, validation_runner):
+def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_cols_check,
+                        support_files, country_validator, validation_runner):
     try:
         from category_matcher_engine import get_engine
         _CAT_MATCHER_AVAILABLE = True
@@ -49,8 +40,6 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
     if st.button(_t("approve_btn"), type="primary", use_container_width=True):
         with st.spinner("Processing..."):
             data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
-            
-            # Using the passed validation_runner instead of a circular import
             new_report, _ = validation_runner(
                 data_hash, subset_data, support_files,
                 country_validator.code, data_has_warranty_cols_check,
@@ -60,11 +49,17 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             for sid in sids_to_process:
                 new_row = new_report[new_report['ProductSetSid'] == sid]
                 if new_row.empty or not str(new_row.iloc[0]['FLAG']):
-                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Approved', '', '', 'Approved by User']
+                    st.session_state.final_report.loc[
+                        st.session_state.final_report['ProductSetSid'] == sid,
+                        ['Status', 'Reason', 'Comment', 'FLAG']
+                    ] = ['Approved', '', '', 'Approved by User']
                     msg_approved += 1
                 else:
                     new_flag = str(new_row.iloc[0]['FLAG'])
-                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'] == sid, ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
+                    st.session_state.final_report.loc[
+                        st.session_state.final_report['ProductSetSid'] == sid,
+                        ['Status', 'Reason', 'Comment', 'FLAG']
+                    ] = ['Rejected', new_row.iloc[0]['Reason'], new_row.iloc[0]['Comment'], new_flag]
                     msg_moved[new_flag] = msg_moved.get(new_flag, 0) + 1
 
             if title == "Wrong Category" and _CAT_MATCHER_AVAILABLE:
@@ -74,9 +69,11 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                         learned = 0
                         for sid in sids_to_process:
                             row = subset_data[subset_data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
-                            if row.empty: continue
+                            if row.empty:
+                                continue
                             name = str(row.iloc[0].get('NAME', '')).strip()
-                            if not name: continue
+                            if not name:
+                                continue
                             engine.set_compiled_rules(st.session_state.get('compiled_json_rules', {}))
                             predicted = engine.get_category_with_boost(name)
                             if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
@@ -84,11 +81,16 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                                 learned += 1
                         if learned:
                             engine.save_learning_db()
-                            st.session_state.main_toasts.append(f"🧠 Engine learned {learned} correction(s) from your approvals.")
-                except Exception as _le: logger.warning("Wrong Category approval learning failed: %s", _le)
+                            st.session_state.main_toasts.append(
+                                f"🧠 Engine learned {learned} correction(s) from your approvals."
+                            )
+                except Exception as _le:
+                    logger.warning("Wrong Category approval learning failed: %s", _le)
 
-            if msg_approved > 0: st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
-            for flag, count in msg_moved.items(): st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
+            if msg_approved > 0:
+                st.session_state.main_toasts.append(f"{msg_approved} items successfully Approved!")
+            for flag, count in msg_moved.items():
+                st.session_state.main_toasts.append(f"{count} items re-flagged as: {flag}")
 
             st.session_state.exports_cache.clear()
             st.session_state.display_df_cache.clear()
@@ -96,22 +98,27 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
             _clear_flag_df_selection(title)
         st.rerun()
 
-def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check, support_files, country_validator, validation_runner):
+def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_check,
+                         support_files, country_validator, validation_runner):
     try:
         from category_matcher_engine import get_engine
         _CAT_MATCHER_AVAILABLE = True
-    except ImportError: _CAT_MATCHER_AVAILABLE = False
+    except ImportError:
+        _CAT_MATCHER_AVAILABLE = False
 
     cache_key = f"display_df_{title}"
-    base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR', 'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
+    base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR',
+                         'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
     current_display_cols = base_display_cols.copy()
     if title == "Wrong Variation":
         for col in ('COUNT_VARIATIONS', 'LIST_VARIATIONS'):
-            if col in data.columns: current_display_cols.append(col)
+            if col in data.columns:
+                current_display_cols.append(col)
 
     if cache_key not in st.session_state.display_df_cache:
         _extra_cols = [c for c in current_display_cols if c in data.columns]
-        if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols: _extra_cols.append('CATEGORY_CODE')
+        if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in _extra_cols:
+            _extra_cols.append('CATEGORY_CODE')
         df_display = pd.merge(
             df_flagged_sids[['ProductSetSid']], data,
             left_on='ProjectSetSid' if 'ProjectSetSid' in df_flagged_sids.columns else 'ProductSetSid',
@@ -120,31 +127,51 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
         _code_to_path = support_files.get('code_to_path', {})
         if _code_to_path and 'CATEGORY_CODE' in df_display.columns:
-            df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(lambda c: _code_to_path.get(str(c).strip(), '') if pd.notna(c) else '')
+            df_display['CATEGORY'] = df_display['CATEGORY_CODE'].apply(
+                lambda c: _code_to_path.get(str(c).strip(), '') if pd.notna(c) else ''
+            )
             df_display = df_display.drop(columns=['CATEGORY_CODE'])
         df_display = df_display[[c for c in current_display_cols if c in df_display.columns]]
         st.session_state.display_df_cache[cache_key] = df_display
-    else: df_display = st.session_state.display_df_cache[cache_key]
+    else:
+        df_display = st.session_state.display_df_cache[cache_key]
 
     c1, c2 = st.columns(2)
-    with c1: search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", key=f"s_{title}")
-    with c2: seller_filter = st.multiselect("Filter by Seller", sorted(df_display['SELLER_NAME'].astype(str).unique()), key=f"f_{title}")
+    with c1:
+        search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", key=f"s_{title}")
+    with c2:
+        seller_filter = st.multiselect(
+            "Filter by Seller",
+            sorted(df_display['SELLER_NAME'].astype(str).unique()),
+            key=f"f_{title}"
+        )
 
     df_view = df_display.copy()
-    if search_term: df_view = df_view[df_view.apply(lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1)]
-    if seller_filter: df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
+    if search_term:
+        df_view = df_view[df_view.apply(
+            lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1
+        )]
+    if seller_filter:
+        df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
     df_view = df_view.reset_index(drop=True)
 
-    if 'NAME' in df_view.columns: df_view['NAME'] = df_view['NAME'].apply(lambda t: re.sub('<[^<]+?>', '', t) if isinstance(t, str) else t)
+    if 'NAME' in df_view.columns:
+        df_view['NAME'] = df_view['NAME'].apply(
+            lambda t: re.sub('<[^<]+?>', '', t) if isinstance(t, str) else t
+        )
     if 'GLOBAL_PRICE' in df_view.columns and 'GLOBAL_SALE_PRICE' in df_view.columns:
         def _local_p(row):
             sp, rp = row.get('GLOBAL_SALE_PRICE'), row.get('GLOBAL_PRICE')
             val = sp if pd.notna(sp) and str(sp).strip() != "" else rp
             return format_local_price(val, country_validator.country)
-        df_view.insert(df_view.columns.get_loc('GLOBAL_PRICE') + 1 if 'GLOBAL_PRICE' in df_view.columns else len(df_view.columns), 'Local Price', df_view.apply(_local_p, axis=1))
+        df_view.insert(
+            df_view.columns.get_loc('GLOBAL_PRICE') + 1 if 'GLOBAL_PRICE' in df_view.columns else len(df_view.columns),
+            'Local Price', df_view.apply(_local_p, axis=1)
+        )
 
     event = st.dataframe(
-        df_view, hide_index=True, use_container_width=True, selection_mode="multi-row", on_select="rerun",
+        df_view, hide_index=True, use_container_width=True,
+        selection_mode="multi-row", on_select="rerun",
         column_config={
             "PRODUCT_SET_SID": st.column_config.TextColumn(pinned=True),
             "NAME": st.column_config.TextColumn(pinned=True),
@@ -161,37 +188,51 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
 
     _fm = support_files['flags_mapping']
     _reason_options = [
-        "Wrong Category", "Restricted brands", "Suspected Fake product", "Seller Not approved to sell Refurb",
-        "Product Warranty", "Seller Approve to sell books", "Seller Approved to Sell Perfume", "Counterfeit Sneakers",
-        "Suspected counterfeit Jerseys", "Prohibited products", "Unnecessary words in NAME", "Single-word NAME",
-        "Generic BRAND Issues", "Fashion brand issues", "BRAND name repeated in NAME", "Wrong Variation",
-        "Generic branded products with genuine brands", "Missing COLOR", "Missing Weight/Volume",
-        "Incomplete Smartphone Name", "Duplicate product", "Poor images", "Perfume Tester",
-        "NG - Gift Card Seller", "NG - Books Seller", "NG - TV Brand Seller",
-        "NG - HP Toners Seller", "NG - Apple Seller", "NG - Xmas Tree Seller",
-        "NG - Rice Brand Seller", "NG - Powerbank Capacity", "Wrong Price", "Category Max Price Exceeded",
-        "Other Reason (Custom)",
+        "Wrong Category", "Restricted brands", "Suspected Fake product",
+        "Seller Not approved to sell Refurb", "Product Warranty",
+        "Seller Approve to sell books", "Seller Approved to Sell Perfume",
+        "Counterfeit Sneakers", "Suspected counterfeit Jerseys", "Prohibited products",
+        "Unnecessary words in NAME", "Single-word NAME", "Generic BRAND Issues",
+        "Fashion brand issues", "BRAND name repeated in NAME", "Wrong Variation",
+        "Generic branded products with genuine brands", "Missing COLOR",
+        "Missing Weight/Volume", "Incomplete Smartphone Name", "Duplicate product",
+        "Poor images", "Perfume Tester", "NG - Gift Card Seller", "NG - Books Seller",
+        "NG - TV Brand Seller", "NG - HP Toners Seller", "NG - Apple Seller",
+        "NG - Xmas Tree Seller", "NG - Rice Brand Seller", "NG - Powerbank Capacity",
+        "Wrong Price", "Category Max Price Exceeded", "Color Mismatch", "Other Reason (Custom)",
     ]
 
     btn_col1, btn_col2 = st.columns(2)
     with btn_col1:
-        if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary", use_container_width=True, disabled=not has_selection):
+        if st.button(_t("approve_btn"), key=f"approve_sel_{title}", type="primary",
+                     use_container_width=True, disabled=not has_selection):
             sids_to_process = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
             subset = data[data['PRODUCT_SET_SID'].isin(sids_to_process)]
             _clear_flag_df_selection(title)
-            bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check, support_files, country_validator, validation_runner)
+            bulk_approve_dialog(sids_to_process, title, subset, data_has_warranty_cols_check,
+                                support_files, country_validator, validation_runner)
 
     with btn_col2:
         with st.popover(_t("reject_as"), use_container_width=True, disabled=not has_selection):
-            chosen_reason = st.selectbox("Reason", _reason_options, key=f"rej_reason_dd_{title}", label_visibility="collapsed")
+            chosen_reason = st.selectbox(
+                "Reason", _reason_options,
+                key=f"rej_reason_dd_{title}", label_visibility="collapsed"
+            )
             _cmt_lang = 'fr' if st.session_state.get('selected_country') == "Morocco" else 'en'
 
             if chosen_reason == "Other Reason (Custom)":
-                custom_comment = st.text_area("Custom comment", placeholder="Type your rejection reason here...", key=f"custom_comment_{title}", height=80)
-                if st.button("Apply", key=f"apply_custom_{title}", type="primary", use_container_width=True, disabled=not has_selection):
+                custom_comment = st.text_area(
+                    "Custom comment", placeholder="Type your rejection reason here...",
+                    key=f"custom_comment_{title}", height=80
+                )
+                if st.button("Apply", key=f"apply_custom_{title}", type="primary",
+                             use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
                     final_comment = custom_comment.strip() if custom_comment.strip() else "Other Reason"
-                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', '1000007 - Other Reason', final_comment, 'Other Reason (Custom)']
+                    st.session_state.final_report.loc[
+                        st.session_state.final_report['ProductSetSid'].isin(to_reject),
+                        ['Status', 'Reason', 'Comment', 'FLAG']
+                    ] = ['Rejected', '1000007 - Other Reason', final_comment, 'Other Reason (Custom)']
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected with custom reason.")
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
@@ -203,9 +244,13 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                 _rcode = _rinfo['reason']
                 _rcmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
                 st.caption(f"Code: {_rcode[:40]}...")
-                if st.button("Apply", key=f"apply_dd_{title}", type="primary", use_container_width=True, disabled=not has_selection):
+                if st.button("Apply", key=f"apply_dd_{title}", type="primary",
+                             use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
-                    st.session_state.final_report.loc[st.session_state.final_report['ProductSetSid'].isin(to_reject), ['Status', 'Reason', 'Comment', 'FLAG']] = ['Rejected', _rcode, _rcmt, chosen_reason]
+                    st.session_state.final_report.loc[
+                        st.session_state.final_report['ProductSetSid'].isin(to_reject),
+                        ['Status', 'Reason', 'Comment', 'FLAG']
+                    ] = ['Rejected', _rcode, _rcmt, chosen_reason]
                     st.session_state.main_toasts.append(f"{len(to_reject)} items rejected as '{chosen_reason}'.")
 
                     if chosen_reason == "Wrong Category" and title != "Wrong Category" and _CAT_MATCHER_AVAILABLE:
@@ -213,13 +258,16 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                             engine = get_engine()
                             _cats = support_files.get('categories_names_list', [])
                             if engine is not None and _cats:
-                                if not engine._tfidf_built: engine.build_tfidf_index(_cats)
+                                if not engine._tfidf_built:
+                                    engine.build_tfidf_index(_cats)
                                 learned = 0
                                 for sid in to_reject:
                                     prod_row = data[data['PRODUCT_SET_SID'].astype(str).str.strip() == str(sid)]
-                                    if prod_row.empty: continue
+                                    if prod_row.empty:
+                                        continue
                                     name = str(prod_row.iloc[0].get('NAME', '')).strip()
-                                    if not name: continue
+                                    if not name:
+                                        continue
                                     engine.set_compiled_rules(st.session_state.get('compiled_json_rules', {}))
                                     predicted = engine.get_category_with_boost(name)
                                     if predicted and predicted.lower() not in ('nan', 'none', 'uncategorized', ''):
@@ -227,15 +275,17 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                         learned += 1
                                 if learned:
                                     engine.save_learning_db()
-                                    st.session_state.main_toasts.append(f"🧠 Engine noted {learned} missed Wrong Category item(s).")
-                        except Exception as _le: logger.warning("Wrong Category manual rejection learning failed: %s", _le)
+                                    st.session_state.main_toasts.append(
+                                        f"🧠 Engine noted {learned} missed Wrong Category item(s)."
+                                    )
+                        except Exception as _le:
+                            logger.warning("Wrong Category manual rejection learning failed: %s", _le)
 
                     st.session_state.exports_cache.clear()
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
                     st.rerun()
-
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
                          rejected_state, cols_per_row, prefetch_urls=None):
@@ -246,6 +296,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     • Animated gradient warning badges
     • Hover tooltips (full name + seller)
     • New smooth zoom modal with backdrop
+    • CDN FIXES INCLUDED (No-Referrer, No lazy loading)
     """
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
@@ -299,6 +350,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <html dir="{html_dir}">
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
   body{{background:#f5f5f5;padding:8px;}}
@@ -363,10 +415,9 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-status"></div>
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
-<!-- Zoom Modal -->
 <div id="zoom-modal" onclick="if(event.target.id==='zoom-modal')closeZoom()">
   <div id="zoom-content" onclick="event.stopImmediatePropagation()">
-    <img id="modal-img" alt="Zoomed product">
+    <img id="modal-img" alt="Zoomed product" referrerpolicy="no-referrer" crossorigin="anonymous">
     <button class="modal-close" onclick="closeZoom()">×</button>
   </div>
 </div>
@@ -441,7 +492,11 @@ function renderCard(card) {{
   var isStaged = sid in staged;
   var isSelected = !isCommitted && !isStaged && (sid in selected);
   var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
+  
+  // CDN Fix: Safely map image without breaking URL parameters
   var imgSrc = card.img || PLACEHOLDER;
+  var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
+  
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '…' : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
@@ -456,12 +511,13 @@ function renderCard(card) {{
     actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{sid}}','REJECT_POOR_IMAGE')">{_t('poor_img')}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{sid}}',this.value);this.value=''}}"><option value="">{_t('more_options')}</option><option value="REJECT_WRONG_CAT">{_t('wrong_cat')}</option><option value="REJECT_FAKE">{_t('fake_prod')}</option><option value="REJECT_BRAND">{_t('restr_brand')}</option><option value="REJECT_PROHIBITED">{_t('prohibited')}</option><option value="REJECT_COLOR">{_t('missing_color')}</option><option value="REJECT_WRONG_BRAND">{_t('wrong_brand')}</option></select></div>`;
   }}
 
+  // CDN Fix: Added referrerpolicy='no-referrer' crossorigin='anonymous'
   return `<div class="${{cls}}" id="card-${{sid}}">
     <div class="card-img-wrap" onclick="window.toggleSelect('${{sid}}',event)">
       ${{priceHtml}}
       <div class="warn-wrap">${{warnHtml}}</div>
       <img class="card-img-placeholder" src="${{PLACEHOLDER}}" alt="">
-      <img class="card-img" loading="lazy" decoding="async" src="${{escapeHtml(imgSrc)}}" 
+      <img class="card-img" decoding="async" src="${{safeImgSrcForHtml}}" referrerpolicy="no-referrer" crossorigin="anonymous" 
            onload="onImgLoad(this,'${{sid}}')" onerror="onImgError(this,'${{sid}}')">
       ${{zoomHtml}}
       ${{overlayHtml}}
@@ -490,7 +546,6 @@ window.closeZoom = function() {{
   document.getElementById('zoom-modal').classList.remove('show');
 }};
 
-// Rest of your JS functions (unchanged but updated for new modal)
 function updateSelCount() {{ document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' {_t("items_pending")}'; }}
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
 function replaceCard(sid) {{ 
@@ -501,8 +556,6 @@ function replaceCard(sid) {{
 }}
 window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
 window.toggleSelect = function(sid, e) {{ 
-  var img = document.querySelector('#card-' + sid + ' .card-img');
-  if (img && img.classList.contains('locally-zoomed')) return;
   if (sid in COMMITTED) return;
   if (sid in staged) delete staged[sid];
   else if (sid in selected) delete selected[sid];
@@ -522,7 +575,7 @@ window.doBatchReject = function() {{
 }};
 window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
 
-// Background prefetch (next pages)
+// Background prefetch (next pages) with Referrer Fix
 (function() {{
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
   var container = document.getElementById('prefetch-container');
@@ -535,8 +588,9 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
     while (i < total && processed < limit) {{
       var url = PREFETCH_URLS[i++]; processed++;
       var img = new Image();
+      img.referrerPolicy = "no-referrer";
       img.onload = () => {{ done++; if (statusEl) statusEl.textContent = `Prefetched ${{done}}/${{total}}`; }};
-      img.style.cssText = 'width:1px;height:1px;opacity:0;';
+      img.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
       container.appendChild(img);
       img.src = url;
     }}
@@ -550,32 +604,39 @@ renderAll();
 </body>
 </html>"""
 
-
-
 @st.fragment
 def render_image_grid(support_files):
-    if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc": return
+    if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc":
+        return
 
     st.markdown("---")
     st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
 
-    fr = st.session_state.final_report
+    fr   = st.session_state.final_report
     data = st.session_state.all_data_map
-    committed_rej_sids = {k.replace("quick_rej_", "") for k in st.session_state.keys() if k.startswith("quick_rej_") and "reason" not in k}
+    committed_rej_sids = {
+        k.replace("quick_rej_", "")
+        for k in st.session_state.keys()
+        if k.startswith("quick_rej_") and "reason" not in k
+    }
     valid_grid_df = fr[(fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))]
 
     c1, c2, c3 = st.columns([1.5, 1.5, 2])
-    with c1: search_n = st.text_input("Search by Name", placeholder="Product name…")
-    with c2: search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
+    with c1:
+        search_n = st.text_input("Search by Name", placeholder="Product name…")
+    with c2:
+        search_sc = st.text_input("Search by Seller/Category", placeholder="Seller or Category…")
     with c3:
         st.session_state.grid_items_per_page = st.select_slider(
             "Items per page", options=[20, 50, 100, 200],
             value=st.session_state.get('grid_items_per_page', 50),
         )
 
-    if 'MAIN_IMAGE' not in data.columns: data['MAIN_IMAGE'] = ''
+    if 'MAIN_IMAGE' not in data.columns:
+        data['MAIN_IMAGE'] = ''
     available_cols = [c for c in GRID_COLS if c in data.columns]
-    if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols: available_cols.append('CATEGORY_CODE')
+    if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
+        available_cols.append('CATEGORY_CODE')
 
     review_data = pd.merge(
         valid_grid_df[["ProductSetSid"]], data[available_cols],
@@ -584,21 +645,32 @@ def render_image_grid(support_files):
     _code_to_path = support_files.get('code_to_path', {})
     if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
         review_data = review_data.copy()
-        review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else '')
+        review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(
+            lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ''
+        )
 
-    if search_n: review_data = review_data[review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)]
+    if search_n:
+        review_data = review_data[
+            review_data["NAME"].astype(str).str.contains(search_n, case=False, na=False)
+        ]
     if search_sc:
-        mc = review_data["CATEGORY"].astype(str).str.contains(search_sc, case=False, na=False) if "CATEGORY" in review_data.columns else pd.Series(False, index=review_data.index)
+        mc = (
+            review_data["CATEGORY"].astype(str).str.contains(search_sc, case=False, na=False)
+            if "CATEGORY" in review_data.columns
+            else pd.Series(False, index=review_data.index)
+        )
         ms = review_data["SELLER_NAME"].astype(str).str.contains(search_sc, case=False, na=False)
         review_data = review_data[mc | ms]
 
-    ipp = st.session_state.get('grid_items_per_page', 50)
+    ipp         = st.session_state.get('grid_items_per_page', 50)
     total_pages = max(1, (len(review_data) + ipp - 1) // ipp)
-    if st.session_state.get('grid_page', 0) >= total_pages: st.session_state.grid_page = 0
+    if st.session_state.get('grid_page', 0) >= total_pages:
+        st.session_state.grid_page = 0
 
     pg_cols = st.columns([1, 2, 1], vertical_alignment="center")
     with pg_cols[0]:
-        if st.button("◀ Prev Page", use_container_width=True, disabled=st.session_state.grid_page == 0):
+        if st.button("◀ Prev Page", use_container_width=True,
+                     disabled=st.session_state.grid_page == 0):
             st.session_state.grid_page = max(0, st.session_state.grid_page - 1)
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
@@ -606,75 +678,126 @@ def render_image_grid(support_files):
         new_page = st.number_input(
             f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
             min_value=1, max_value=max(1, total_pages),
-            value=st.session_state.grid_page + 1, step=1
+            value=st.session_state.grid_page + 1, step=1,
         )
         if new_page - 1 != st.session_state.grid_page:
             st.session_state.grid_page = new_page - 1
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols[2]:
-        if st.button("Next Page ▶", use_container_width=True, disabled=st.session_state.grid_page >= total_pages - 1):
+        if st.button("Next Page ▶", use_container_width=True,
+                     disabled=st.session_state.grid_page >= total_pages - 1):
             st.session_state.grid_page += 1
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
 
     page_start = st.session_state.grid_page * ipp
-    page_data = review_data.iloc[page_start: page_start + ipp]
-
+    page_data  = review_data.iloc[page_start: page_start + ipp]
     page_warnings = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        future_to_sid = {ex.submit(analyze_image_quality_cached, str(r.get("MAIN_IMAGE", "")).strip()): str(r["PRODUCT_SET_SID"]) for _, r in page_data.iterrows()}
-        for future in concurrent.futures.as_completed(future_to_sid):
-            warns = future.result()
-            if warns: page_warnings[future_to_sid[future]] = warns
 
-    rejected_state = {sid: st.session_state[f"quick_rej_reason_{sid}"] for sid in page_data["PRODUCT_SET_SID"].astype(str) if st.session_state.get(f"quick_rej_{sid}")}
+    _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
+    if _prefetch_cache_key not in st.session_state:
+        prefetch_urls = []
+        for prefetch_page in [st.session_state.grid_page + 1, st.session_state.grid_page + 2]:
+            if prefetch_page >= total_pages:
+                break
+            p_start = prefetch_page * ipp
+            for url in review_data.iloc[p_start: p_start + ipp]["MAIN_IMAGE"].astype(str):
+                url = url.strip().replace("http://", "https://", 1)
+                if url.startswith("https"):
+                    prefetch_urls.append(url)
+        st.session_state[_prefetch_cache_key] = prefetch_urls
+    else:
+        prefetch_urls = st.session_state[_prefetch_cache_key]
+
+    rejected_state = {
+        sid: st.session_state[f"quick_rej_reason_{sid}"]
+        for sid in page_data["PRODUCT_SET_SID"].astype(str)
+        if st.session_state.get(f"quick_rej_{sid}")
+    }
+    _grid_cache_key = (
+        f"grid_html_{st.session_state.grid_page}"
+        f"_{len(page_data)}"
+        f"_{hash(tuple(page_data['PRODUCT_SET_SID'].astype(str).tolist()))}"
+        f"_r{len(rejected_state)}"
+    )
+    
+    if _grid_cache_key not in st.session_state:
+        cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
+        st.session_state[_grid_cache_key] = build_fast_grid_html(
+            page_data=page_data,
+            flags_mapping=support_files.get("flags_mapping", {}),
+            country=st.session_state.get('selected_country', 'Kenya'),
+            page_warnings=page_warnings,
+            rejected_state=rejected_state,
+            cols_per_row=cols_per_row,
+            prefetch_urls=prefetch_urls,
+        )
+
+    grid_html = st.session_state[_grid_cache_key]
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
-    grid_html = build_fast_grid_html(page_data, support_files["flags_mapping"], st.session_state.get('selected_country', 'Kenya'), page_warnings, rejected_state, cols_per_row)
-    components.html(grid_html, height=800, scrolling=True)
+    n_rows       = -(-len(page_data) // cols_per_row)
+    grid_height  = min(n_rows * 320 + 140, 2600)
+
+    components.html(grid_html, height=grid_height, scrolling=True)
 
     if st.session_state.get("do_scroll_top", False):
-        components.html("<script>window.parent.document.querySelector('.main').scrollTo({top:0,behavior:'smooth'});</script>", height=0)
+        components.html(
+            "<script>window.parent.document.querySelector('.main')"
+            ".scrollTo({top:0,behavior:'smooth'});</script>",
+            height=0,
+        )
         st.session_state.do_scroll_top = False
+
 
 @st.fragment
 def render_exports_section(support_files, country_validator):
-    if st.session_state.final_report.empty or st.session_state.get('file_mode') == 'post_qc': return
+    if st.session_state.final_report.empty or st.session_state.get('file_mode') == 'post_qc':
+        return
 
     from datetime import datetime
-    fr = st.session_state.final_report
-    data = st.session_state.all_data_map
+    fr    = st.session_state.final_report
+    data  = st.session_state.all_data_map
     app_df = fr[fr['Status'] == 'Approved']
     rej_df = fr[fr['Status'] == 'Rejected']
-    c_code = st.session_state.get('selected_country', 'Kenya')[:2].upper()
+    c_code   = st.session_state.get('selected_country', 'Kenya')[:2].upper()
     date_str = datetime.now().strftime('%Y-%m-%d')
     reasons_df = support_files.get('reasons', pd.DataFrame())
 
     st.markdown("---")
     st.markdown(
-        f"<div style='background:linear-gradient(135deg,{JUMIA_COLORS['primary_orange']},{JUMIA_COLORS['secondary_orange']});padding:20px 24px;border-radius:10px;margin-bottom:20px;'>"
+        f"<div style='background:linear-gradient(135deg,{JUMIA_COLORS['primary_orange']},"
+        f"{JUMIA_COLORS['secondary_orange']});padding:20px 24px;border-radius:10px;margin-bottom:20px;'>"
         f"<h2 style='color:white;margin:0;font-size:24px;font-weight:700;'>{_t('download_reports')}</h2>"
-        f"<p style='color:rgba(255,255,255,0.9);margin:6px 0 0 0;font-size:13px;'>Export validation results in Excel or ZIP format</p></div>",
-        unsafe_allow_html=True
+        f"<p style='color:rgba(255,255,255,0.9);margin:6px 0 0 0;font-size:13px;'>"
+        f"Export validation results in Excel or ZIP format</p></div>",
+        unsafe_allow_html=True,
     )
 
     exports_config = [
-        ("PIM Export",    fr,     'Complete validation report with all statuses', lambda df: generate_smart_export(df, f"{c_code}_PIM_Export_{date_str}", 'simple', reasons_df)),
-        ("Rejected Only", rej_df, 'Products that failed validation',              lambda df: generate_smart_export(df, f"{c_code}_Rejected_{date_str}", 'simple', reasons_df)),
-        ("Approved Only", app_df, 'Products that passed validation',              lambda df: generate_smart_export(df, f"{c_code}_Approved_{date_str}", 'simple', reasons_df)),
-        ("Full Data",     data,   'Complete dataset with validation flags',       lambda df: generate_smart_export(prepare_full_data_merged(df, fr), f"{c_code}_Full_{date_str}", 'full')),
+        ("PIM Export",    fr,      'Complete validation report with all statuses',
+         lambda df: generate_smart_export(df, f"{c_code}_PIM_Export_{date_str}", 'simple', reasons_df)),
+        ("Rejected Only", rej_df,  'Products that failed validation',
+         lambda df: generate_smart_export(df, f"{c_code}_Rejected_{date_str}", 'simple', reasons_df)),
+        ("Approved Only", app_df,  'Products that passed validation',
+         lambda df: generate_smart_export(df, f"{c_code}_Approved_{date_str}", 'simple', reasons_df)),
+        ("Full Data",     data,    'Complete dataset with validation flags',
+         lambda df: generate_smart_export(prepare_full_data_merged(df, fr), f"{c_code}_Full_{date_str}", 'full')),
     ]
 
     all_cached = all(t in st.session_state.exports_cache for t, _, _, _ in exports_config)
     if all_cached:
         st.success("All reports generated and ready to download.", icon=":material/check_circle:")
     else:
-        if st.button("Generate All Reports", type="primary", icon=":material/download:", use_container_width=True):
+        if st.button("Generate All Reports", type="primary",
+                     icon=":material/download:", use_container_width=True):
             with st.spinner("Generating all reports…"):
                 for t2, d2, _, f2 in exports_config:
                     if t2 not in st.session_state.exports_cache:
                         res, fname, mime = f2(d2)
-                        st.session_state.exports_cache[t2] = {"data": res.getvalue(), "fname": fname, "mime": mime}
+                        st.session_state.exports_cache[t2] = {
+                            "data": res.getvalue(), "fname": fname, "mime": mime
+                        }
             st.rerun()
 
     cols_count = 4 if st.session_state.get('layout_mode') == "wide" else 2
@@ -689,22 +812,31 @@ def render_exports_section(support_files, country_validator):
                             f"<div style='text-align:center;margin-bottom:15px;'>"
                             f"<div style='font-size:18px;font-weight:700;'>{title}</div>"
                             f"<div style='font-size:11px;margin-top:4px;opacity:0.7;'>{desc}</div>"
-                            f"<div style='background:{JUMIA_COLORS['light_gray']};color:{JUMIA_COLORS['primary_orange']};padding:8px;border-radius:6px;margin-top:12px;font-weight:600;'>{len(df):,} rows</div>"
+                            f"<div style='background:{JUMIA_COLORS['light_gray']};"
+                            f"color:{JUMIA_COLORS['primary_orange']};padding:8px;border-radius:6px;"
+                            f"margin-top:12px;font-weight:600;'>{len(df):,} rows</div>"
                             f"</div>",
-                            unsafe_allow_html=True
+                            unsafe_allow_html=True,
                         )
                         if title not in st.session_state.exports_cache:
-                            if st.button("Generate", key=f"gen_{title}", type="primary", use_container_width=True, icon=":material/download:"):
+                            if st.button("Generate", key=f"gen_{title}", type="primary",
+                                         use_container_width=True, icon=":material/download:"):
                                 with st.spinner("Generating all reports…"):
                                     for t2, d2, _, f2 in exports_config:
                                         if t2 not in st.session_state.exports_cache:
                                             res, fname, mime = f2(d2)
-                                            st.session_state.exports_cache[t2] = {"data": res.getvalue(), "fname": fname, "mime": mime}
+                                            st.session_state.exports_cache[t2] = {
+                                                "data": res.getvalue(), "fname": fname, "mime": mime
+                                            }
                                 st.rerun()
                         else:
                             cache = st.session_state.exports_cache[title]
-                            st.download_button("Download", data=cache["data"], file_name=cache["fname"], mime=cache["mime"],
-                                               use_container_width=True, type="primary", icon=":material/file_download:", key=f"dl_{title}")
+                            st.download_button(
+                                "Download", data=cache["data"],
+                                file_name=cache["fname"], mime=cache["mime"],
+                                use_container_width=True, type="primary",
+                                icon=":material/file_download:", key=f"dl_{title}",
+                            )
                             if st.button("Clear", key=f"clr_{title}", use_container_width=True):
                                 del st.session_state.exports_cache[title]
                                 st.rerun()
