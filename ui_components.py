@@ -348,7 +348,6 @@ renderAll();
 </body>
 </html>
 """
-
 @st.fragment
 def render_image_grid(support_files):
     if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc": return
