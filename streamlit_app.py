@@ -1691,7 +1691,28 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     d['_norm_name']   = d['NAME'].astype(str).apply(lambda x: re.sub(r'\s+', '', normalize_text(x)))
     d['_norm_brand']  = d['BRAND'].astype(str).str.lower().str.strip()
     d['_norm_seller'] = d['SELLER_NAME'].astype(str).str.lower().str.strip()
-    d['_dedup_key']   = d['_norm_seller'] + '|' + d['_norm_brand'] + '|' + d['_norm_name']
+
+    # Build color key from COLOR or COLOR_FAMILY if color not already in name
+    _color_list = known_colors or []
+    _color_pattern = re.compile(
+        r'\b(' + '|'.join(re.escape(c) for c in sorted(_color_list, key=len, reverse=True)) + r')\b',
+        re.IGNORECASE
+    ) if _color_list else None
+
+    def _extract_color_key(row):
+        name_lower = str(row.get('NAME', '')).lower()
+        # If a known color word already appears in the name, name carries it — no need to add
+        if _color_pattern and _color_pattern.search(name_lower):
+            return ''
+        # Try COLOR column first, fall back to COLOR_FAMILY
+        for col in ('COLOR', 'COLOR_FAMILY'):
+            val = str(row.get(col, '')).strip().lower()
+            if val and val not in ('nan', 'none', '', 'n/a'):
+                return val
+        return ''
+
+    d['_color_key'] = d.apply(_extract_color_key, axis=1)
+    d['_dedup_key'] = d['_norm_seller'] + '|' + d['_norm_brand'] + '|' + d['_norm_name'] + '|' + d['_color_key']
 
     first_seen_mask = ~d.duplicated(subset=['_dedup_key'], keep='first')
     dup_mask        = d.duplicated(subset=['_dedup_key'], keep='first')
@@ -1706,7 +1727,6 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     base_cols  = data.columns.tolist()
     extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
-
 
 # -------------------------------------------------
 # NIGERIA-SPECIFIC QC CHECKS
