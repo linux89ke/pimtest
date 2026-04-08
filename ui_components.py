@@ -493,21 +493,30 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// 🚀 LOCK STREAMLIT DIALOG: Prevents accidental clicks on gray background from closing the window!
+// 🚀 ULTIMATE STREAMLIT DIALOG LOCK
+// This captures all clicks at the highest DOM level and kills them 
+// if they hit the Streamlit modal's gray backdrop.
 try {{
   var par = window.parent.document;
-  if (!par.window.__modalLocked) {{
-    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup'].forEach(ev => {{
-      par.addEventListener(ev, function(e) {{
-        var dialog = par.querySelector('[data-testid="stDialog"]');
-        if (dialog && !dialog.contains(e.target)) {{
-           e.stopPropagation();
-        }}
-      }}, true); // True = capture phase (stops it before React sees it)
-    }});
-    par.window.__modalLocked = true;
+  if (!par.window.__stModalLocked) {{
+    par.window.__stModalLocked = true;
+    
+    function blockOutsideClicks(e) {{
+      var dialog = par.querySelector('[data-testid="stDialog"]');
+      // If the dialog exists, and the user clicked outside the white dialog box
+      if (dialog && !dialog.contains(e.target)) {{
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+    }}
+    
+    // Listen in the CAPTURE phase (the 'true' parameter) to stop the event before Streamlit sees it
+    par.addEventListener('mousedown', blockOutsideClicks, true);
+    par.addEventListener('mouseup', blockOutsideClicks, true);
+    par.addEventListener('click', blockOutsideClicks, true);
   }}
-}} catch(e) {{}}
+}} catch(e) {{ console.error("Could not lock dialog", e); }}
+
 
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
@@ -893,7 +902,6 @@ def visual_review_modal(support_files):
     n_rows       = -(-len(page_data) // cols_per_row)
     grid_height  = min(n_rows * 320 + 140, 800)
 
-    # 🚀 Safely rendering via components.html since st.iframe srcdoc isn't stable yet
     components.html(grid_html, height=grid_height, scrolling=True)
 
 @st.fragment
