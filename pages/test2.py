@@ -867,6 +867,97 @@ def load_nigeria_qc_rules() -> Dict:
 
     return result
 
+@st.cache_data(ttl=3600)
+def load_morocco_qc_rules() -> Dict:
+    """
+    Reads Morocco_rules.xlsx and returns:
+
+      "restricted"  -> list of dicts  {brand, brand_raw, sellers, ...}
+                       brands that have at least one authorised vendor
+                       (fed into the existing check_restricted_brands logic)
+
+      "prohibited_brands"  -> set of str (lower-cased)
+                              brands with ZERO authorised vendors — nobody allowed
+
+      "prohibited_keywords" -> list of str (lower-cased)
+                               from the 'keywords' sheet — replaces the MA tab
+                               of Prohibbited.xlsx for Morocco
+    """
+    FILE_NAME = "Morocco_rules.xlsx"
+    result: Dict = {
+        "restricted":          [],
+        "prohibited_brands":   set(),
+        "prohibited_keywords": [],
+    }
+
+    if not os.path.exists(FILE_NAME):
+        logger.warning("Morocco_rules.xlsx not found — MA-specific checks skipped.")
+        return result
+
+    # ── brands sheet ──────────────────────────────────────────────────────────
+    try:
+        df = safe_excel_read(FILE_NAME, sheet_name="brands")
+        if not df.empty:
+            df.columns = [str(c).strip().lower() for c in df.columns]
+            brand_col  = next((c for c in df.columns if "brand"       in c), df.columns[0])
+            vendor_col = next((c for c in df.columns if "vendor"      in c
+                                                      or "seller"     in c
+                                                      or "authorized" in c), df.columns[1])
+
+            brand_dict: dict = {}
+            for _, row in df.iterrows():
+                brand = str(row.get(brand_col, "")).strip()
+                if not brand or brand.lower() in ("nan", "restricted brand", "brand"):
+                    continue
+                b_lower = brand.lower()
+                if b_lower not in brand_dict:
+                    brand_dict[b_lower] = {"brand_raw": brand, "sellers": set()}
+                vendor = str(row.get(vendor_col, "")).strip()
+                if vendor and vendor.lower() not in ("nan", "none", "authorized vendors", ""):
+                    brand_dict[b_lower]["sellers"].add(vendor.strip().lower())
+
+            for b_lower, data in brand_dict.items():
+                if data["sellers"]:
+                    # Has approved sellers → restricted brand check
+                    result["restricted"].append({
+                        "brand":      b_lower,
+                        "brand_raw":  data["brand_raw"],
+                        "sellers":    data["sellers"],
+                        "categories": set(),          # no category filter for MA
+                        "variations": [],
+                        "has_blank_category": True,   # treat as apply-to-all-categories
+                    })
+                else:
+                    # Zero approved sellers → fully prohibited
+                    result["prohibited_brands"].add(b_lower)
+
+            logger.info(
+                f"[MoroccoRules] brands loaded: "
+                f"{len(result['restricted'])} restricted, "
+                f"{len(result['prohibited_brands'])} fully prohibited."
+            )
+    except Exception as e:
+        logger.warning(f"load_morocco_qc_rules brands: {e}")
+
+    # ── keywords sheet ────────────────────────────────────────────────────────
+    try:
+        df_kw = safe_excel_read(FILE_NAME, sheet_name="keywords")
+        if not df_kw.empty:
+            df_kw.columns = [str(c).strip().lower() for c in df_kw.columns]
+            kw_col = df_kw.columns[0]
+            result["prohibited_keywords"] = [
+                str(v).strip().lower()
+                for v in df_kw[kw_col].dropna()
+                if str(v).strip().lower() not in ("", "nan", "keyword", "keywords")
+            ]
+            logger.info(
+                f"[MoroccoRules] {len(result['prohibited_keywords'])} prohibited keywords loaded."
+            )
+    except Exception as e:
+        logger.warning(f"load_morocco_qc_rules keywords: {e}")
+
+    return result
+
 # -------------------------------------------------
 # LOAD FLAGS MAPPING (WITH MULTI-LINGUAL SUPPORT)
 # -------------------------------------------------
@@ -909,6 +1000,50 @@ def load_flags_mapping(filename="reason.xlsx") -> Dict[str, dict]:
     default_mapping = {}
     for k, v in raw_default.items():
         default_mapping[k] = {'reason': v[0], 'en': v[1], 'fr': v[1], 'ar': v[1]}
+
+    # ── Morocco-specific flags (French comments from reason.xlsx) ─────────────
+    default_mapping['MA - Marque Interdite'] = {
+        'reason': '1000028 - Kindly Contact Jumia Seller Support To Confirm Possibility Of Sale Of This Product By Raising A Claim',
+        'en': 'Please contact Jumia Seller Support and raise a claim to confirm whether this product is eligible for listing. This step will help ensure that all necessary requirements and approvals are addressed before proceeding with the sale.',
+        'fr': (
+            "Veuillez contacter le Support Vendeur de Jumia et soumettre une réclamation "
+            "afin de confirmer si ce produit est éligible à la mise en ligne.\n"
+            "Cette étape permet de s'assurer que toutes les exigences et approbations "
+            "nécessaires sont prises en compte avant la mise en vente, et d'éviter tout "
+            "problème de conformité à l'avenir."
+        ),
+        'ar': (
+            'يرجى التواصل مع فريق دعم بائعين جوميا وتقديم طلب مراجعة (Claim) للتأكد من '
+            'إمكانية عرض هذا المنتج على المنصة.\n'
+            'هذا الإجراء يساعد في التأكد من استيفاء جميع المتطلبات والموافقات اللازمة '
+            'قبل بدء البيع، وتجنب أي مخالفات مستقبلية.'
+        ),
+    }
+    default_mapping['MA - Produit Interdit'] = {
+        'reason': '1000033 - Keywords in your content/ Product name / description has been blacklisted',
+        'en': (
+            'Your product name or description includes unauthorized or blacklisted keywords. '
+            'Please carefully review the content and remove or replace any blacklisted terms.'
+        ),
+        'fr': (
+            "Le nom ou la description de votre produit contient des mots-clés non autorisés "
+            "ou interdits. Ces termes ne sont pas acceptés et peuvent nuire à la visibilité "
+            "de votre produit, à son classement dans les recherches, voire entraîner son rejet.\n"
+            "Veuillez relire attentivement le contenu et supprimer ou remplacer tout mot-clé "
+            "interdit par des termes exacts et approuvés.\n"
+            "Assurez-vous également que les mots-clés soient uniquement utilisés dans le champ "
+            "dédié\u202f«\u202fMots-clés\u202f» et ne soient pas répétés dans le titre ou la "
+            "description du produit.\n"
+            "Cela permet de maintenir des fiches produits claires, conformes et faciles à "
+            "comprendre pour les clients."
+        ),
+        'ar': (
+            'اسم المنتج أو وصفه يحتوي على كلمات غير مصرح بها.\n'
+            'استخدام هذه الكلمات قد يؤثر سلبًا على ظهور المنتج في نتائج البحث أو يؤدي إلى رفضه.\n'
+            'يرجى مراجعة المحتوى بعناية، وحذف أو استبدال تلك الكلمات بكلمات دقيقة ومصرح بها.'
+        ),
+    }
+    # ── End Morocco flags ──────────────────────────────────────────────────────
 
     try:
         if os.path.exists(filename):
@@ -1881,6 +2016,43 @@ def check_nigeria_powerbanks(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame
         flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
     return flagged[[c for c in data.columns if c in flagged.columns] + ["Comment_Detail"]].drop_duplicates(subset=["PRODUCT_SET_SID"])
 
+def check_morocco_prohibited_brands(data: pd.DataFrame, ma_rules: Dict) -> pd.DataFrame:
+    """
+    Flags products whose brand (or name) matches a Morocco brand
+    that has ZERO authorised vendors — nobody is allowed to sell it.
+    """
+    prohibited = ma_rules.get("prohibited_brands", set())
+    if not prohibited or not {"BRAND", "NAME"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
+    d = data.copy()
+    d["_brand_l"] = d["BRAND"].astype(str).str.strip().str.lower()
+    d["_name_l"]  = d["NAME"].astype(str).str.lower()
+
+    sorted_brands = sorted(prohibited, key=len, reverse=True)
+    pattern = re.compile(
+        r"(?<!\w)(" + "|".join(re.escape(b) for b in sorted_brands) + r")(?!\w)",
+        re.IGNORECASE,
+    )
+
+    brand_match = d["_brand_l"].isin(prohibited)
+    name_match  = (~brand_match) & d["_name_l"].str.contains(pattern, na=False)
+    flagged     = d[brand_match | name_match].copy()
+
+    if not flagged.empty:
+        def _comment(row):
+            if row["_brand_l"] in prohibited:
+                return f"Marque interdite : {row['BRAND']}"
+            m = pattern.search(row["_name_l"])
+            kw = m.group(0).title() if m else row["BRAND"]
+            return f"Marque interdite détectée dans le nom : {kw}"
+        flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
+
+    return (
+        flagged
+        .drop(columns=["_brand_l", "_name_l"], errors="ignore")
+        .drop_duplicates(subset=["PRODUCT_SET_SID"])
+    )
 
 if _reg is not None:
     _reg.REGISTRY.update({
@@ -1916,6 +2088,8 @@ if _reg is not None:
         'check_nigeria_rice':                check_nigeria_rice,
         'check_nigeria_powerbanks':          check_nigeria_powerbanks,
         'load_nigeria_qc_rules':             load_nigeria_qc_rules,
+        'check_morocco_prohibited_brands':   check_morocco_prohibited_brands,
+        'load_morocco_qc_rules':             load_morocco_qc_rules,
     })
 
 # -------------------------------------------------
@@ -1969,6 +2143,44 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             ("NG - Rice Brand Seller", check_nigeria_rice,       {"ng_rules": _ng}),
             ("NG - Powerbank Capacity",check_nigeria_powerbanks, {"ng_rules": _ng}),
         ]
+
+    if country_validator.code == "MA":
+        _ma = load_morocco_qc_rules()
+
+        # Override the restricted-brands rules for MA — use Morocco_rules.xlsx
+        # instead of whatever was loaded from Restricted_Brands.xlsx for MA.
+        validations = [
+            (name, func, kwargs) for name, func, kwargs in validations
+            if name != "Restricted brands"
+        ]
+        validations.insert(1, (
+            "Restricted brands",
+            check_restricted_brands,
+            {"country_rules": _ma["restricted"]},
+        ))
+
+        # Override prohibited-products keywords for MA — use Morocco_rules.xlsx
+        # keywords sheet instead of Prohibbited.xlsx MA tab.
+        ma_prohibited_rules = [
+            {"keyword": kw, "categories": set()}
+            for kw in _ma["prohibited_keywords"]
+        ]
+        validations = [
+            (name, func, kwargs) for name, func, kwargs in validations
+            if name != "Prohibited products"
+        ]
+        validations.append((
+            "Prohibited products",
+            check_prohibited_products,
+            {"prohibited_rules": ma_prohibited_rules},
+        ))
+
+        # Add the fully-prohibited brands check (no vendors at all)
+        validations.append((
+            "MA - Marque Interdite",
+            check_morocco_prohibited_brands,
+            {"ma_rules": _ma},
+        ))
 
     results = {}
     dup_groups = {}
@@ -3004,10 +3216,10 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
 
         metrics_config = [
-            (_t("total_prod"),  len(data),                                                                                                                             JUMIA_COLORS['dark_gray']),
-            (_t("approved"),    len(app_df),                                                                                                                           JUMIA_COLORS['success_green']),
-            (_t("rejected"),    len(rej_df),                                                                                                                           JUMIA_COLORS['jumia_red']),
-            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                                                           JUMIA_COLORS['primary_orange']),
+            (_t("total_prod"),  len(data),                                                                                             JUMIA_COLORS['dark_gray']),
+            (_t("approved"),    len(app_df),                                                                                           JUMIA_COLORS['success_green']),
+            (_t("rejected"),    len(rej_df),                                                                                           JUMIA_COLORS['jumia_red']),
+            (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%",                                           JUMIA_COLORS['primary_orange']),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
