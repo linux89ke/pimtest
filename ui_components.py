@@ -736,11 +736,88 @@ renderAll();
   <button class="nav-btn" id="btn-prev" onclick="doNav('prev_page')" {'' if current_page > 0 else 'disabled'}>&#8592; Prev</button>
   <span class="page-info">Page {current_page + 1} of {total_pages}</span>
   <button class="nav-btn" id="btn-next" onclick="doNav('next_page')" {'' if current_page < total_pages - 1 else 'disabled'}>Next &#8594;</button>
-  <button class="nav-btn close-btn" onclick="doNav('close_modal')">&#x2715; Close</button>
+  <button class="nav-btn close-btn" onclick="doClose()">&#x2715; Close</button>
+</div>
+
+<!-- Confirmation modal (shown when navigating/closing with pending selections) -->
+<div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:200000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:28px 32px;max-width:360px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.35);text-align:center;">
+    <div style="font-size:22px;margin-bottom:8px;">⚠️</div>
+    <div id="confirm-msg" style="font-size:14px;font-weight:600;color:#313133;margin-bottom:20px;line-height:1.5;"></div>
+    <div style="display:flex;gap:10px;justify-content:center;">
+      <button onclick="confirmYes()" style="padding:9px 22px;background:#E53935;color:#fff;border:none;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer;">Yes, discard</button>
+      <button onclick="confirmNo()" style="padding:9px 22px;background:#f0f0f0;color:#313133;border:none;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer;">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <script>
-function doNav(action) {{ sendMsg(action, {{}}); }}
+var _pendingNavAction = null;
+
+function hasPending() {{
+  return Object.keys(selected).length > 0 || Object.keys(staged).length > 0;
+}}
+
+function pendingCount() {{
+  return Object.keys(selected).length + Object.keys(staged).length;
+}}
+
+function showConfirm(msg, action) {{
+  _pendingNavAction = action;
+  document.getElementById('confirm-msg').textContent = msg;
+  var ov = document.getElementById('confirm-overlay');
+  ov.style.display = 'flex';
+}}
+
+function confirmYes() {{
+  document.getElementById('confirm-overlay').style.display = 'none';
+  var action = _pendingNavAction;
+  _pendingNavAction = null;
+  // clear selections silently before navigating
+  for (var k in selected) delete selected[k];
+  for (var k in staged) delete staged[k];
+  if (action === 'close') {{
+    doCloseNow();
+  }} else {{
+    sendMsg(action, {{}});
+  }}
+}}
+
+function confirmNo() {{
+  _pendingNavAction = null;
+  document.getElementById('confirm-overlay').style.display = 'none';
+}}
+
+function doClose() {{
+  if (hasPending()) {{
+    showConfirm(pendingCount() + ' item(s) are still selected or staged for rejection. Close anyway and discard them?', 'close');
+  }} else {{
+    doCloseNow();
+  }}
+}}
+
+function doCloseNow() {{
+  // Close the Streamlit dialog by clicking its native × button in the parent frame
+  try {{
+    var par = window.parent;
+    // Streamlit dialog close button has data-testid="stBaseButton-headerNoPadding" or aria-label="Close"
+    var closeBtn = par.document.querySelector('[data-testid="stBaseButton-headerNoPadding"]') ||
+                   par.document.querySelector('button[aria-label="Close"]') ||
+                   par.document.querySelector('[data-testid="stDialog"] button[kind="header"]');
+    if (closeBtn) {{ closeBtn.click(); return; }}
+  }} catch(e) {{}}
+  // Fallback: send message to Streamlit
+  sendMsg('close_modal', {{}});
+}}
+
+function doNav(action) {{
+  if (hasPending()) {{
+    var dir = action === 'prev_page' ? 'previous' : 'next';
+    showConfirm(pendingCount() + ' item(s) are still selected or staged. Navigate to ' + dir + ' page and discard them?', action);
+  }} else {{
+    sendMsg(action, {{}});
+  }}
+}}
 </script>
 </body>
 </html>"""
