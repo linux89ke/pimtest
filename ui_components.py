@@ -379,7 +379,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
   
-  .card.selected{{border-color:{G};box-shadow:0 0 0 5px rgba(76,175,80,.45);background:rgba(76,175,80,.04);}}
+  .card.selected{{border-color:{O};box-shadow:0 0 0 5px rgba(255,136,0,.35);background:rgba(255,136,0,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 4px rgba(231,60,23,.3);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
   
@@ -395,7 +395,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .warn-wrap{{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;z-index:10;pointer-events:none;}}
   .warn-badge{{background:linear-gradient(90deg,#FFC107,#FF9800);color:#313133;font-size:9px;font-weight:800;padding:3px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(255,152,0,.3);animation:pulse 2s infinite;}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.85}}}}
-  .price-badge{{position:absolute;top:8px;left:8px;background:rgba(76,175,80,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:9999px;z-index:10;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.2);}}
+  .price-badge{{position:absolute;top:8px;left:8px;background:rgba(255,136,0,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:9999px;z-index:10;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.2);}}
   
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;}}
@@ -412,7 +412,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .zoom-btn svg{{width:12px;height:12px;flex-shrink:0;}}
   
   .tick{{position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
-  .card.selected .tick{{background:{G};color:#fff;}}
+  .card.selected .tick{{background:{O};color:#fff;}}
   
   .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:8px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:12px;text-align:center;}}
   .card.committed-rej .rej-overlay{{display:flex;}}
