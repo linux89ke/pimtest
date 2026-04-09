@@ -940,20 +940,32 @@ def visual_review_modal(support_files):
 
     if 'MAIN_IMAGE' not in data.columns:
         data['MAIN_IMAGE'] = ''
-    available_cols = [c for c in GRID_COLS if c in data.columns]
-    if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
-        available_cols.append('CATEGORY_CODE')
 
-    review_data = pd.merge(
-        valid_grid_df[["ProductSetSid"]], data[available_cols],
-        left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
+    # ── Use pre-warmed cache if available and no quick-rejections have changed ──
+    # The cache is built immediately after validation in test2.py so the modal
+    # opens with zero merge/resolve overhead on first click.
+    _cached_review = st.session_state.get("_grid_review_data_cache")
+    _cache_valid = (
+        _cached_review is not None
+        and not committed_rej_sids   # invalidate once user makes quick-rejections
+        and len(_cached_review) > 0
     )
-    _code_to_path = support_files.get('code_to_path', {})
-    if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
-        review_data = review_data.copy()
-        review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(
-            lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ''
+    if _cache_valid:
+        review_data = _cached_review.copy()
+    else:
+        available_cols = [c for c in GRID_COLS if c in data.columns]
+        if 'CATEGORY_CODE' in data.columns and 'CATEGORY_CODE' not in available_cols:
+            available_cols.append('CATEGORY_CODE')
+        review_data = pd.merge(
+            valid_grid_df[["ProductSetSid"]], data[available_cols],
+            left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
         )
+        _code_to_path = support_files.get('code_to_path', {})
+        if _code_to_path and 'CATEGORY_CODE' in review_data.columns:
+            review_data = review_data.copy()
+            review_data['CATEGORY'] = review_data['CATEGORY_CODE'].apply(
+                lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ''
+            )
 
     if search_n:
         review_data = review_data[
@@ -1003,7 +1015,10 @@ def visual_review_modal(support_files):
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
         prefetch_urls = []
-        seen_urls = set()
+        # URLs already preloaded by the browser via <link rel="preload"> — exclude
+        # them so the JS prefetcher focuses only on pages beyond what was pre-warmed.
+        _already_warm = set(st.session_state.get("_grid_warm_urls", []))
+        seen_urls = set(_already_warm)
         for prefetch_page in [st.session_state.grid_page + 1, st.session_state.grid_page + 2, st.session_state.grid_page + 3]:
             if prefetch_page >= total_pages:
                 break
@@ -1074,7 +1089,19 @@ def render_image_grid(support_files):
         return
 
     st.markdown("---")
-    
+
+    # ── Background image preload ─────────────────────────────────────────────
+    # Inject <link rel="preload"> tags for the first 2 pages of images so the
+    # browser starts fetching them while the user reads the validation results,
+    # before the modal is even opened.
+    _warm_urls = st.session_state.get("_grid_warm_urls", [])
+    if _warm_urls:
+        _preload_tags = "\n".join(
+            f'<link rel="preload" as="image" href="{url}" referrerpolicy="no-referrer">'
+            for url in _warm_urls[:100]
+        )
+        st.markdown(f"<div style='display:none'>{_preload_tags}</div>", unsafe_allow_html=True)
+
     c1, c2 = st.columns([3, 1], gap="medium")
     with c1:
         st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
