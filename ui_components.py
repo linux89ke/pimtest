@@ -373,8 +373,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
-  .top-btn {{margin-left: auto; background: #313133; color: white; border-color: #313133; font-weight: bold;}}
-  .top-btn:hover {{background: #000; color: white;}}
   
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
@@ -522,7 +520,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="broken">Broken Image</option>
     <option value="no_issue">No Issues First</option>
   </select>
-  <button class="desel-btn top-btn" onclick="scrollToTop()">Top</button>
 </div>
 
 <div id="zoom-tooltip">
@@ -634,17 +631,6 @@ function sendMsg(type, payload) {{
       if (s2 && savedScroll > 0) s2.scrollTop = savedScroll;
     }}, 80);
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
-}}
-
-function scrollToTop() {{
-  try {{
-    // Clear any saved scroll so post-rerun restore doesn't fight us
-    window.parent.sessionStorage.removeItem('__grid_scroll__');
-    var scrollable = _getScrollable();
-    if (scrollable) {{
-      scrollable.scrollTo({{top: 0, behavior: 'smooth'}});
-    }}
-  }} catch(e) {{ console.warn('scrollToTop failed:', e); }}
 }}
 
 function updateParentPagination() {{
