@@ -243,7 +243,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
-                    st.session_state[popover_key] = False 
+                    st.session_state[popover_key] = False
                     st.rerun()
             else:
                 _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
@@ -291,13 +291,12 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.session_state.display_df_cache.clear()
                     st.session_state[f"exp_{title}"] = True
                     _clear_flag_df_selection(title)
-                    st.session_state[popover_key] = False 
+                    st.session_state[popover_key] = False
                     st.rerun()
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
-                         rejected_state, cols_per_row, prefetch_urls=None,
-                         current_page=0, total_pages=1):
-    
+                         rejected_state, cols_per_row, prefetch_urls=None):
+
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
@@ -361,26 +360,31 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <meta name="referrer" content="no-referrer">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
-  html,body{{height:100%;overflow:hidden;background:#f5f5f5;}}
-  body{{display:flex;flex-direction:column;}}
-  #scroll-area{{flex:1;overflow-y:auto;padding:8px;}}
+  body{{background:#f5f5f5;padding:8px;}}
 
-  .ctrl-bar{{flex-shrink:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);border-bottom:2px solid {O};box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
+  /* Top batch-reject bar — sticky inside the iframe's own scroll */
+  .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
+
+  /* Bottom bar mirrors ctrl-bar; Streamlit nav buttons sit outside the iframe */
+  .bottom-bar{{border-bottom:none;border-top:2px solid {O};margin-top:16px;margin-bottom:0;box-shadow:0 -4px 16px rgba(0,0,0,0.05);}}
+
   .sel-count{{font-weight:700;color:{O};font-size:13px;min-width:80px;}}
   .reason-sel{{flex:1;min-width:160px;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;cursor:pointer;}}
   .batch-btn{{padding:7px 14px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:12px;cursor:pointer;}}
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
-  
+  .top-btn{{margin-left:auto;background:#313133;color:white;border-color:#313133;font-weight:bold;}}
+  .top-btn:hover{{background:#000;color:white;}}
+
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
-  
+
   .card.selected{{border-color:{G};box-shadow:0 0 0 5px rgba(76,175,80,.45);background:rgba(76,175,80,.04);}}
   .card.staged-rej{{border-color:{R};box-shadow:0 0 0 4px rgba(231,60,23,.3);background:rgba(231,60,23,.04);}}
   .card.committed-rej{{border-color:#bbb;opacity:.6;}}
-  
-  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden; border:1px solid #111;}}
+
+  .card-img-wrap{{position:relative;cursor:pointer;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;height:180px;overflow:hidden;border:1px solid #111;}}
   .card-img-wrap::before{{content:'';position:absolute;inset:0;background:linear-gradient(90deg,#FFF8F2 25%,#FFEFE5 50%,#FFF8F2 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;z-index:1;}}
   .card-img-wrap.img-loaded::before{{display:none;}}
   @keyframes shimmer{{0%{{background-position:200% 0}}100%{{background-position:-200% 0}}}}
@@ -388,99 +392,58 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .card-img{{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:2;opacity:0;transition:opacity .4s ease;}}
   .card-img.img-loaded{{opacity:1;}}
   .card.committed-rej .card-img{{filter:grayscale(80%);}}
-  
+
   .warn-wrap{{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;z-index:10;pointer-events:none;}}
   .warn-badge{{background:linear-gradient(90deg,#FFC107,#FF9800);color:#313133;font-size:9px;font-weight:800;padding:3px 8px;border-radius:9999px;box-shadow:0 2px 6px rgba(255,152,0,.3);animation:pulse 2s infinite;}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:0.85}}}}
   .price-badge{{position:absolute;top:8px;left:8px;background:rgba(76,175,80,.95);color:#fff;font-size:10px;font-weight:800;padding:3px 8px;border-radius:9999px;z-index:10;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.2);}}
-  
+
   .meta{{font-size:11px;margin-top:8px;line-height:1.4;}}
   .meta .nm{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;}}
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;word-break:break-word;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;cursor:help;}}
-  
+
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
   .act-more{{flex:1;font-size:11px;border:1px solid #ccc;border-radius:4px;outline:none;cursor:pointer;background:#fff;}}
-  
+
   .zoom-btn{{position:absolute;bottom:6px;right:6px;width:22px;height:22px;background:rgba(0,0,0,0.4);color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:25;border:none;transition:background .2s;}}
   .zoom-btn:hover{{background:rgba(0,0,0,0.7);}}
   .zoom-btn svg{{width:12px;height:12px;flex-shrink:0;}}
-  
+
   .tick{{position:absolute;bottom:6px;left:6px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:transparent;font-size:13px;font-weight:900;pointer-events:none;z-index:10;}}
   .card.selected .tick{{background:{G};color:#fff;}}
-  
+
   .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:8px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:12px;text-align:center;}}
   .card.committed-rej .rej-overlay{{display:flex;}}
-  
-  .card.staged-rej .rej-overlay.staged{{display:flex; background:rgba(211,47,47,0.85);}}
-  .card.staged-rej .rej-badge.pending{{background:transparent; color:#fff; font-size:22px; font-weight:900; padding:0; letter-spacing:1px;}}
-  .card.staged-rej .rej-label{{color:#fff; font-size:13px; font-weight:600; line-height:1.2; max-width:140px;}}
-  
+
+  .card.staged-rej .rej-overlay.staged{{display:flex;background:rgba(211,47,47,0.85);}}
+  .card.staged-rej .rej-badge.pending{{background:transparent;color:#fff;font-size:22px;font-weight:900;padding:0;letter-spacing:1px;}}
+  .card.staged-rej .rej-label{{color:#fff;font-size:13px;font-weight:600;line-height:1.2;max-width:140px;}}
+
   .card.committed-rej .rej-badge{{background:{R};color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:800;letter-spacing:0.5px;}}
   .card.committed-rej .rej-label{{font-size:12px;color:{R};font-weight:700;max-width:130px;}}
-  
+
   .undo-btn{{margin-top:8px;padding:6px 14px;background:#313133;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:bold;cursor:pointer;}}
   .undo-btn:hover{{background:#000;}}
-  .card.staged-rej .undo-btn{{background:#fff; color:#D32F2F; box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
+  .card.staged-rej .undo-btn{{background:#fff;color:#D32F2F;box-shadow:0 2px 6px rgba(0,0,0,0.2);}}
   .card.staged-rej .undo-btn:hover{{background:#f0f0f0;}}
-  
-  #zoom-tooltip {{
-    display: none;
-    position: fixed;
-    z-index: 100000;
-    background: #fff;
-    padding: 10px;
-    border-radius: 8px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
-    border: 1px solid #ccc;
-    width: 360px;
-    height: 360px;
-    transition: opacity 0.2s ease;
-  }}
-  #tooltip-img {{
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
-  }}
-  .tooltip-close {{
-    position: absolute;
-    top: -12px;
-    right: -12px;
-    background: #333;
-    color: #fff;
-    border-radius: 50%;
-    width: 28px;
-    height: 28px;
-    border: 2px solid #fff;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  }}
-  .tooltip-close:hover {{ background: #000; }}
+
+  #zoom-tooltip{{display:none;position:absolute;z-index:100000;background:#fff;padding:10px;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,0.4);border:1px solid #ccc;width:360px;height:360px;}}
+  #tooltip-img{{width:100%;height:100%;object-fit:contain;display:block;}}
+  .tooltip-close{{position:absolute;top:-12px;right:-12px;background:#333;color:#fff;border-radius:50%;width:28px;height:28px;border:2px solid #fff;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.3);}}
+  .tooltip-close:hover{{background:#000;}}
 
   #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
   .debug-hud{{position:absolute;inset:0;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:9px;padding:5px;display:none;word-break:break-all;z-index:100;}}
-
-  .bottom-bar{{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.97);border-top:2px solid {O};box-shadow:0 -4px 16px rgba(0,0,0,0.12);}}
-  .nav-btn{{padding:7px 18px;background:{O};color:#fff;border:none;border-radius:4px;font-weight:700;font-size:13px;cursor:pointer;}}
-  .nav-btn:hover{{opacity:.88;}}
-  .nav-btn:disabled{{opacity:.35;cursor:default;}}
-  .nav-btn.close-btn{{background:#313133;}}
-  .nav-btn.close-btn:hover{{background:#000;}}
-  .page-info{{font-size:13px;font-weight:600;color:#555;flex:1;text-align:center;}}
 </style>
 </head>
 <body>
+
 <div class="ctrl-bar">
-  <span class="sel-count" id="sel-count-bar">0 {_t("items_pending")}</span>
-  <select class="reason-sel" id="batch-reason">
+  <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
+  <select class="reason-sel" id="batch-reason-top">
     <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
     <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
     <option value="REJECT_FAKE">{_t("fake_prod")}</option>
@@ -489,21 +452,37 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
     <option value="REJECT_COLOR">{_t("missing_color")}</option>
   </select>
-  <button class="batch-btn" onclick="doBatchReject()">{_t("batch_reject")}</button>
+  <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
 </div>
-<div id="scroll-area">
+
 <div class="grid" id="card-grid"></div>
+
+<div class="ctrl-bar bottom-bar">
+  <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
+  <select class="reason-sel" id="batch-reason-bottom">
+    <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
+    <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
+    <option value="REJECT_FAKE">{_t("fake_prod")}</option>
+    <option value="REJECT_BRAND">{_t("restr_brand")}</option>
+    <option value="REJECT_WRONG_BRAND">{_t("wrong_brand")}</option>
+    <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
+    <option value="REJECT_COLOR">{_t("missing_color")}</option>
+  </select>
+  <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
+  <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
+  <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
+  <button class="desel-btn top-btn" onclick="scrollToTop()">&#11014; Top</button>
+</div>
 
 <div id="zoom-tooltip">
   <img id="tooltip-img" alt="Zoomed product" referrerpolicy="no-referrer">
-  <button class="tooltip-close" onclick="closeZoom()" title="Close">×</button>
+  <button class="tooltip-close" onclick="closeZoom()" title="Close">&#215;</button>
 </div>
 
 <div id="prefetch-status"></div>
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
-</div>
 
 <script>
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
@@ -512,8 +491,6 @@ var COMMITTED = {committed_json};
 var PREFETCH_URLS = {prefetch_json};
 var PLACEHOLDER = "{_PLACEHOLDER_SVG}";
 var LABELS = {labels_json};
-var CURRENT_PAGE = {current_page};
-var TOTAL_PAGES = {total_pages};
 
 window._gridSelected = window._gridSelected || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
@@ -537,8 +514,37 @@ function sendMsg(type, payload) {{
     bridge.focus({{preventScroll: true}});
     Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    setTimeout(() => {{ bridge.blur(); bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}})); }}, 150);
+    setTimeout(function() {{ bridge.blur(); bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}})); }}, 150);
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
+}}
+
+// Scroll the parent Streamlit page to the top of the review section
+function scrollToTop() {{
+  try {{ window.parent.scrollTo({{top: 0, behavior: 'smooth'}}); }} catch(e) {{}}
+}}
+
+// Grey-out Streamlit Prev/Next/Jump controls while items are pending
+function updateParentNavState() {{
+  var pending = Object.keys(selected).length + Object.keys(staged).length;
+  try {{
+    var par = window.parent.document;
+    par.querySelectorAll('button').forEach(function(b) {{
+      var txt = (b.innerText || '').trim();
+      if (txt === 'Prev Page' || txt === 'Next Page') {{
+        b.disabled = pending > 0;
+        b.style.opacity = pending > 0 ? '0.35' : '';
+        b.title = pending > 0 ? 'Commit or clear selections before navigating' : '';
+      }}
+    }});
+    par.querySelectorAll('input[type="number"]').forEach(function(inp) {{
+      var wrapper = inp.closest('[data-testid="stNumberInput"]');
+      if (wrapper && (wrapper.innerText || '').includes('Jump to Page')) {{
+        inp.disabled = pending > 0;
+        wrapper.style.opacity = pending > 0 ? '0.35' : '';
+        wrapper.title = pending > 0 ? 'Commit or clear selections before navigating' : '';
+      }}
+    }});
+  }} catch(e) {{}}
 }}
 
 function onImgLoad(img, sid) {{
@@ -557,11 +563,11 @@ function onImgLoad(img, sid) {{
 }}
 
 function onImgError(img, sid) {{
-  var card = CARDS.find(c => c.sid === sid);
+  var card = CARDS.find(function(c) {{ return c.sid === sid; }});
   if (!img.dataset.triedProxy && card && card.img && card.img.startsWith('http')) {{
-      img.dataset.triedProxy = 'true';
-      img.src = "https://wsrv.nl/?url=" + encodeURIComponent(card.img);
-      return;
+    img.dataset.triedProxy = 'true';
+    img.src = "https://wsrv.nl/?url=" + encodeURIComponent(card.img);
+    return;
   }}
   img.onerror = null;
   img.src = PLACEHOLDER;
@@ -569,15 +575,15 @@ function onImgError(img, sid) {{
   addWarnings(sid, ['Broken Image']);
   var debugDiv = document.getElementById('debug-' + escapeHtml(sid));
   if (debugDiv) {{
-      debugDiv.style.display = 'block';
-      debugDiv.innerHTML = "<b>FAILED URL:</b><br>" + escapeHtml(card ? card.img : '');
+    debugDiv.style.display = 'block';
+    debugDiv.innerHTML = "<b>FAILED URL:</b><br>" + escapeHtml(card ? card.img : '');
   }}
 }}
 
 function addWarnings(sid, warns) {{
   var wrap = document.querySelector('#card-' + escapeHtml(sid) + ' .warn-wrap');
   if (!wrap) return;
-  warns.forEach(w => {{
+  warns.forEach(function(w) {{
     var badge = document.createElement('span');
     badge.className = 'warn-badge';
     badge.textContent = w;
@@ -595,81 +601,78 @@ function renderCard(card) {{
 
   var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '\u2026' : escapeHtml(card.name);
-  var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
-  var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
+  var warnHtml = (card.warnings || []).map(function(w) {{ return '<span class="warn-badge">' + escapeHtml(w) + '</span>'; }}).join('');
+  var priceHtml = card.price ? '<div class="price-badge">' + escapeHtml(card.price) + '</div>' : '';
 
-  var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
-    </svg></button>`;
+  var zoomHtml = '<button class="zoom-btn" onclick="event.stopPropagation();showZoom(\'' + safeSid + '\',event)" title="Preview">'
+    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    + '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'
+    + '<line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>'
+    + '</svg></button>';
 
   var overlayHtml = '', actHtml = '';
   if (isCommitted) {{
-    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{escapeHtml(LABELS.rejected)}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{safeSid}}')">${{escapeHtml(LABELS.undo)}}</button></div>`;
+    overlayHtml = '<div class="rej-overlay">'
+      + '<div class="rej-badge">' + escapeHtml(LABELS.rejected) + '</div>'
+      + '<div class="rej-label">' + escapeHtml((COMMITTED[sid]||'').replace(/_/g,' ')) + '</div>'
+      + '<button class="undo-btn" onclick="event.stopPropagation();window.undoReject(\'' + safeSid + '\')">' + escapeHtml(LABELS.undo) + '</button>'
+      + '</div>';
   }} else if (isStaged) {{
-    overlayHtml = `<div class="rej-overlay staged">
-      <div class="rej-badge pending">${{escapeHtml(LABELS.rejected)}}</div>
-      <div class="rej-label">Pending reason:<br>${{escapeHtml((staged[sid]||'').replace(/_/g,' '))}}</div>
-      <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{safeSid}}')">${{escapeHtml(LABELS.clear_sel)}}</button>
-    </div>`;
+    overlayHtml = '<div class="rej-overlay staged">'
+      + '<div class="rej-badge pending">' + escapeHtml(LABELS.rejected) + '</div>'
+      + '<div class="rej-label">Pending reason:<br>' + escapeHtml((staged[sid]||'').replace(/_/g,' ')) + '</div>'
+      + '<button class="undo-btn" onclick="event.stopPropagation();window.clearStaged(\'' + safeSid + '\')">' + escapeHtml(LABELS.clear_sel) + '</button>'
+      + '</div>';
   }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option></select></div>`;
+    actHtml = '<div class="acts">'
+      + '<button class="act-btn" onclick="event.stopPropagation();window.stageReject(\'' + safeSid + '\',\'REJECT_POOR_IMAGE\')">' + escapeHtml(LABELS.poor_img) + '</button>'
+      + '<select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject(\'' + safeSid + '\',this.value);this.value=\'\'}}">'
+      + '<option value="">' + escapeHtml(LABELS.more_options) + '</option>'
+      + '<option value="REJECT_WRONG_CAT">' + escapeHtml(LABELS.wrong_cat) + '</option>'
+      + '<option value="REJECT_FAKE">' + escapeHtml(LABELS.fake_prod) + '</option>'
+      + '<option value="REJECT_BRAND">' + escapeHtml(LABELS.restr_brand) + '</option>'
+      + '<option value="REJECT_PROHIBITED">' + escapeHtml(LABELS.prohibited) + '</option>'
+      + '<option value="REJECT_COLOR">' + escapeHtml(LABELS.missing_color) + '</option>'
+      + '<option value="REJECT_WRONG_BRAND">' + escapeHtml(LABELS.wrong_brand) + '</option>'
+      + '</select></div>';
   }}
 
-  return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
-    <div class="card-img-wrap" onclick="window.toggleSelect('${{safeSid}}',event)">
-      ${{priceHtml}}
-      <div class="warn-wrap">${{warnHtml}}</div>
-      <div id="debug-${{escapeHtml(sid)}}" class="debug-hud"></div>
-      <img class="card-img-placeholder" src="${{PLACEHOLDER}}" alt="">
-      <img class="card-img" decoding="async" src="${{safeImgSrcForHtml}}" referrerpolicy="no-referrer"
-           onload="onImgLoad(this,'${{safeSid}}')" onerror="onImgError(this,'${{safeSid}}')">
-      ${{zoomHtml}}
-      ${{overlayHtml}}
-      <div class="tick">\u2714</div>
-    </div>
-    <div class="meta">
-      <div class="nm" title="${{escapeHtml(card.name)}}">${{shortName}}</div>
-      <div class="br" title="${{escapeHtml(card.brand)}}">${{escapeHtml(card.brand)}}</div>
-      <div class="ct">${{escapeHtml(card.cat)}}</div>
-      <div class="sl" title="${{escapeHtml(card.seller)}}">${{escapeHtml(card.seller)}}</div>
-    </div>
-    ${{actHtml}}
-  </div>`;
+  return '<div class="' + cls + '" id="card-' + escapeHtml(sid) + '">'
+    + '<div class="card-img-wrap" onclick="window.toggleSelect(\'' + safeSid + '\',event)">'
+    + priceHtml
+    + '<div class="warn-wrap">' + warnHtml + '</div>'
+    + '<div id="debug-' + escapeHtml(sid) + '" class="debug-hud"></div>'
+    + '<img class="card-img-placeholder" src="' + PLACEHOLDER + '" alt="">'
+    + '<img class="card-img" decoding="async" src="' + safeImgSrcForHtml + '" referrerpolicy="no-referrer"'
+    + ' onload="onImgLoad(this,\'' + safeSid + '\')" onerror="onImgError(this,\'' + safeSid + '\')">'
+    + zoomHtml + overlayHtml
+    + '<div class="tick">&#10004;</div>'
+    + '</div>'
+    + '<div class="meta">'
+    + '<div class="nm" title="' + escapeHtml(card.name) + '">' + shortName + '</div>'
+    + '<div class="br" title="' + escapeHtml(card.brand) + '">' + escapeHtml(card.brand) + '</div>'
+    + '<div class="ct">' + escapeHtml(card.cat) + '</div>'
+    + '<div class="sl" title="' + escapeHtml(card.seller) + '">' + escapeHtml(card.seller) + '</div>'
+    + '</div>'
+    + actHtml + '</div>';
 }}
 
-/* Tooltip uses fixed positioning — stays visible without scroll tricks */
 window.showZoom = function(sid, event) {{
   var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
-      closeZoom();
-      return;
-  }}
-  var card = CARDS.find(c => c.sid === sid);
+  if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{ closeZoom(); return; }}
+  var card = CARDS.find(function(c) {{ return c.sid === sid; }});
   if (!card) return;
   var img = document.getElementById('tooltip-img');
-  
   img.src = card.img || PLACEHOLDER;
   img.onerror = function() {{ img.src = PLACEHOLDER; img.onerror = null; }};
-  
   tooltip.style.display = 'block';
   window.currentZoomSid = sid;
-
-  var tw = 360;
-  var th = 360;
-  var x = event.clientX;
-  var y = event.clientY;
-
+  var tw = 360, th = 360, x = event.pageX, y = event.pageY;
   var left = x + 15;
-  if (left + tw > window.innerWidth) {{
-      left = x - tw - 15;
-  }}
-
+  if (left + tw > document.body.scrollWidth) left = x - tw - 15;
   var top = y - (th / 2);
   if (top < 10) top = 10;
-  if (top + th > window.innerHeight - 10) top = window.innerHeight - th - 10;
-
+  if (top + th > document.body.scrollHeight) top = document.body.scrollHeight - th - 10;
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
 }};
@@ -679,19 +682,32 @@ window.closeZoom = function() {{
   window.currentZoomSid = null;
 }};
 
-function updateSelCount() {{ 
-  document.getElementById('sel-count-bar').textContent = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
+document.addEventListener('click', function(e) {{
+  var tooltip = document.getElementById('zoom-tooltip');
+  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
+    closeZoom();
+  }}
+}});
+
+function updateSelCount() {{
+  var pendingText = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending;
+  document.querySelectorAll('.sel-count-text').forEach(function(el) {{ el.textContent = pendingText; }});
+  updateParentNavState();
 }}
 
 function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
-  var card = CARDS.find(c => c.sid === sid);
+  var card = CARDS.find(function(c) {{ return c.sid === sid; }});
   if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
 }}
-window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
-window.toggleSelect = function(sid, e) {{
+
+window.doSelectAll = function() {{
+  CARDS.forEach(function(c) {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }});
+  renderAll(); updateSelCount();
+}};
+window.toggleSelect = function(sid) {{
   if (sid in COMMITTED) return;
   if (sid in staged) delete staged[sid];
   else if (sid in selected) delete selected[sid];
@@ -701,29 +717,36 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{ sendMsg('undo', {{[sid]: true}}); delete COMMITTED[sid]; replaceCard(sid); updateSelCount(); }};
-window.doBatchReject = function() {{
-  var br = document.getElementById('batch-reason').value, payload = {{}}, count = 0;
+
+window.doBatchReject = function(pos) {{
+  var br = document.getElementById(pos === 'top' ? 'batch-reason-top' : 'batch-reason-bottom').value;
+  var payload = {{}}, count = 0;
   for (var s in staged) {{ payload[s] = staged[s]; count++; }}
   for (var s in selected) {{ payload[s] = br; count++; }}
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
   sendMsg('reject', payload); renderAll(); updateSelCount();
 }};
-window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
+
+window.doDeselAll = function() {{
+  for (var k in selected) delete selected[k];
+  for (var k in staged) delete staged[k];
+  renderAll(); updateSelCount();
+}};
 
 (function() {{
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
   var container = document.getElementById('prefetch-container');
-  var statusEl = document.getElementById('prefetch-status');
+  var statusEl  = document.getElementById('prefetch-status');
   var i = 0, total = PREFETCH_URLS.length, done = 0;
-  var runner = window.requestIdleCallback || function(fn){{setTimeout(fn,300);}};
+  var runner = window.requestIdleCallback || function(fn) {{ setTimeout(fn, 300); }};
   function prefetchBatch() {{
     var limit = 4, processed = 0;
     while (i < total && processed < limit) {{
       var url = PREFETCH_URLS[i++]; processed++;
       var img = new Image();
       img.referrerPolicy = "no-referrer";
-      img.onload = () => {{ done++; if (statusEl) statusEl.textContent = `Prefetched ${{done}}/${{total}}`; }};
+      img.onload = function() {{ done++; if (statusEl) statusEl.textContent = 'Prefetched ' + done + '/' + total; }};
       img.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
       container.appendChild(img);
       img.src = url;
@@ -735,90 +758,22 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
 
 renderAll();
 </script>
-
-<div class="bottom-bar">
-  <button class="nav-btn" id="btn-prev" onclick="doNav('prev_page')" {'' if current_page > 0 else 'disabled'}>&#8592; Prev</button>
-  <span class="page-info">Page {current_page + 1} of {total_pages}</span>
-  <button class="nav-btn" id="btn-next" onclick="doNav('next_page')" {'' if current_page < total_pages - 1 else 'disabled'}>Next &#8594;</button>
-  <button class="nav-btn close-btn" onclick="doClose()">&#x2715; Close</button>
-</div>
-
-<!-- Confirmation modal (shown when navigating/closing with pending selections) -->
-<div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:200000;align-items:center;justify-content:center;">
-  <div style="background:#fff;border-radius:10px;padding:28px 32px;max-width:360px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.35);text-align:center;">
-    <div style="font-size:22px;margin-bottom:8px;">⚠️</div>
-    <div id="confirm-msg" style="font-size:14px;font-weight:600;color:#313133;margin-bottom:20px;line-height:1.5;"></div>
-    <div style="display:flex;gap:10px;justify-content:center;">
-      <button onclick="confirmYes()" style="padding:9px 22px;background:#E53935;color:#fff;border:none;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer;">Yes, discard</button>
-      <button onclick="confirmNo()" style="padding:9px 22px;background:#f0f0f0;color:#313133;border:none;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer;">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<script>
-var _pendingNavAction = null;
-
-function hasPending() {{
-  return Object.keys(selected).length > 0 || Object.keys(staged).length > 0;
-}}
-
-function pendingCount() {{
-  return Object.keys(selected).length + Object.keys(staged).length;
-}}
-
-function showConfirm(msg, action) {{
-  _pendingNavAction = action;
-  document.getElementById('confirm-msg').textContent = msg;
-  var ov = document.getElementById('confirm-overlay');
-  ov.style.display = 'flex';
-}}
-
-function confirmYes() {{
-  document.getElementById('confirm-overlay').style.display = 'none';
-  var action = _pendingNavAction;
-  _pendingNavAction = null;
-  // clear selections silently before navigating
-  for (var k in selected) delete selected[k];
-  for (var k in staged) delete staged[k];
-  if (action === 'close') {{
-    doCloseNow();
-  }} else {{
-    sendMsg(action, {{}});
-  }}
-}}
-
-function confirmNo() {{
-  _pendingNavAction = null;
-  document.getElementById('confirm-overlay').style.display = 'none';
-}}
-
-function doClose() {{
-  if (hasPending()) {{
-    showConfirm(pendingCount() + ' item(s) are still selected or staged for rejection. Close anyway and discard them?', 'close');
-  }} else {{
-    doCloseNow();
-  }}
-}}
-
-function doCloseNow() {{
-  sendMsg('close_modal', {{}});
-}}
-
-function doNav(action) {{
-  if (hasPending()) {{
-    var dir = action === 'prev_page' ? 'previous' : 'next';
-    showConfirm(pendingCount() + ' item(s) are still selected or staged. Navigate to ' + dir + ' page and discard them?', action);
-  }} else {{
-    sendMsg(action, {{}});
-  }}
-}}
-</script>
 </body>
 </html>"""
 
-# FIX: dismissible=False prevents closing on outside click (only X button closes)
-@st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
+
+@st.fragment
 def visual_review_modal(support_files):
+    """Inline visual review — no st.dialog, so close/nav is instant with no backdrop."""
+
+    # Scroll to top of page on page navigation
+    if st.session_state.get("do_scroll_top", False):
+        components.html(
+            "<script>try{{window.parent.scrollTo({{top:0,behavior:'instant'}});}}catch(e){{}}</script>",
+            height=0,
+        )
+        st.session_state.do_scroll_top = False
+
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
     committed_rej_sids = {
@@ -828,30 +783,8 @@ def visual_review_modal(support_files):
     }
     valid_grid_df = fr[(fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))]
 
-    # --- Bridge message handler (from iframe bottom bar) ---
-    _bridge_val = st.session_state.get("_grid_bridge", "")
-    if _bridge_val:
-        try:
-            _msg = json.loads(_bridge_val)
-            _action = _msg.get("action", "")
-            if _action == "prev_page":
-                st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
-                st.session_state["_grid_bridge"] = ""
-                st.rerun()
-            elif _action == "next_page":
-                _ipp = st.session_state.get('grid_items_per_page', 50)
-                _tp  = max(1, (len(valid_grid_df) + _ipp - 1) // _ipp)
-                st.session_state.grid_page = min(_tp - 1, st.session_state.get('grid_page', 0) + 1)
-                st.session_state["_grid_bridge"] = ""
-                st.rerun()
-            elif _action == "close_modal":
-                st.session_state["_grid_bridge"] = ""
-                st.session_state["_visual_review_open"] = False
-                st.rerun()
-        except Exception:
-            pass
-
-    c1, c2, c3 = st.columns([1.5, 1.5, 2], gap="large")
+    # ── Header: search + items-per-page + close ───────────────────────────────
+    c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 0.8], gap="large", vertical_alignment="bottom")
     with c1:
         search_n = st.text_input("Search by Name", placeholder="Product name…", icon=":material/search:")
     with c2:
@@ -861,6 +794,10 @@ def visual_review_modal(support_files):
             "Items per page", options=[20, 50, 100, 200],
             value=st.session_state.get('grid_items_per_page', 50),
         )
+    with c4:
+        if st.button("✖ Close", key="close_top", use_container_width=True, type="secondary"):
+            st.session_state.show_review_modal = False
+            st.rerun()
 
     if 'MAIN_IMAGE' not in data.columns:
         data['MAIN_IMAGE'] = ''
@@ -897,10 +834,35 @@ def visual_review_modal(support_files):
     if st.session_state.get('grid_page', 0) >= total_pages:
         st.session_state.grid_page = 0
 
-    # Hidden bridge input — receives nav messages from the iframe bottom bar
-    st.text_input("", key="_grid_bridge", label_visibility="collapsed",
-                  placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE")
+    # ── Top pagination ────────────────────────────────────────────────────────
+    pg_cols = st.columns([1, 2, 1], vertical_alignment="center", gap="small")
+    with pg_cols[0]:
+        if st.button("Prev Page", key="prev_top", icon=":material/arrow_back:",
+                     icon_position="left", use_container_width=True,
+                     disabled=st.session_state.get('grid_page', 0) == 0):
+            st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
+            st.session_state.do_scroll_top = True
+            st.rerun()
+    with pg_cols[1]:
+        new_page = st.number_input(
+            f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
+            min_value=1, max_value=max(1, total_pages),
+            value=st.session_state.grid_page + 1, step=1,
+            key="jump_top",
+        )
+        if new_page - 1 != st.session_state.grid_page:
+            st.session_state.grid_page = new_page - 1
+            st.session_state.do_scroll_top = True
+            st.rerun()
+    with pg_cols[2]:
+        if st.button("Next Page", key="next_top", icon=":material/arrow_forward:",
+                     icon_position="right", use_container_width=True,
+                     disabled=st.session_state.grid_page >= total_pages - 1):
+            st.session_state.grid_page += 1
+            st.session_state.do_scroll_top = True
+            st.rerun()
 
+    # ── Image grid ────────────────────────────────────────────────────────────
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
     page_warnings = {}
@@ -925,7 +887,7 @@ def visual_review_modal(support_files):
         for sid in page_data["PRODUCT_SET_SID"].astype(str)
         if st.session_state.get(f"quick_rej_{sid}")
     }
-    
+
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
     grid_html = build_fast_grid_html(
         page_data=page_data,
@@ -935,33 +897,70 @@ def visual_review_modal(support_files):
         rejected_state=rejected_state,
         cols_per_row=cols_per_row,
         prefetch_urls=prefetch_urls,
-        current_page=st.session_state.grid_page,
-        total_pages=total_pages,
     )
 
-    # Fixed height iframe that owns its own scroll — bars are flex items so they stay pinned
-    grid_height = 820
+    n_rows      = -(-len(page_data) // cols_per_row)
+    grid_height = n_rows * 340 + 200
+    components.html(grid_html, height=grid_height, scrolling=False)
 
-    components.html(grid_html, height=grid_height, scrolling=True)
+    st.markdown("---")
+
+    # ── Bottom pagination + close ─────────────────────────────────────────────
+    pg_cols_bot = st.columns([1, 2, 1, 1], vertical_alignment="center", gap="small")
+    with pg_cols_bot[0]:
+        if st.button("Prev Page", key="prev_bot", icon=":material/arrow_back:",
+                     icon_position="left", use_container_width=True,
+                     disabled=st.session_state.get('grid_page', 0) == 0):
+            st.session_state.grid_page = max(0, st.session_state.get('grid_page', 0) - 1)
+            st.session_state.do_scroll_top = True
+            st.rerun()
+    with pg_cols_bot[1]:
+        new_page_bot = st.number_input(
+            f"Jump to Page (Total: {total_pages} | {len(review_data)} items)",
+            min_value=1, max_value=max(1, total_pages),
+            value=st.session_state.grid_page + 1, step=1,
+            key="jump_bot",
+        )
+        if new_page_bot - 1 != st.session_state.grid_page:
+            st.session_state.grid_page = new_page_bot - 1
+            st.session_state.do_scroll_top = True
+            st.rerun()
+    with pg_cols_bot[2]:
+        if st.button("Next Page", key="next_bot", icon=":material/arrow_forward:",
+                     icon_position="right", use_container_width=True,
+                     disabled=st.session_state.grid_page >= total_pages - 1):
+            st.session_state.grid_page += 1
+            st.session_state.do_scroll_top = True
+            st.rerun()
+    with pg_cols_bot[3]:
+        if st.button("✖ Close Review", key="close_bot", use_container_width=True, type="secondary"):
+            st.session_state.show_review_modal = False
+            st.rerun()
+
 
 @st.fragment
 def render_image_grid(support_files):
     if st.session_state.final_report.empty or st.session_state.get('file_mode') == "post_qc":
         return
 
+    if "show_review_modal" not in st.session_state:
+        st.session_state.show_review_modal = False
+
     st.markdown("---")
-    
+
     c1, c2 = st.columns([3, 1], gap="medium")
     with c1:
         st.header(f":material/pageview: {_t('manual_review')}", anchor=False)
         st.caption("Open Focus Mode to rapidly visually review and reject products.")
     with c2:
-        if st.button("Start Visual Review", type="primary", icon=":material/pageview:", icon_position="left", use_container_width=True):
-            st.session_state["_visual_review_open"] = True
+        if st.button("Start Visual Review", type="primary", icon=":material/pageview:",
+                     icon_position="left", use_container_width=True):
+            st.session_state.show_review_modal = True
             st.rerun()
 
-    if st.session_state.get("_visual_review_open"):
+    if st.session_state.get("show_review_modal", False):
         visual_review_modal(support_files)
+
 
 @st.fragment
 def render_exports_section(support_files, country_validator):
@@ -1033,7 +1032,8 @@ def render_exports_section(support_files, country_validator):
                         )
                         if title not in st.session_state.exports_cache:
                             if st.button("Generate", key=f"gen_{title}", type="primary",
-                                         use_container_width=True, icon=":material/download:", icon_position="left"):
+                                         use_container_width=True, icon=":material/download:",
+                                         icon_position="left"):
                                 with st.spinner("Generating all reports…"):
                                     for t2, d2, _, f2 in exports_config:
                                         if t2 not in st.session_state.exports_cache:
