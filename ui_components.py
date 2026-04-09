@@ -518,6 +518,28 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
+// 🚀 INSTANT CLOSE DIALOG LOCK 
+// When the "X" Streamlit button is clicked, we instantly hide the modal via CSS
+// so it vanishes at 0ms, while the Streamlit backend reruns and fully destroys it gracefully.
+try {{
+  var par = window.parent.document;
+  if (!par.window.__stModalLocked) {{
+    par.window.__stModalLocked = true;
+    
+    function blockOutsideClicks(e) {{
+      var dialog = par.querySelector('[data-testid="stDialog"]');
+      if (dialog && !dialog.contains(e.target)) {{
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+    }}
+    
+    par.addEventListener('mousedown', blockOutsideClicks, true);
+    par.addEventListener('mouseup', blockOutsideClicks, true);
+    par.addEventListener('click', blockOutsideClicks, true);
+  }}
+}} catch(e) {{ console.error("Could not lock dialog", e); }}
+
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
@@ -551,21 +573,20 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
-// 🚀 SMART SCROLL-TO-TOP FIX
 function scrollToTop() {{
   try {{
     var par = window.parent.document;
-    var dialog = par.querySelector('[data-testid="stDialog"]');
-    if (dialog) {{
-      // Dynamically find whichever internal container holds the vertical scrollbar
-      var scrollableContainer = Array.from(dialog.querySelectorAll('div')).find(el => el.scrollHeight > el.clientHeight && window.getComputedStyle(el).overflowY !== 'hidden');
-      if (scrollableContainer) {{
-        scrollableContainer.scrollTo({{top: 0, behavior: 'smooth'}});
-      }} else {{
-        dialog.scrollTo({{top: 0, behavior: 'smooth'}}); // Fallback
-      }}
+    // Streamlit dialog scroll container — try multiple selectors for robustness
+    var scrollable =
+      par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
+      par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
+      par.querySelector('[role="dialog"]');
+    if (scrollable) {{
+      scrollable.scrollTo({{top: 0, behavior: 'smooth'}});
     }}
-  }} catch(e) {{ console.error('Scroll failed:', e); }}
+    // Also scroll the iframe itself to top in case it has overflow
+    window.scrollTo({{top: 0, behavior: 'smooth'}});
+  }} catch(e) {{ console.warn('scrollToTop failed:', e); }}
 }}
 
 function updateParentPagination() {{
@@ -577,7 +598,7 @@ function updateParentPagination() {{
     buttons.forEach(b => {{
       var txt = b.innerText || "";
       
-      // Fast-close UI effect
+      // 🚀 MAGIC 0ms CLOSE: Instantly hide the modal container when clicking Close!
       if (txt.includes('Close') && !b.dataset.fastCloseBound) {{
         b.dataset.fastCloseBound = "true";
         b.addEventListener('click', function() {{
@@ -590,7 +611,6 @@ function updateParentPagination() {{
         }});
       }}
       
-      // Lock pagination logic
       if (txt.includes('Prev Page') || txt.includes('Next Page') || txt.includes('Close')) {{
         if (pending > 0 && !txt.includes('Close')) {{
           b.style.pointerEvents = 'none';
@@ -637,21 +657,52 @@ function onImgLoad(img, sid) {{
   if (warns.length) addWarnings(sid, warns);
 }}
 
+// IntersectionObserver lazy loader — fires actual src only when card enters viewport
+var _lazyObserver = null;
+function getLazyObserver() {{
+  if (_lazyObserver) return _lazyObserver;
+  if (!('IntersectionObserver' in window)) return null;
+  _lazyObserver = new IntersectionObserver(function(entries) {{
+    entries.forEach(function(entry) {{
+      if (!entry.isIntersecting) return;
+      var img = entry.target;
+      if (img.dataset.lazySrc) {{
+        img.src = img.dataset.lazySrc;
+        delete img.dataset.lazySrc;
+        _lazyObserver.unobserve(img);
+      }}
+    }});
+  }}, {{rootMargin: '200px 0px', threshold: 0.01}});
+  return _lazyObserver;
+}}
+
+function activateLazyImages() {{
+  var observer = getLazyObserver();
+  if (!observer) return;
+  document.querySelectorAll('img.card-img[data-lazy-src]').forEach(function(img) {{
+    observer.observe(img);
+  }});
+}}
+
 function onImgError(img, sid) {{
   var card = CARDS.find(c => c.sid === sid);
-  if (!img.dataset.triedProxy && card && card.img && card.img.startsWith('http')) {{
+  // Resolve lazy-src if it was never swapped in
+  var realSrc = img.dataset.lazySrc || (card ? card.img : '');
+  if (!img.dataset.triedProxy && realSrc && realSrc.startsWith('http')) {{
       img.dataset.triedProxy = 'true';
-      img.src = "https://wsrv.nl/?url=" + encodeURIComponent(card.img);
+      delete img.dataset.lazySrc;
+      img.src = "https://wsrv.nl/?url=" + encodeURIComponent(realSrc);
       return;
   }}
   img.onerror = null;
+  delete img.dataset.lazySrc;
   img.src = PLACEHOLDER;
   img.classList.add('img-loaded');
   addWarnings(sid, ['Broken Image']);
   var debugDiv = document.getElementById('debug-' + escapeHtml(sid));
   if (debugDiv) {{
       debugDiv.style.display = 'block';
-      debugDiv.innerHTML = "<b>FAILED URL:</b><br>" + escapeHtml(card ? card.img : '');
+      debugDiv.innerHTML = "<b>FAILED URL:</b><br>" + escapeHtml(realSrc);
   }}
 }}
 
@@ -685,6 +736,15 @@ function renderCard(card) {{
       <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
     </svg></button>`;
 
+  var imgIdx = CARDS.indexOf(card);
+  var isEager = imgIdx < {cols_per_row * 2};
+  var loadingAttr = isEager ? 'eager' : 'lazy';
+  var priorityAttr = isEager ? 'fetchpriority="high"' : 'fetchpriority="low"';
+  // For non-eager images use data-lazy-src so IntersectionObserver fires src when visible
+  var imgSrcAttr = isEager
+    ? `src="${{safeImgSrcForHtml}}"`
+    : `src="${{PLACEHOLDER}}" data-lazy-src="${{safeImgSrcForHtml}}"`;
+
   var overlayHtml = '', actHtml = '';
   if (isCommitted) {{
     overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{escapeHtml(LABELS.rejected)}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{safeSid}}')">${{escapeHtml(LABELS.undo)}}</button></div>`;
@@ -704,7 +764,7 @@ function renderCard(card) {{
       <div class="warn-wrap">${{warnHtml}}</div>
       <div id="debug-${{escapeHtml(sid)}}" class="debug-hud"></div>
       <img class="card-img-placeholder" src="${{PLACEHOLDER}}" alt="">
-      <img class="card-img" decoding="async" src="${{safeImgSrcForHtml}}" referrerpolicy="no-referrer"
+      <img class="card-img" decoding="async" loading="${{loadingAttr}}" ${{priorityAttr}} ${{imgSrcAttr}} referrerpolicy="no-referrer"
            onload="onImgLoad(this,'${{safeSid}}')" onerror="onImgError(this,'${{safeSid}}')">
       ${{zoomHtml}}
       ${{overlayHtml}}
@@ -772,12 +832,12 @@ function updateSelCount() {{
   updateParentPagination();
 }}
 
-function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); }}
+function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); activateLazyImages(); }}
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
   var card = CARDS.find(c => c.sid === sid);
-  if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); }}
+  if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); activateLazyImages(); }}
 }}
 window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
 window.toggleSelect = function(sid, e) {{
@@ -816,7 +876,7 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
   var i = 0, total = PREFETCH_URLS.length, done = 0;
   var runner = window.requestIdleCallback || function(fn){{setTimeout(fn,300);}};
   function prefetchBatch() {{
-    var limit = 4, processed = 0;
+    var limit = 8, processed = 0;
     while (i < total && processed < limit) {{
       var url = PREFETCH_URLS[i++]; processed++;
       var img = new Image();
@@ -838,19 +898,18 @@ renderAll();
 
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
-    # 🚀 Python-side SMART SCROLL-TO-TOP FIX (Triggers when buttons change the page)
     if st.session_state.get("do_scroll_top", False):
         components.html(
-            """<script>
-            try {
-                var par = window.parent.document;
-                var dialog = par.querySelector('[data-testid="stDialog"]');
-                if (dialog) {
-                    var scrollableContainer = Array.from(dialog.querySelectorAll('div')).find(el => el.scrollHeight > el.clientHeight && window.getComputedStyle(el).overflowY !== 'hidden');
-                    if (scrollableContainer) scrollableContainer.scrollTop = 0;
-                }
-            } catch(e) {}
-            </script>""",
+            "<script>"
+            "try {"
+            "  var par = window.parent.document;"
+            "  var scrollable ="
+            "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
+            "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
+            "    par.querySelector('[role=\"dialog\"]');"
+            "  if (scrollable) scrollable.scrollTo({top: 0, behavior: 'instant'});"
+            "} catch(e) {}"
+            "</script>",
             height=0,
         )
         st.session_state.do_scroll_top = False
@@ -944,13 +1003,15 @@ def visual_review_modal(support_files):
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
         prefetch_urls = []
-        for prefetch_page in [st.session_state.grid_page + 1, st.session_state.grid_page + 2]:
+        seen_urls = set()
+        for prefetch_page in [st.session_state.grid_page + 1, st.session_state.grid_page + 2, st.session_state.grid_page + 3]:
             if prefetch_page >= total_pages:
                 break
             p_start = prefetch_page * ipp
             for url in review_data.iloc[p_start: p_start + ipp]["MAIN_IMAGE"].astype(str):
                 url = url.strip().replace("http://", "https://", 1)
-                if url.startswith("https"):
+                if url.startswith("https") and url not in seen_urls:
+                    seen_urls.add(url)
                     prefetch_urls.append(url)
         st.session_state[_prefetch_cache_key] = prefetch_urls
     else:
