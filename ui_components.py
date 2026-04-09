@@ -585,21 +585,19 @@ function sendMsg(type, payload) {{
     if (!bridge) return;
     var msg = JSON.stringify({{action: type, payload: payload}});
 
-    // Strategy: set the value via the native setter (so React's synthetic onChange
-    // fires), then dispatch Enter on the bridge's closest <form> — Streamlit listens
-    // at the form level so the submission works WITHOUT ever calling bridge.focus().
-    // Not focusing means the browser never scrolls to the bridge and Streamlit's
-    // rerun does not autofocus it (or any adjacent text_input like "Search by Name").
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
+    // focus({preventScroll:true}) is required — Streamlit only processes the Enter
+    // keydown when the target element is active. preventScroll stops the browser
+    // viewport from jumping to the bridge. blur() fires immediately after so the
+    // bridge does not linger as the active element; the scroll-restore script in
+    // visual_review_modal then blurs whatever Streamlit autofocuses on rerun
+    // (e.g. "Search by Name") so the cursor does not land there.
+    bridge.focus({{preventScroll: true}});
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-
-    // Fire Enter on the form so Streamlit's form-submit listener triggers without
-    // needing the bridge to be the focused/active element.
-    var form = bridge.closest('form');
-    var enterTarget = form || bridge;
-    enterTarget.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    enterTarget.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.blur();
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
@@ -1010,6 +1008,13 @@ def visual_review_modal(support_files):
         "      scrollable.scrollTo({top: 0, behavior: 'instant'});"
         "    }"
         "  }"
+        "  requestAnimationFrame(function() {"
+        "    var active = par.activeElement;"
+        "    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {"
+        "      var dialog = par.querySelector('[data-testid="stModal"]');"
+        "      if (dialog && dialog.contains(active)) { active.blur(); }"
+        "    }"
+        "  });"
         "} catch(e) {}"
         "</script>",
         height=0,
