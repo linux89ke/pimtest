@@ -298,8 +298,27 @@ def check_nigeria_powerbanks(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame
     allowed_brands = pb_rules.get("brands", set())
     cat_codes      = pb_rules.get("category_codes", set())
     MIN_MAH        = 20_000
-    if not allowed_brands or not {"CATEGORY_CODE", "NAME", "BRAND"}.issubset(data.columns): return pd.DataFrame(columns=data.columns)
-    _mah_pat = re.compile(r'\b(\d[\d,]*)\s*mah\b', re.IGNORECASE)
+
+    _COUNTERFEIT_REASON  = "1000023 - Confirmation of counterfeit product by Jumia technical team (Not Authorized)"
+    _COUNTERFEIT_COMMENT = (
+        "Brand '{brand}' not approved for {mah_str} powerbanks."
+        "Your listing has been rejected as Jumia's technical team has confirmed the product is counterfeit."
+        "As a result, this item cannot be sold on the platform."
+        "Please ensure that all products listed are 100% authentic to comply with Jumia's policies and protect customer trust."
+        "If you believe this decision is incorrect or need further clarification, please contact the Seller Support team"
+    )
+    _WRONG_CAT_REASON  = "1000007 - Wrong Category"
+    _WRONG_CAT_COMMENT = (
+        "Product name contains 'power bank' / 'powerbank' but is not listed under the correct Powerbank category. "
+        "Please relist under the appropriate category."
+    )
+
+    _pb_name_pat = re.compile(r'\bpower\s*bank\b', re.IGNORECASE)
+    _mah_pat     = re.compile(r'\b(\d[\d,]*)\s*mah\b', re.IGNORECASE)
+
+    if not {"CATEGORY_CODE", "NAME", "BRAND"}.issubset(data.columns):
+        return pd.DataFrame(columns=data.columns)
+
     def _exceeds_threshold(name: str) -> bool:
         for m in _mah_pat.finditer(str(name)):
             try:
@@ -307,19 +326,48 @@ def check_nigeria_powerbanks(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame
                 if val >= MIN_MAH: return True
             except ValueError: pass
         return False
+
     d = data.copy()
-    d["_cat"]      = d["CATEGORY_CODE"].apply(_clean_category_code)
-    d["_name"]     = d["NAME"].astype(str)
-    d["_brand_l"]  = d["BRAND"].astype(str).str.strip().str.lower()
-    in_scope = d[d["_cat"].isin(cat_codes)].copy() if cat_codes else d.copy()
-    if in_scope.empty: return pd.DataFrame(columns=data.columns)
-    high_cap = in_scope[in_scope["_name"].apply(_exceeds_threshold)].copy()
-    if high_cap.empty: return pd.DataFrame(columns=data.columns)
-    flagged = high_cap[~high_cap["_brand_l"].isin(allowed_brands)].copy()
-    if not flagged.empty:
-        def _comment(row):
-            m = _mah_pat.search(row["_name"])
-            mah_str = m.group(0) if m else ">=20,000mAh"
-            return f"Brand '{row['BRAND']}' not approved for {mah_str} powerbanks. Approved: {', '.join(b.title() for b in sorted(allowed_brands))}"
-        flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
-    return flagged[[c for c in data.columns if c in flagged.columns] + ["Comment_Detail"]].drop_duplicates(subset=["PRODUCT_SET_SID"])
+    d["_cat"]     = d["CATEGORY_CODE"].apply(_clean_category_code)
+    d["_name"]    = d["NAME"].astype(str)
+    d["_brand_l"] = d["BRAND"].astype(str).str.strip().str.lower()
+
+    chunks = []
+
+    # -- Wrong-category check ------------------------------------------------
+    # Products whose NAME mentions "power bank"/"powerbank" but whose
+    # category code is NOT in the approved powerbank category codes.
+    if cat_codes:
+        pb_name_rows = d[d["_name"].str.contains(_pb_name_pat, na=False)].copy()
+        wrong_cat = pb_name_rows[~pb_name_rows["_cat"].isin(cat_codes)].copy()
+        if not wrong_cat.empty:
+            wrong_cat["FLAG"]           = "NG - Powerbank Capacity"
+            wrong_cat["Reason"]         = _WRONG_CAT_REASON
+            wrong_cat["Comment_Detail"] = _WRONG_CAT_COMMENT
+            chunks.append(wrong_cat)
+
+    # -- Unapproved-brand check ----------------------------------------------
+    # High-capacity powerbanks (>=20,000 mAh in name) in the correct category
+    # whose brand is not on the approved list.
+    if allowed_brands:
+        in_scope = d[d["_cat"].isin(cat_codes)].copy() if cat_codes else d.copy()
+        if not in_scope.empty:
+            high_cap = in_scope[in_scope["_name"].apply(_exceeds_threshold)].copy()
+            if not high_cap.empty:
+                flagged = high_cap[~high_cap["_brand_l"].isin(allowed_brands)].copy()
+                if not flagged.empty:
+                    def _comment(row):
+                        m = _mah_pat.search(row["_name"])
+                        mah_str = m.group(0) if m else ">=20,000mAh"
+                        return _COUNTERFEIT_COMMENT.format(brand=row["BRAND"], mah_str=mah_str)
+                    flagged["FLAG"]           = "NG - Powerbank Capacity"
+                    flagged["Reason"]         = _COUNTERFEIT_REASON
+                    flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
+                    chunks.append(flagged)
+
+    if not chunks:
+        return pd.DataFrame(columns=data.columns)
+
+    result = pd.concat(chunks)
+    keep_cols = [c for c in data.columns if c in result.columns] + ["FLAG", "Reason", "Comment_Detail"]
+    return result[keep_cols].drop_duplicates(subset=["PRODUCT_SET_SID"])
