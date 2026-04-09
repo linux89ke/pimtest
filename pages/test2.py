@@ -545,7 +545,8 @@ def check_wrong_variation(data: pd.DataFrame, allowed_variation_codes: List[str]
 
 def check_generic_with_brand_in_name(data: pd.DataFrame, brands_list: List[str]) -> pd.DataFrame:
     if not {'NAME', 'BRAND'}.issubset(data.columns) or not brands_list: return pd.DataFrame(columns=data.columns)
-    mask = (data['_brand_lower'] == 'generic')
+    _PSEUDO_BRANDS = {'generic', 'fashion', 'unbranded', 'no brand', 'original', 'new'}
+    mask = data['_brand_lower'].isin(_PSEUDO_BRANDS)
     if 'CATEGORY' in data.columns: mask = mask & ~data['CATEGORY'].astype(str).str.lower().str.contains(r'\b(case|cases|cover|covers)\b', regex=True, na=False)
     gen = data[mask].copy()
     if gen.empty: return pd.DataFrame(columns=data.columns)
@@ -558,7 +559,11 @@ def check_generic_with_brand_in_name(data: pd.DataFrame, brands_list: List[str])
         return None
     gen['Detected_Brand'] = [detect(n) for n in gen['NAME'].values]
     flagged = gen[gen['Detected_Brand'].notna()].copy()
-    if not flagged.empty: flagged['Comment_Detail'] = "Detected Brand: " + flagged['Detected_Brand']
+    if not flagged.empty:
+        flagged['Comment_Detail'] = (
+            "Brand field '" + flagged['_brand_lower'].str.title() +
+            "' but name starts with: " + flagged['Detected_Brand']
+        )
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categories: List[str], country_code: str) -> pd.DataFrame:
