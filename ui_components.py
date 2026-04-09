@@ -360,7 +360,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <meta name="referrer" content="no-referrer">
 <style>
   *{{box-sizing:border-box;margin:0;padding:0;font-family:sans-serif;}}
-  body{{background:#f5f5f5;padding:8px;}}
+  body{{background:#ffffff;padding:8px;}}
   
   .ctrl-bar{{position:-webkit-sticky;position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.95);backdrop-filter:blur(8px);border-bottom:2px solid {O};border-radius:4px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,0.15);}}
   
@@ -488,6 +488,14 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
+  <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">⇅ Sort by issue</option>
+    <option value="low_res">🔍 Low Resolution</option>
+    <option value="tall">📱 Tall (Screenshot?)</option>
+    <option value="wide">↔ Wide Aspect</option>
+    <option value="broken">❌ Broken Image</option>
+    <option value="no_issue">✅ No Issues First</option>
+  </select>
 </div>
 
 <div class="grid" id="card-grid"></div>
@@ -506,6 +514,14 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
+  <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">⇅ Sort by issue</option>
+    <option value="low_res">🔍 Low Resolution</option>
+    <option value="tall">📱 Tall (Screenshot?)</option>
+    <option value="wide">↔ Wide Aspect</option>
+    <option value="broken">❌ Broken Image</option>
+    <option value="no_issue">✅ No Issues First</option>
+  </select>
   <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
 </div>
 
@@ -550,6 +566,8 @@ var LABELS = {labels_json};
 window._gridSelected = window._gridSelected || {{}};
 window._stagedRejections = window._stagedRejections || {{}};
 window.currentZoomSid = null;
+window._imageIssues = window._imageIssues || {{}};  // sid -> [issue, ...]
+window._currentSort = window._currentSort || '';
 
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
@@ -704,6 +722,9 @@ function onImgError(img, sid) {{
   delete img.dataset.lazySrc;
   img.src = PLACEHOLDER;
   img.classList.add('img-loaded');
+  // Track in _imageIssues so sort works for broken images too
+  if (!window._imageIssues[sid]) window._imageIssues[sid] = [];
+  if (!window._imageIssues[sid].includes('Broken Image')) window._imageIssues[sid].push('Broken Image');
   addWarnings(sid, ['Broken Image']);
   var debugDiv = document.getElementById('debug-' + escapeHtml(sid));
   if (debugDiv) {{
@@ -721,6 +742,9 @@ function addWarnings(sid, warns) {{
     badge.textContent = w;
     wrap.appendChild(badge);
   }});
+  // Track issues for sort
+  if (!window._imageIssues[sid]) window._imageIssues[sid] = [];
+  warns.forEach(w => {{ if (!window._imageIssues[sid].includes(w)) window._imageIssues[sid].push(w); }});
 }}
 
 function renderCard(card) {{
@@ -838,7 +862,49 @@ function updateSelCount() {{
   updateParentPagination();
 }}
 
-function renderAll() {{ document.getElementById('card-grid').innerHTML = CARDS.map(renderCard).join(''); updateSelCount(); activateLazyImages(); }}
+function renderAll() {{
+  var orderedCards = getSortedCards();
+  document.getElementById('card-grid').innerHTML = orderedCards.map(renderCard).join('');
+  updateSelCount();
+  activateLazyImages();
+}}
+
+function getSortedCards() {{
+  var sort = window._currentSort;
+  if (!sort) return CARDS;
+  var ISSUE_MAP = {{
+    'low_res': 'Low Resolution',
+    'tall':    'Tall (Screenshot?)',
+    'wide':    'Wide Aspect',
+    'broken':  'Broken Image',
+  }};
+  var sorted = CARDS.slice();
+  if (sort === 'no_issue') {{
+    sorted.sort(function(a, b) {{
+      var aHas = (window._imageIssues[a.sid] || []).length > 0 ? 1 : 0;
+      var bHas = (window._imageIssues[b.sid] || []).length > 0 ? 1 : 0;
+      return aHas - bHas;
+    }});
+  }} else if (ISSUE_MAP[sort]) {{
+    var target = ISSUE_MAP[sort];
+    sorted.sort(function(a, b) {{
+      var aHas = (window._imageIssues[a.sid] || []).includes(target) ? 0 : 1;
+      var bHas = (window._imageIssues[b.sid] || []).includes(target) ? 0 : 1;
+      return aHas - bHas;
+    }});
+  }}
+  return sorted;
+}}
+
+window.applySort = function(val) {{
+  window._currentSort = val;
+  // Sync both dropdowns
+  ['sort-sel-top','sort-sel-bottom'].forEach(function(id) {{
+    var el = document.getElementById(id);
+    if (el) el.value = val;
+  }});
+  renderAll();
+}};
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
@@ -868,9 +934,47 @@ window.doBatchReject = function(pos) {{
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
   
-  sendMsg('reject', payload); 
-  renderAll(); 
+  // Freeze the grid visually so it doesn't flash/disappear during Streamlit rerun.
+  // We snapshot the current rendered grid as a static clone, overlay it over the
+  // iframe area in the parent, then let it fade out once the rerun completes.
+  try {{
+    var par = window.parent.document;
+    var iframe = null;
+    var frames = par.querySelectorAll('iframe');
+    for (var fi = 0; fi < frames.length; fi++) {{
+      try {{ if (frames[fi].contentWindow === window) {{ iframe = frames[fi]; break; }} }} catch(e) {{}}
+    }}
+    if (iframe) {{
+      var rect = iframe.getBoundingClientRect();
+      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
+      var ghost = par.createElement('div');
+      ghost.id = '__grid_ghost__';
+      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
+        + 'top:' + (rect.top + scrollY) + 'px;'
+        + 'left:' + rect.left + 'px;'
+        + 'width:' + rect.width + 'px;'
+        + 'height:' + rect.height + 'px;'
+        + 'display:flex;align-items:center;justify-content:center;'
+        + 'font-family:sans-serif;font-size:14px;font-weight:600;color:#FF8800;'
+        + 'transition:opacity 0.4s ease;';
+      ghost.innerHTML = '<div style="text-align:center;">'
+        + '<div style="font-size:28px;margin-bottom:8px;">⏳</div>'
+        + '<div>Applying rejections…</div>'
+        + '</div>';
+      var existing = par.getElementById('__grid_ghost__');
+      if (existing) existing.remove();
+      par.body.appendChild(ghost);
+      // Auto-remove after 4s in case rerun completes silently
+      setTimeout(function() {{
+        var g = par.getElementById('__grid_ghost__');
+        if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }}, 400); }}
+      }}, 4000);
+    }}
+  }} catch(ghostErr) {{ /* non-fatal */ }}
+
+  renderAll();
   updateSelCount();
+  sendMsg('reject', payload);
 }};
 
 window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
