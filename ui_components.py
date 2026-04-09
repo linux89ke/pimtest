@@ -919,51 +919,20 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{
-  // 1. Capture the dialog scroll position BEFORE the rerun wipes it
-  var savedScroll = 0;
   try {{
     var par = window.parent.document;
     var scrollable =
       par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
       par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
       par.querySelector('[role="dialog"]');
-    if (scrollable) savedScroll = scrollable.scrollTop;
+    if (scrollable && scrollable.scrollTop > 0) {{
+      window.parent.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
+    }}
   }} catch(e) {{}}
-
-  // 2. Update local state immediately so the card re-renders without the overlay
   delete COMMITTED[sid];
   replaceCard(sid);
   updateSelCount();
-
-  // 3. Send undo to Streamlit (triggers rerun + iframe rebuild)
   sendMsg('undo', {{[sid]: true}});
-
-  // 4. Watch for the iframe to be recreated after the rerun, then restore scroll
-  if (savedScroll <= 0) return;
-  try {{
-    var par2 = window.parent.document;
-    var scrollTarget =
-      par2.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-      par2.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-      par2.querySelector('[role="dialog"]');
-    if (!scrollTarget) return;
-
-    // Use a MutationObserver on the dialog scroll container to detect when
-    // Streamlit finishes the rerun and re-inserts the iframe, then scroll back.
-    var obs = new MutationObserver(function(mutations, observer) {{
-      var hasIframe = scrollTarget.querySelector('iframe');
-      if (hasIframe) {{
-        observer.disconnect();
-        // Small rAF delay to let the browser finish layout before scrolling
-        requestAnimationFrame(function() {{
-          scrollTarget.scrollTop = savedScroll;
-        }});
-      }}
-    }});
-    obs.observe(scrollTarget, {{ childList: true, subtree: true }});
-    // Safety: disconnect after 3s regardless
-    setTimeout(function() {{ obs.disconnect(); }}, 3000);
-  }} catch(e) {{}}
 }};
 
 window.doBatchReject = function(pos) {{
@@ -1051,21 +1020,28 @@ renderAll();
 
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
-    if st.session_state.get("do_scroll_top", False):
-        components.html(
-            "<script>"
-            "try {"
-            "  var par = window.parent.document;"
-            "  var scrollable ="
-            "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
-            "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
-            "    par.querySelector('[role=\"dialog\"]');"
-            "  if (scrollable) scrollable.scrollTo({top: 0, behavior: 'instant'});"
-            "} catch(e) {}"
-            "</script>",
-            height=0,
-        )
-        st.session_state.do_scroll_top = False
+    components.html(
+        "<script>"
+        "try {"
+        "  var par = window.parent.document;"
+        "  var scrollable ="
+        "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
+        "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
+        "    par.querySelector('[role=\"dialog\"]');"
+        "  if (scrollable) {"
+        "    var saved = window.parent.sessionStorage.getItem('__grid_scroll__');"
+        "    if (saved !== null) {"
+        "      window.parent.sessionStorage.removeItem('__grid_scroll__');"
+        "      scrollable.scrollTop = parseInt(saved, 10);"
+        "    } else if (" + str(st.session_state.get("do_scroll_top", False)).lower() + ") {"
+        "      scrollable.scrollTo({top: 0, behavior: 'instant'});"
+        "    }"
+        "  }"
+        "} catch(e) {}"
+        "</script>",
+        height=0,
+    )
+    st.session_state.do_scroll_top = False
 
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
