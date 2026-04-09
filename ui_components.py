@@ -566,10 +566,16 @@ function sendMsg(type, payload) {{
     }}
     if (!bridge) return;
     var msg = JSON.stringify({{action: type, payload: payload}});
+    var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
     bridge.focus({{preventScroll: true}});
-    Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set.call(bridge, msg);
+    nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    setTimeout(() => {{ bridge.blur(); bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}})); }}, 150);
+    // Fire Enter synchronously — the old setTimeout(150ms) let Streamlit re-render
+    // and swap out the bridge element before keydown fired, silently dropping the
+    // first batch-reject click. Dispatching immediately prevents that race condition.
+    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.blur();
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
