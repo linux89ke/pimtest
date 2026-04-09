@@ -217,12 +217,10 @@ def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
     if target.empty:
         return pd.DataFrame(columns=data.columns)
 
-    # Deduplicate URLs so we don't fetch the same image twice
     unique_urls = target['MAIN_IMAGE'].unique()
     
     def fetch_image_ratio(url):
         try:
-            # stream=True is critical: it only downloads the file headers!
             r = requests.get(url, stream=True, timeout=3)
             if r.status_code == 200:
                 img = Image.open(r.raw)
@@ -238,7 +236,6 @@ def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
         return url, None
 
     url_issues = {}
-    # Check 20 images in parallel to keep the validation phase lightning fast
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         futures = [executor.submit(fetch_image_ratio, url) for url in unique_urls]
         for future in concurrent.futures.as_completed(futures):
@@ -525,15 +522,12 @@ def check_single_word_name(data: pd.DataFrame, book_category_codes: List[str], b
     
     d = data.copy()
     
-    # Calculate word count and character count using fast pandas string methods
     names = d['NAME'].astype(str).str.strip()
     word_counts = names.str.split().str.len()
     char_counts = names.str.len()
     
-    # Condition: 2 words or fewer, OR less than 15 characters
     bad_name_mask = (word_counts <= 2) | (char_counts < 15)
     
-    # Exclude books from this strict naming rule
     if '_cat_clean' in d.columns:
         non_books_mask = ~d['_cat_clean'].isin(cat_codes)
     else:
@@ -619,11 +613,12 @@ def check_generic_with_brand_in_name(data: pd.DataFrame, brands_list: List[str])
 def load_valid_colors() -> set:
     valid_set = set()
     try:
-        with open('colors.txt', 'r', encoding='utf-8') as f:
-            for line in f:
-                color = line.strip().lower()
-                if color:
-                    valid_set.add(color)
+        if os.path.exists('colors.txt'):
+            with open('colors.txt', 'r', encoding='utf-8') as f:
+                for line in f:
+                    color = line.strip().lower()
+                    if color:
+                        valid_set.add(color)
     except Exception as e:
         logger.warning(f"Could not load colors.txt: {e}")
     return valid_set
@@ -641,21 +636,25 @@ def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categorie
     colors = target['COLOR'].astype(str).str.strip().str.lower().values if has_color else [''] * len(target)
     
     valid_colors = load_valid_colors()
-    
-    fallback_invalid = {
-        'nan', '', 'none', 'null', 'n/a', 'na', '-',
-        'random', 'as in picture', 'as picture', 'as seen', 'picture', 
-        'default', 'assorted', 'various', 'any'
-    }
+    null_like = {'nan', '', 'none', 'null', 'n/a', 'na', '-'}
     
     mask = []
     for n, c in zip(names, colors):
+        # Pass Condition 1: Valid color word in Title
         is_name_valid = bool(pattern.search(n))
         
-        if valid_colors:
-            is_col_valid = has_color and (c in valid_colors)
-        else:
-            is_col_valid = has_color and (c not in fallback_invalid)
+        # Pass Condition 2: Check for whitelisted colors (allowing comma/slash splits)
+        is_col_valid = False
+        if has_color and c not in null_like:
+            if valid_colors:
+                # Split by common multi-color separators like "," or "/" or "&"
+                color_parts = re.split(r'[&,/]', c)
+                # Pass if ANY part of the string matches your whitelist
+                if any(part.strip() in valid_colors for part in color_parts):
+                    is_col_valid = True
+            else:
+                # Fallback: if no whitelist exists, allow non-null strings
+                is_col_valid = True
             
         if is_col_valid or is_name_valid:
             mask.append(False) 
@@ -667,7 +666,7 @@ def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categorie
     if not flagged.empty:
         def get_reason(row):
             c_val = str(row.get('COLOR', '')).strip().lower()
-            if c_val and c_val not in ('nan', '', 'none', 'null', 'n/a', 'na', '-'):
+            if c_val and c_val not in null_like:
                 return f"Invalid color value provided: '{str(row.get('COLOR', '')).strip()}'"
             return "Color missing in both NAME and COLOR attributes"
         flagged['Comment_Detail'] = flagged.apply(get_reason, axis=1)
