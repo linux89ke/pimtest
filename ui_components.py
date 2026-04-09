@@ -340,6 +340,11 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         usd_val = sale_p if pd.notna(sale_p) and str(sale_p).strip() != "" else reg_p
         price_str = format_local_price(usd_val, st.session_state.get('selected_country', 'Kenya')) if pd.notna(usd_val) else ""
 
+        # Extract Color
+        color_val = str(row.get("COLOR", "")).strip()
+        if color_val.lower() in ('nan', 'none', 'null'):
+            color_val = ""
+
         cards_data.append({
             "sid": sid,
             "img": img_url,
@@ -347,6 +352,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
             "brand": str(row.get("BRAND", "Unknown Brand")),
             "cat": str(row.get("CATEGORY", "Unknown Category")),
             "seller": str(row.get("SELLER_NAME", "Unknown Seller")),
+            "color": color_val,
             "warnings": page_warnings.get(sid, []),
             "price": price_str,
         })
@@ -415,6 +421,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .meta .br{{color:{O};font-weight:700;margin:2px 0;}}
   .meta .ct{{color:#666;font-size:10px;word-break:break-word;}}
   .meta .sl{{color:#999;font-size:9px;margin-top:4px;border-top:1px dashed #eee;padding-top:4px;cursor:help;}}
+  .meta .co{{color:#555;font-size:10px;margin-top:4px;background:#f0f0f0;padding:3px 5px;border-radius:4px;display:inline-block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;font-weight:600;}}
   
   .acts{{display:flex;gap:4px;margin-top:8px;}}
   .act-btn{{flex:1;padding:6px;font-size:11px;border:none;border-radius:4px;cursor:pointer;font-weight:700;color:#fff;background:{O};}}
@@ -497,9 +504,10 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="REJECT_WRONG_BRAND">{_t("wrong_brand")}</option>
     <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
     <option value="REJECT_COLOR">{_t("missing_color")}</option>
+    <option value="OTHER_CUSTOM">Other Reason (Custom)</option>
   </select>
   <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
-  <button class="desel-btn" onclick="doBatchUndo()">Undo Selected</button>
+  <button class="desel-btn" onclick="doBatchUndo()">↺ Undo Selected</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
@@ -524,9 +532,10 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="REJECT_WRONG_BRAND">{_t("wrong_brand")}</option>
     <option value="REJECT_PROHIBITED">{_t("prohibited")}</option>
     <option value="REJECT_COLOR">{_t("missing_color")}</option>
+    <option value="OTHER_CUSTOM">Other Reason (Custom)</option>
   </select>
   <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
-  <button class="desel-btn" onclick="doBatchUndo()">Undo Selected</button>
+  <button class="desel-btn" onclick="doBatchUndo()">↺ Undo Selected</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
@@ -777,6 +786,8 @@ function renderCard(card) {{
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '\u2026' : escapeHtml(card.name);
   var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
   var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
+  
+  var colorHtml = card.color ? `<div class="co" title="Color: ${{escapeHtml(card.color)}}">🎨 ${{escapeHtml(card.color)}}</div>` : '';
 
   var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -802,7 +813,7 @@ function renderCard(card) {{
       <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{safeSid}}')">${{escapeHtml(LABELS.clear_sel)}}</button>
     </div>`;
   }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option></select></div>`;
+    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option><option value="OTHER_CUSTOM">Other Reason (Custom)</option></select></div>`;
   }}
 
   return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
@@ -822,6 +833,7 @@ function renderCard(card) {{
       <div class="br" title="${{escapeHtml(card.brand)}}">${{escapeHtml(card.brand)}}</div>
       <div class="ct">${{escapeHtml(card.cat)}}</div>
       <div class="sl" title="${{escapeHtml(card.seller)}}">${{escapeHtml(card.seller)}}</div>
+      ${{colorHtml}}
     </div>
     ${{actHtml}}
   </div>`;
@@ -923,7 +935,18 @@ window.toggleSelect = function(sid, e) {{
   replaceCard(sid); updateSelCount();
 }};
 
-window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
+window.stageReject = function(sid, r) {{ 
+  if (r === 'OTHER_CUSTOM') {{
+      var cmt = prompt("Enter custom rejection reason:");
+      if (!cmt) return;
+      r = "Other Reason (Custom): " + cmt;
+  }}
+  if (sid in selected) delete selected[sid]; 
+  staged[sid] = r; 
+  replaceCard(sid); 
+  updateSelCount(); 
+}};
+
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 
 window.undoReject = function(sid) {{
@@ -938,7 +961,7 @@ window.undoReject = function(sid) {{
      var payload = Object.assign({{}}, window._pendingUndos);
      window._pendingUndos = {{}};
      if (Object.keys(payload).length > 0) {{
-         showGhostOverlay('Applying undos...');
+         showGhostOverlay('↺ Reverting items...');
          sendMsg('undo', payload);
      }}
   }}, 800); 
@@ -946,7 +969,18 @@ window.undoReject = function(sid) {{
 
 window.doBatchReject = function(pos) {{
   var selectId = pos === 'top' ? 'batch-reason-top' : 'batch-reason-bottom';
-  var br = document.getElementById(selectId).value;
+  var sel = document.getElementById(selectId);
+  var br = sel.value;
+  
+  if (br === 'OTHER_CUSTOM') {{
+      var cmt = prompt("Enter custom rejection reason:");
+      if (!cmt) {{
+          sel.value = "REJECT_POOR_IMAGE";
+          return;
+      }}
+      br = "Other Reason (Custom): " + cmt;
+  }}
+
   var payload = {{}}, count = 0;
   for (var s in staged) {{ payload[s] = staged[s]; count++; }}
   for (var s in selected) {{ 
@@ -981,7 +1015,7 @@ window.doBatchUndo = function() {{
       delete COMMITTED[s];
       delete selected[s];
   }}
-  showGhostOverlay('Applying undos...');
+  showGhostOverlay('↺ Reverting items...');
   renderAll();
   updateSelCount();
   sendMsg('undo', payload);
