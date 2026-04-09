@@ -1040,9 +1040,9 @@ if country_choice and country_choice != current_country:
     st.toast(f"Switching to {country_choice}…", icon=":material/public:")
 
 country_validator = CountryValidator(st.session_state.selected_country)
-# Fix in both files:
+
 uploaded_files = st.file_uploader(
-    "Upload files",                          # non-empty label
+    "Upload files",                                # non-empty label
     type=['csv', 'xlsx'],
     accept_multiple_files=True,
     key="daily_files",
@@ -1206,7 +1206,7 @@ def restore_single_item(sid):
     st.session_state.pop(f"quick_rej_reason_{sid}", None)
     st.session_state.exports_cache.clear()
     st.session_state.display_df_cache.clear()
-    st.session_state.main_toasts.append("Restored item to previous state!")
+    st.session_state.main_toasts.append("Reverted selections.")
 
 # -------------------------------------------------
 # JTBRIDGE (HTML GRID MESSAGE HANDLER)
@@ -1228,11 +1228,17 @@ if _bridge_val:
                 for _sid, _rkey in _payload.items(): _rgroups.setdefault(_rkey, []).append(_sid)
                 _total = 0
                 for _rkey, _sids in _rgroups.items():
-                    _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
-                    _rinfo = support_files["flags_mapping"].get(_flag, {'reason': "1000007 - Other Reason", 'en': "Manual rejection"})
-                    _code = _rinfo['reason']
-                    _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
-                    _cmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
+                    # ── NEW: Handle Custom Comments from the frontend ──
+                    if _rkey.startswith("Other Reason (Custom): "):
+                        _flag = "Other Reason (Custom)"
+                        _code = "1000007 - Other Reason"
+                        _cmt = _rkey.split(": ", 1)[1] # Extract the comment they typed
+                    else:
+                        _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
+                        _rinfo = support_files["flags_mapping"].get(_flag, {'reason': "1000007 - Other Reason", 'en': "Manual rejection"})
+                        _code = _rinfo['reason']
+                        _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
+                        _cmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
                     
                     st.session_state.final_report.loc[
                         st.session_state.final_report["ProductSetSid"].isin(_sids),
@@ -1246,7 +1252,7 @@ if _bridge_val:
                     
                 st.session_state.exports_cache.clear()
                 st.session_state.display_df_cache.clear()
-                st.session_state.main_toasts.append((f"Rejected {_total} product(s)", ":material/block:"))
+                st.session_state.main_toasts.append(f"Rejected {_total} product(s)")
                 st.session_state.main_bridge_counter += 1
                 st.session_state.do_scroll_top = False
                 st.rerun()
