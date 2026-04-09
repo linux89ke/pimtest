@@ -1011,7 +1011,7 @@ def visual_review_modal(support_files):
         "  requestAnimationFrame(function() {"
         "    var active = par.activeElement;"
         "    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {"
-        "      var dialog = par.querySelector('[data-testid="stModal"]');"
+        "      var dialog = par.querySelector('[data-testid=\"stModal\"]');"
         "      if (dialog && dialog.contains(active)) { active.blur(); }"
         "    }"
         "  });"
