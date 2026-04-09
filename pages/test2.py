@@ -615,19 +615,64 @@ def check_generic_with_brand_in_name(data: pd.DataFrame, brands_list: List[str])
         )
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
+@st.cache_data(show_spinner=False)
+def load_valid_colors() -> set:
+    valid_set = set()
+    try:
+        with open('colors.txt', 'r', encoding='utf-8') as f:
+            for line in f:
+                color = line.strip().lower()
+                if color:
+                    valid_set.add(color)
+    except Exception as e:
+        logger.warning(f"Could not load colors.txt: {e}")
+    return valid_set
+
 def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categories: List[str], country_code: str) -> pd.DataFrame:
-    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns) or pattern is None: return pd.DataFrame(columns=data.columns)
+    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns) or pattern is None: 
+        return pd.DataFrame(columns=data.columns)
+        
     target = data[data['_cat_clean'].isin(set(clean_category_code(c) for c in color_categories))].copy()
-    if target.empty: return pd.DataFrame(columns=data.columns)
+    if target.empty: 
+        return pd.DataFrame(columns=data.columns)
+    
     has_color = 'COLOR' in data.columns
     names = target['NAME'].astype(str).values
     colors = target['COLOR'].astype(str).str.strip().str.lower().values if has_color else [''] * len(target)
+    
+    valid_colors = load_valid_colors()
+    
+    fallback_invalid = {
+        'nan', '', 'none', 'null', 'n/a', 'na', '-',
+        'random', 'as in picture', 'as picture', 'as seen', 'picture', 
+        'default', 'assorted', 'various', 'any'
+    }
+    
     mask = []
     for n, c in zip(names, colors):
-        if pattern.search(n): mask.append(False)
-        elif has_color and c not in ['nan', '', 'none', 'null']: mask.append(False)
-        else: mask.append(True)
-    return target[mask].drop_duplicates(subset=['PRODUCT_SET_SID'])
+        is_name_valid = bool(pattern.search(n))
+        
+        if valid_colors:
+            is_col_valid = has_color and (c in valid_colors)
+        else:
+            is_col_valid = has_color and (c not in fallback_invalid)
+            
+        if is_col_valid or is_name_valid:
+            mask.append(False) 
+        else:
+            mask.append(True)  
+            
+    flagged = target[mask].copy()
+    
+    if not flagged.empty:
+        def get_reason(row):
+            c_val = str(row.get('COLOR', '')).strip().lower()
+            if c_val and c_val not in ('nan', '', 'none', 'null', 'n/a', 'na', '-'):
+                return f"Invalid color value provided: '{str(row.get('COLOR', '')).strip()}'"
+            return "Color missing in both NAME and COLOR attributes"
+        flagged['Comment_Detail'] = flagged.apply(get_reason, axis=1)
+
+    return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[str]) -> pd.DataFrame:
     if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns) or not weight_category_codes: return pd.DataFrame(columns=data.columns)
