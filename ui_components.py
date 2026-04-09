@@ -373,8 +373,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
-  .top-btn {{margin-left: auto; background: #313133; color: white; border-color: #313133; font-weight: bold;}}
-  .top-btn:hover {{background: #000; color: white;}}
   
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
@@ -488,13 +486,13 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
-  <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">⇅ Sort by issue</option>
-    <option value="low_res">🔍 Low Resolution</option>
-    <option value="tall">📱 Tall (Screenshot?)</option>
-    <option value="wide">↔ Wide Aspect</option>
-    <option value="broken">❌ Broken Image</option>
-    <option value="no_issue">✅ No Issues First</option>
+  <select class="reason-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">Sort by issue</option>
+    <option value="low_res">Low Resolution</option>
+    <option value="tall">Tall (Screenshot?)</option>
+    <option value="wide">Wide Aspect</option>
+    <option value="broken">Broken Image</option>
+    <option value="no_issue">No Issues First</option>
   </select>
 </div>
 
@@ -514,15 +512,14 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
-  <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">⇅ Sort by issue</option>
-    <option value="low_res">🔍 Low Resolution</option>
-    <option value="tall">📱 Tall (Screenshot?)</option>
-    <option value="wide">↔ Wide Aspect</option>
-    <option value="broken">❌ Broken Image</option>
-    <option value="no_issue">✅ No Issues First</option>
+  <select class="reason-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">Sort by issue</option>
+    <option value="low_res">Low Resolution</option>
+    <option value="tall">Tall (Screenshot?)</option>
+    <option value="wide">Wide Aspect</option>
+    <option value="broken">Broken Image</option>
+    <option value="no_issue">No Issues First</option>
   </select>
-  <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
 </div>
 
 <div id="zoom-tooltip">
@@ -535,6 +532,8 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
 <script>
 // 🚀 INSTANT CLOSE DIALOG LOCK 
+// When the "X" Streamlit button is clicked, we instantly hide the modal via CSS
+// so it vanishes at 0ms, while the Streamlit backend reruns and fully destroys it gracefully.
 try {{
   var par = window.parent.document;
   if (!par.window.__stModalLocked) {{
@@ -570,6 +569,15 @@ window._currentSort = window._currentSort || '';
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
+function _getScrollable() {{
+  try {{
+    var par = window.parent.document;
+    return par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
+           par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
+           par.querySelector('[role="dialog"]');
+  }} catch(e) {{ return null; }}
+}}
+
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
@@ -582,41 +590,47 @@ function sendMsg(type, payload) {{
     }}
     if (!bridge) return;
 
-    // [FIX]: Globally save scroll position BEFORE interacting with the bridge
-    var scrollable = par.document.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-                     par.document.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-                     par.document.querySelector('[role="dialog"]');
-    if (scrollable && scrollable.scrollTop > 0) {{
-      par.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
+    // 1. Snapshot scroll position BEFORE touching the bridge element.
+    var scrollable = _getScrollable();
+    var savedScroll = scrollable ? scrollable.scrollTop : 0;
+    if (savedScroll > 0) {{
+      par.sessionStorage.setItem('__grid_scroll__', savedScroll);
     }}
 
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-    
-    // [FIX]: We MUST focus the bridge. Streamlit/React completely ignores the Enter key if it isn't active.
-    bridge.focus({{preventScroll: true}});
+
+    // 2. Temporarily move the bridge off-screen so browser scroll-into-view
+    //    has nowhere useful to go, then immediately restore after events fire.
+    var origPosition = bridge.style.position;
+    var origTop = bridge.style.top;
+    var origLeft = bridge.style.left;
+    bridge.style.position = 'fixed';
+    bridge.style.top = '-9999px';
+    bridge.style.left = '-9999px';
+
+    bridge.focus();
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    
-    // Blur immediately to prevent value bleeding into other text inputs (like Search) on rerun
     bridge.blur();
-  }} catch(ex) {{ console.error('jtbridge error:', ex); }}
-}}
 
-function scrollToTop() {{
-  try {{
-    var par = window.parent.document;
-    var scrollable =
-      par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-      par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-      par.querySelector('[role="dialog"]');
-    if (scrollable) {{
-      scrollable.scrollTo({{top: 0, behavior: 'smooth'}});
+    // 3. Restore bridge position immediately after events dispatched.
+    bridge.style.position = origPosition;
+    bridge.style.top = origTop;
+    bridge.style.left = origLeft;
+
+    // 4. Immediately restore scroll (catches synchronous scroll side-effects).
+    if (scrollable && savedScroll > 0) {{
+      scrollable.scrollTop = savedScroll;
     }}
-    window.scrollTo({{top: 0, behavior: 'smooth'}});
-  }} catch(e) {{ console.warn('scrollToTop failed:', e); }}
+    // 5. Also restore after a short delay (catches async Streamlit rerun scroll).
+    setTimeout(function() {{
+      var s2 = _getScrollable();
+      if (s2 && savedScroll > 0) s2.scrollTop = savedScroll;
+    }}, 80);
+  }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
 function updateParentPagination() {{
@@ -628,6 +642,7 @@ function updateParentPagination() {{
     buttons.forEach(b => {{
       var txt = b.innerText || "";
       
+      // 🚀 MAGIC 0ms CLOSE: Instantly hide the modal container when clicking Close!
       if (txt.includes('Close') && !b.dataset.fastCloseBound) {{
         b.dataset.fastCloseBound = "true";
         b.addEventListener('click', function() {{
@@ -686,6 +701,7 @@ function onImgLoad(img, sid) {{
   if (warns.length) addWarnings(sid, warns);
 }}
 
+// IntersectionObserver lazy loader — fires actual src only when card enters viewport
 var _lazyObserver = null;
 function getLazyObserver() {{
   if (_lazyObserver) return _lazyObserver;
@@ -714,6 +730,7 @@ function activateLazyImages() {{
 
 function onImgError(img, sid) {{
   var card = CARDS.find(c => c.sid === sid);
+  // Resolve lazy-src if it was never swapped in
   var realSrc = img.dataset.lazySrc || (card ? card.img : '');
   if (!img.dataset.triedProxy && realSrc && realSrc.startsWith('http')) {{
       img.dataset.triedProxy = 'true';
@@ -771,6 +788,7 @@ function renderCard(card) {{
   var isEager = imgIdx < {cols_per_row * 2};
   var loadingAttr = isEager ? 'eager' : 'lazy';
   var priorityAttr = isEager ? 'fetchpriority="high"' : 'fetchpriority="low"';
+  // For non-eager images use data-lazy-src so IntersectionObserver fires src when visible
   var imgSrcAttr = isEager
     ? `src="${{safeImgSrcForHtml}}"`
     : `src="${{PLACEHOLDER}}" data-lazy-src="${{safeImgSrcForHtml}}"`;
@@ -875,22 +893,18 @@ function getSortedCards() {{
   }}
   return sorted;
 }}
-
 window.applySort = function(val) {{
   window._currentSort = val;
   ['sort-sel-top','sort-sel-bottom'].forEach(function(id) {{ var el=document.getElementById(id); if(el) el.value=val; }});
   renderAll();
 }};
-
 function renderAll() {{ document.getElementById('card-grid').innerHTML = getSortedCards().map(renderCard).join(''); updateSelCount(); activateLazyImages(); }}
-
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
   var card = CARDS.find(c => c.sid === sid);
   if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); activateLazyImages(); }}
 }}
-
 window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
 window.toggleSelect = function(sid, e) {{
   if (sid in COMMITTED) return;
@@ -901,9 +915,7 @@ window.toggleSelect = function(sid, e) {{
 }};
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
-
 window.undoReject = function(sid) {{
-  // We removed the scroll save logic here because sendMsg now handles it for EVERY action!
   delete COMMITTED[sid];
   replaceCard(sid);
   updateSelCount();
@@ -918,39 +930,6 @@ window.doBatchReject = function(pos) {{
   for (var s in selected) {{ payload[s] = br; count++; }}
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
-  
-  // [RESTORED]: The ghost loading overlay that prevents the grid from flashing empty while Streamlit processes
-  try {{
-    var par = window.parent.document;
-    var iframe = null;
-    var frames = par.querySelectorAll('iframe');
-    for (var fi = 0; fi < frames.length; fi++) {{
-      try {{ if (frames[fi].contentWindow === window) {{ iframe = frames[fi]; break; }} }} catch(e) {{}}
-    }}
-    if (iframe) {{
-      var rect = iframe.getBoundingClientRect();
-      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
-      var ghost = par.createElement('div');
-      ghost.id = '__grid_ghost__';
-      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
-        + 'top:' + (rect.top + scrollY) + 'px;'
-        + 'left:' + rect.left + 'px;'
-        + 'width:' + rect.width + 'px;'
-        + 'height:' + rect.height + 'px;'
-        + 'display:flex;align-items:center;justify-content:center;'
-        + 'font-family:sans-serif;font-size:14px;font-weight:600;color:#FF8800;'
-        + 'transition:opacity 0.4s ease;';
-      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:28px;margin-bottom:8px;">⏳</div><div>Applying rejections…</div></div>';
-      var existing = par.getElementById('__grid_ghost__');
-      if (existing) existing.remove();
-      par.body.appendChild(ghost);
-      setTimeout(function() {{
-        var g = par.getElementById('__grid_ghost__');
-        if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }}, 400); }}
-      }}, 4000);
-    }}
-  }} catch(ghostErr) {{ /* non-fatal */ }}
-
   renderAll();
   updateSelCount();
   sendMsg('reject', payload);
