@@ -590,7 +590,7 @@ function sendMsg(type, payload) {{
     }}
     if (!bridge) return;
 
-    // [FIX 2 & 4]: Save scroll using shared helper
+    // Save scroll using our shared helper
     var scrollable = _getScrollable();
     if (scrollable) {{
       par.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
@@ -599,11 +599,19 @@ function sendMsg(type, payload) {{
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
     
-    // [FIX 1]: Removed bridge.focus() completely. 
+    // Set the value so React registers the change
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+    
+    // React requires the input to be focused to accept the Enter key submission.
+    // We use preventScroll: true, fire the Enter key, and instantly blur it so Streamlit
+    // doesn't retain focus on the element during the Python rerun.
+    bridge.focus({{preventScroll: true}});
+    
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    
+    bridge.blur();
 
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
