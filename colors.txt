@@ -310,7 +310,6 @@ Beige
 Bordeaux
 Turquoise
 Argent
-Or
 Bleu Marine
 Crème
 Lavande
