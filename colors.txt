@@ -1,5 +1,7 @@
 Hazel
 Multicolored
+Multicolor
+Multi
 Woody
 clear
 plastic
@@ -35,7 +37,6 @@ apricot
 wine
 mocha
 multicolor
-multi
 plaid
 rose
 lily
