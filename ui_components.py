@@ -893,9 +893,13 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{
-  // Save dialog scroll position to sessionStorage before the rerun wipes it
   try {{
     var par = window.parent.document;
+    // Blur every input/textarea inside the dialog so Streamlit has no focused
+    // element to scroll back to after the rerun — this is what caused the jump.
+    par.querySelectorAll('[data-testid="stModal"] input, [data-testid="stModal"] textarea').forEach(function(el) {{
+      el.blur();
+    }});
     var scrollable =
       par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
       par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
