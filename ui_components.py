@@ -486,6 +486,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="REJECT_COLOR">{_t("missing_color")}</option>
   </select>
   <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
+  <button class="desel-btn" onclick="doBatchUndo()">Undo Selected</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
@@ -512,6 +513,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
     <option value="REJECT_COLOR">{_t("missing_color")}</option>
   </select>
   <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
+  <button class="desel-btn" onclick="doBatchUndo()">Undo Selected</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
@@ -575,8 +577,44 @@ window.currentZoomSid = null;
 window._imageIssues = window._imageIssues || {{}};
 window._currentSort = window._currentSort || '';
 
+window._pendingUndos = window._pendingUndos || {{}};
+window._undoTimer = null;
+
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
+
+function showGhostOverlay(msgText) {{
+  try {{
+    var par = window.parent.document;
+    var iframe = null;
+    var frames = par.querySelectorAll('iframe');
+    for (var fi = 0; fi < frames.length; fi++) {{
+      try {{ if (frames[fi].contentWindow === window) {{ iframe = frames[fi]; break; }} }} catch(e) {{}}
+    }}
+    if (iframe) {{
+      var rect = iframe.getBoundingClientRect();
+      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
+      var ghost = par.createElement('div');
+      ghost.id = '__grid_ghost__';
+      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
+        + 'top:' + (rect.top + scrollY) + 'px;'
+        + 'left:' + rect.left + 'px;'
+        + 'width:' + rect.width + 'px;'
+        + 'height:' + rect.height + 'px;'
+        + 'display:flex;align-items:center;justify-content:center;'
+        + 'font-family:sans-serif;color:#FF8800;'
+        + 'transition:opacity 0.4s ease;';
+      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:18px;margin-bottom:8px;font-weight:bold;">' + msgText + '</div></div>';
+      var existing = par.getElementById('__grid_ghost__');
+      if (existing) existing.remove();
+      par.body.appendChild(ghost);
+      setTimeout(function() {{
+        var g = par.getElementById('__grid_ghost__');
+        if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }}, 400); }}
+      }}, 4000);
+    }}
+  }} catch(ghostErr) {{ /* non-fatal */ }}
+}}
 
 function sendMsg(type, payload) {{
   try {{
@@ -590,7 +628,6 @@ function sendMsg(type, payload) {{
     }}
     if (!bridge) return;
 
-    // Save scroll using our shared helper
     var scrollable = _getScrollable();
     if (scrollable) {{
       par.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
@@ -599,13 +636,9 @@ function sendMsg(type, payload) {{
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
     
-    // Set the value so React registers the change
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     
-    // React requires the input to be focused to accept the Enter key submission.
-    // We use preventScroll: true, fire the Enter key, and instantly blur it so Streamlit
-    // doesn't retain focus on the element during the Python rerun.
     bridge.focus({{preventScroll: true}});
     
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
@@ -760,8 +793,8 @@ function renderCard(card) {{
   var safeSid = sid.replace(/'/g, "\\\\'");
   var isCommitted = sid in COMMITTED;
   var isStaged = sid in staged;
-  var isSelected = !isCommitted && !isStaged && (sid in selected);
-  var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : isSelected ? ' selected' : '');
+  var isSelected = sid in selected;
+  var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : '') + (isSelected ? ' selected' : '');
 
   var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '\u2026' : escapeHtml(card.name);
@@ -898,22 +931,40 @@ function replaceCard(sid) {{
   if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); activateLazyImages(); }}
 }}
 
-window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
+window.doSelectAll = function() {{ 
+  CARDS.forEach(c => {{ 
+    if (!(c.sid in staged)) selected[c.sid] = true; 
+  }}); 
+  renderAll(); 
+  updateSelCount(); 
+}};
+
 window.toggleSelect = function(sid, e) {{
-  if (sid in COMMITTED) return;
   if (sid in staged) delete staged[sid];
   else if (sid in selected) delete selected[sid];
   else selected[sid] = true;
   replaceCard(sid); updateSelCount();
 }};
+
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 
 window.undoReject = function(sid) {{
   delete COMMITTED[sid];
+  window._pendingUndos[sid] = true;
+  if (sid in selected) delete selected[sid];
   replaceCard(sid);
   updateSelCount();
-  sendMsg('undo', {{[sid]: true}});
+  
+  if (window._undoTimer) clearTimeout(window._undoTimer);
+  window._undoTimer = setTimeout(function() {{
+     var payload = Object.assign({{}}, window._pendingUndos);
+     window._pendingUndos = {{}};
+     if (Object.keys(payload).length > 0) {{
+         showGhostOverlay('Applying undos...');
+         sendMsg('undo', payload);
+     }}
+  }}, 800); 
 }};
 
 window.doBatchReject = function(pos) {{
@@ -921,44 +972,42 @@ window.doBatchReject = function(pos) {{
   var br = document.getElementById(selectId).value;
   var payload = {{}}, count = 0;
   for (var s in staged) {{ payload[s] = staged[s]; count++; }}
-  for (var s in selected) {{ payload[s] = br; count++; }}
+  for (var s in selected) {{ 
+      if (!(s in COMMITTED)) {{
+          payload[s] = br; 
+          count++; 
+      }}
+  }}
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
   
-  try {{
-    var par = window.parent.document;
-    var iframe = null;
-    var frames = par.querySelectorAll('iframe');
-    for (var fi = 0; fi < frames.length; fi++) {{
-      try {{ if (frames[fi].contentWindow === window) {{ iframe = frames[fi]; break; }} }} catch(e) {{}}
-    }}
-    if (iframe) {{
-      var rect = iframe.getBoundingClientRect();
-      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
-      var ghost = par.createElement('div');
-      ghost.id = '__grid_ghost__';
-      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
-        + 'top:' + (rect.top + scrollY) + 'px;'
-        + 'left:' + rect.left + 'px;'
-        + 'width:' + rect.width + 'px;'
-        + 'height:' + rect.height + 'px;'
-        + 'display:flex;align-items:center;justify-content:center;'
-        + 'font-family:sans-serif;color:#FF8800;'
-        + 'transition:opacity 0.4s ease;';
-      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:18px;margin-bottom:8px;font-weight:bold;">Applying rejections...</div></div>';
-      var existing = par.getElementById('__grid_ghost__');
-      if (existing) existing.remove();
-      par.body.appendChild(ghost);
-      setTimeout(function() {{
-        var g = par.getElementById('__grid_ghost__');
-        if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }}, 400); }}
-      }}, 4000);
-    }}
-  }} catch(ghostErr) {{ /* non-fatal */ }}
-
+  showGhostOverlay('Applying rejections...');
   renderAll();
   updateSelCount();
   sendMsg('reject', payload);
+}};
+
+window.doBatchUndo = function() {{
+  if (window._undoTimer) {{ clearTimeout(window._undoTimer); window._undoTimer = null; }}
+  var payload = Object.assign({{}}, window._pendingUndos);
+  window._pendingUndos = {{}};
+  
+  var count = 0;
+  for (var s in selected) {{
+      if (s in COMMITTED) {{
+          payload[s] = true;
+          count++;
+      }}
+  }}
+  if (Object.keys(payload).length === 0) return;
+  for (var s in payload) {{
+      delete COMMITTED[s];
+      delete selected[s];
+  }}
+  showGhostOverlay('Applying undos...');
+  renderAll();
+  updateSelCount();
+  sendMsg('undo', payload);
 }};
 
 window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
