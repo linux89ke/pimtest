@@ -900,6 +900,7 @@ if 'exports_cache' not in st.session_state: st.session_state.exports_cache = {}
 if 'do_scroll_top' not in st.session_state: st.session_state.do_scroll_top = False
 if 'display_df_cache' not in st.session_state: st.session_state.display_df_cache = {}
 if 'main_bridge_counter' not in st.session_state: st.session_state.main_bridge_counter = 0
+st.session_state['_reason_map'] = REASON_MAP
 if 'flags_expanded_initialized' not in st.session_state: st.session_state.flags_expanded_initialized = False
 
 try: st.set_page_config(page_title="Product Tool", layout=st.session_state.layout_mode)
