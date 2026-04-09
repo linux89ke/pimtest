@@ -1068,6 +1068,8 @@ if st.session_state.get('last_processed_files') != process_signature:
     st.session_state.exports_cache = {}
     st.session_state.display_df_cache = {}
     st.session_state.flags_expanded_initialized = False
+    st.session_state.pop("_grid_review_data_cache", None)
+    st.session_state.pop("_grid_warm_urls", None)
     keys_to_delete = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_"))]
     for k in keys_to_delete: del st.session_state[k]
 
@@ -1149,6 +1151,42 @@ if st.session_state.get('last_processed_files') != process_signature:
 
                         save_df_parquet(data, f"{sig_hash}_data.parquet")
                         save_df_parquet(final_report, f"{sig_hash}_report.parquet")
+
+                        # ── Pre-warm the visual review grid data while user reads results ──
+                        # Build and cache review_data + first-page image URLs now so the
+                        # modal opens instantly instead of computing on first click.
+                        try:
+                            from constants import GRID_COLS
+                            _fr = final_report
+                            _committed_sids = set()
+                            _valid_sids = _fr[_fr["Status"] == "Approved"]["ProductSetSid"].tolist()
+                            if "MAIN_IMAGE" not in data.columns:
+                                data["MAIN_IMAGE"] = ""
+                            _available_cols = [c for c in GRID_COLS if c in data.columns]
+                            if "CATEGORY_CODE" in data.columns and "CATEGORY_CODE" not in _available_cols:
+                                _available_cols.append("CATEGORY_CODE")
+                            _valid_df = _fr[_fr["Status"] == "Approved"][["ProductSetSid"]]
+                            _review_data = pd.merge(
+                                _valid_df, data[_available_cols],
+                                left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
+                            )
+                            _code_to_path = support_files.get("code_to_path", {})
+                            if _code_to_path and "CATEGORY_CODE" in _review_data.columns:
+                                _review_data = _review_data.copy()
+                                _review_data["CATEGORY"] = _review_data["CATEGORY_CODE"].apply(
+                                    lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ""
+                                )
+                            st.session_state["_grid_review_data_cache"] = _review_data
+                            # Pre-fetch URLs for first 2 pages at default 50 ipp
+                            _ipp = 50
+                            _warm_urls = set()
+                            for _url in _review_data.iloc[:_ipp * 2]["MAIN_IMAGE"].astype(str):
+                                _url = _url.strip().replace("http://", "https://", 1)
+                                if _url.startswith("https"):
+                                    _warm_urls.add(_url)
+                            st.session_state["_grid_warm_urls"] = list(_warm_urls)
+                        except Exception as _pw_err:
+                            logger.warning("Grid pre-warm failed: %s", _pw_err)
                     else:
                         for e in errors: st.error(e)
                         st.session_state.last_processed_files = "error"
