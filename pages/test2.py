@@ -174,7 +174,7 @@ FLAG_RELEVANT_COLS = {
     "NG - Apple Seller":      ["BRAND", "SELLER_NAME"],
     "NG - Xmas Tree Seller":  ["NAME", "SELLER_NAME"],
     "NG - Rice Brand Seller": ["CATEGORY_CODE", "BRAND", "SELLER_NAME"],
-    "NG - Powerbank Capacity":["CATEGORY_CODE", "NAME", "BRAND"],
+    "Powerbank Not Authorized":["CATEGORY_CODE", "NAME", "BRAND"],
 }
 
 def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) -> str:
@@ -743,7 +743,13 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             ("NG - Apple Seller",      check_nigeria_apple,      {"ng_rules": _ng}),
             ("NG - Xmas Tree Seller",  check_nigeria_xmas_tree,  {"ng_rules": _ng}),
             ("NG - Rice Brand Seller", check_nigeria_rice,       {"ng_rules": _ng}),
-            ("NG - Powerbank Capacity",check_nigeria_powerbanks, {"ng_rules": _ng}),
+            ("Powerbank Not Authorized",check_nigeria_powerbanks, {"ng_rules": _ng}),
+        ]
+
+    if country_validator.code in ("KE", "UG"):
+        _ng = support_files.get("ng_qc_rules", {})
+        validations += [
+            ("Powerbank Not Authorized", check_nigeria_powerbanks, {"ng_rules": _ng}),
         ]
 
     if country_validator.code == "MA":
@@ -828,13 +834,28 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         if 'Comment_Detail' not in flagged.columns and 'Comment_Detail' in res.columns:
             if isinstance(res['Comment_Detail'], pd.DataFrame): flagged['Comment_Detail'] = res['Comment_Detail'].iloc[:, 0]
             else: flagged['Comment_Detail'] = res['Comment_Detail']
+        # Merge Reason from result df if the check set it explicitly (e.g. powerbank counterfeit vs wrong-cat)
+        if 'Reason' in res.columns:
+            reason_map = res.set_index('PRODUCT_SET_SID')['Reason'].to_dict()
+        else:
+            reason_map = {}
+
         for _, r in flagged.iterrows():
             sid = str(r['PRODUCT_SET_SID']).strip()
             if sid in processed: continue
             processed.add(sid)
             det = r.get('Comment_Detail', '')
-            comment_str = f"{base_comment} ({det})" if pd.notna(det) and det else base_comment
-            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': rinfo['reason'], 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', '')})
+            # Use Comment_Detail directly as the full comment if it looks like a full sentence,
+            # otherwise fall back to the standard base_comment + detail pattern
+            if pd.notna(det) and det and len(str(det)) > 60:
+                comment_str = str(det)
+            elif pd.notna(det) and det:
+                comment_str = f"{base_comment} ({det})"
+            else:
+                comment_str = base_comment
+            # Honour a Reason override set by the check function itself
+            row_reason = reason_map.get(sid, rinfo['reason'])
+            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': row_reason, 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', '')})
 
     for _, r in data[~data['PRODUCT_SET_SID'].astype(str).str.strip().isin(processed)].iterrows():
         sid = str(r['PRODUCT_SET_SID']).strip()
