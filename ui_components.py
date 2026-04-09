@@ -489,12 +489,12 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">⇅ Sort by issue</option>
-    <option value="low_res">🔍 Low Resolution</option>
-    <option value="tall">📱 Tall (Screenshot?)</option>
-    <option value="wide">↔ Wide Aspect</option>
-    <option value="broken">❌ Broken Image</option>
-    <option value="no_issue">✅ No Issues First</option>
+    <option value="">Sort by issue</option>
+    <option value="low_res">Low Resolution</option>
+    <option value="tall">Tall (Screenshot?)</option>
+    <option value="wide">Wide Aspect</option>
+    <option value="broken">Broken Image</option>
+    <option value="no_issue">No Issues First</option>
   </select>
 </div>
 
@@ -515,14 +515,14 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">⇅ Sort by issue</option>
-    <option value="low_res">🔍 Low Resolution</option>
-    <option value="tall">📱 Tall (Screenshot?)</option>
-    <option value="wide">↔ Wide Aspect</option>
-    <option value="broken">❌ Broken Image</option>
-    <option value="no_issue">✅ No Issues First</option>
+    <option value="">Sort by issue</option>
+    <option value="low_res">Low Resolution</option>
+    <option value="tall">Tall (Screenshot?)</option>
+    <option value="wide">Wide Aspect</option>
+    <option value="broken">Broken Image</option>
+    <option value="no_issue">No Issues First</option>
   </select>
-  <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
+  <button class="desel-btn top-btn" onclick="scrollToTop()">Top</button>
 </div>
 
 <div id="zoom-tooltip">
@@ -585,12 +585,13 @@ function sendMsg(type, payload) {{
     if (!bridge) return;
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-    bridge.focus({{preventScroll: true}});
+    // Do NOT call bridge.focus() — it causes Streamlit to treat the bridge as
+    // the active input, which makes the JSON payload appear in other text fields
+    // on rerun and triggers scroll-to-focused-element jumps.
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.blur();
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
@@ -895,11 +896,6 @@ window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); upda
 window.undoReject = function(sid) {{
   try {{
     var par = window.parent.document;
-    // Blur every input/textarea inside the dialog so Streamlit has no focused
-    // element to scroll back to after the rerun — this is what caused the jump.
-    par.querySelectorAll('[data-testid="stModal"] input, [data-testid="stModal"] textarea').forEach(function(el) {{
-      el.blur();
-    }});
     var scrollable =
       par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
       par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
@@ -1001,7 +997,7 @@ def visual_review_modal(support_files):
             value=st.session_state.get('grid_items_per_page', 50),
         )
     with c4:
-        if st.button("✖ Close", use_container_width=True, type="secondary"):
+        if st.button("Close", use_container_width=True, type="secondary"):
             st.session_state.show_review_modal = False
             st.rerun()
 
@@ -1146,7 +1142,7 @@ def visual_review_modal(support_files):
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols_bot[3]:
-        if st.button("✖ Close Review", key="close_bot", use_container_width=True, type="secondary"):
+        if st.button("Close Review", key="close_bot", use_container_width=True, type="secondary"):
             st.session_state.show_review_modal = False
             st.rerun()
 
