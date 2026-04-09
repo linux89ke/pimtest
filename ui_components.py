@@ -86,7 +86,7 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
                         if learned:
                             engine.save_learning_db()
                             st.session_state.main_toasts.append(
-                                f"🧠 Engine learned {learned} correction(s) from your approvals."
+                                f"Engine learned {learned} correction(s) from your approvals."
                             )
                 except Exception as _le:
                     logger.warning("Wrong Category approval learning failed: %s", _le)
@@ -282,7 +282,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                                 if learned:
                                     engine.save_learning_db()
                                     st.session_state.main_toasts.append(
-                                        f"🧠 Engine noted {learned} missed Wrong Category item(s)."
+                                        f"Engine noted {learned} missed Wrong Category item(s)."
                                     )
                         except Exception as _le:
                             logger.warning("Wrong Category manual rejection learning failed: %s", _le)
@@ -489,12 +489,12 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">⇅ Sort by issue</option>
-    <option value="low_res">🔍 Low Resolution</option>
-    <option value="tall">📱 Tall (Screenshot?)</option>
-    <option value="wide">↔ Wide Aspect</option>
-    <option value="broken">❌ Broken Image</option>
-    <option value="no_issue">✅ No Issues First</option>
+    <option value="">Sort by issue</option>
+    <option value="low_res">Low Resolution</option>
+    <option value="tall">Tall (Screenshot?)</option>
+    <option value="wide">Wide Aspect</option>
+    <option value="broken">Broken Image</option>
+    <option value="no_issue">No Issues First</option>
   </select>
 </div>
 
@@ -515,14 +515,14 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
   <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">⇅ Sort by issue</option>
-    <option value="low_res">🔍 Low Resolution</option>
-    <option value="tall">📱 Tall (Screenshot?)</option>
-    <option value="wide">↔ Wide Aspect</option>
-    <option value="broken">❌ Broken Image</option>
-    <option value="no_issue">✅ No Issues First</option>
+    <option value="">Sort by issue</option>
+    <option value="low_res">Low Resolution</option>
+    <option value="tall">Tall (Screenshot?)</option>
+    <option value="wide">Wide Aspect</option>
+    <option value="broken">Broken Image</option>
+    <option value="no_issue">No Issues First</option>
   </select>
-  <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
+  <button class="desel-btn top-btn" onclick="scrollToTop()">Top</button>
 </div>
 
 <div id="zoom-tooltip">
@@ -542,7 +542,7 @@ function _getScrollable() {{
          par.querySelector('[role="dialog"]');
 }}
 
-// 🚀 INSTANT CLOSE DIALOG LOCK 
+// INSTANT CLOSE DIALOG LOCK 
 try {{
   var par = window.parent.document;
   if (!par.window.__stModalLocked) {{
@@ -943,9 +943,9 @@ window.doBatchReject = function(pos) {{
         + 'width:' + rect.width + 'px;'
         + 'height:' + rect.height + 'px;'
         + 'display:flex;align-items:center;justify-content:center;'
-        + 'font-family:sans-serif;font-size:14px;font-weight:600;color:#FF8800;'
+        + 'font-family:sans-serif;color:#FF8800;'
         + 'transition:opacity 0.4s ease;';
-      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:28px;margin-bottom:8px;">⏳</div><div>Applying rejections…</div></div>';
+      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:18px;margin-bottom:8px;font-weight:bold;">Applying rejections...</div></div>';
       var existing = par.getElementById('__grid_ghost__');
       if (existing) existing.remove();
       par.body.appendChild(ghost);
@@ -993,7 +993,6 @@ renderAll();
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
     
-    # [FIX 3 & 4]: The cascading async retries to fight Streamlit's rendering behavior, utilizing the shared selector logic
     components.html(
         "<script>"
         "try {"
