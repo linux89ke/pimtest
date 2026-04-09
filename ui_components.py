@@ -488,13 +488,13 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
-  <select class="reason-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">Sort by issue</option>
-    <option value="low_res">Low Resolution</option>
-    <option value="tall">Tall (Screenshot?)</option>
-    <option value="wide">Wide Aspect</option>
-    <option value="broken">Broken Image</option>
-    <option value="no_issue">No Issues First</option>
+  <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">⇅ Sort by issue</option>
+    <option value="low_res">🔍 Low Resolution</option>
+    <option value="tall">📱 Tall (Screenshot?)</option>
+    <option value="wide">↔ Wide Aspect</option>
+    <option value="broken">❌ Broken Image</option>
+    <option value="no_issue">✅ No Issues First</option>
   </select>
 </div>
 
@@ -514,15 +514,15 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
-  <select class="reason-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">Sort by issue</option>
-    <option value="low_res">Low Resolution</option>
-    <option value="tall">Tall (Screenshot?)</option>
-    <option value="wide">Wide Aspect</option>
-    <option value="broken">Broken Image</option>
-    <option value="no_issue">No Issues First</option>
+  <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">⇅ Sort by issue</option>
+    <option value="low_res">🔍 Low Resolution</option>
+    <option value="tall">📱 Tall (Screenshot?)</option>
+    <option value="wide">↔ Wide Aspect</option>
+    <option value="broken">❌ Broken Image</option>
+    <option value="no_issue">✅ No Issues First</option>
   </select>
-  <button class="desel-btn top-btn" onclick="scrollToTop()">Top</button>
+  <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
 </div>
 
 <div id="zoom-tooltip">
@@ -535,8 +535,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 
 <script>
 // 🚀 INSTANT CLOSE DIALOG LOCK 
-// When the "X" Streamlit button is clicked, we instantly hide the modal via CSS
-// so it vanishes at 0ms, while the Streamlit backend reruns and fully destroys it gracefully.
 try {{
   var par = window.parent.document;
   if (!par.window.__stModalLocked) {{
@@ -583,15 +581,36 @@ function sendMsg(type, payload) {{
       }}
     }}
     if (!bridge) return;
+    
     var msg = JSON.stringify({{action: type, payload: payload}});
-
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
+    
+    // Save current active element
+    var active = par.document.activeElement;
+    
+    // Crucial: We must set focus natively for Streamlit 1.30+ to register the input
+    // The {preventScroll: true} ensures the page doesn't jump to the top
     bridge.focus({{preventScroll: true}});
+    
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+    
+    // Fire Enter to trigger backend update
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.blur();
+    
+    // We delay the blur slightly to allow Streamlit's event batching to process the keydown event.
+    // If we call blur synchronously, Streamlit drops the batch submission payload on larger loops.
+    // This safely unhooks it before a Streamlit rerun, preventing 'JSON value bleed' to other inputs.
+    setTimeout(function() {{
+      try {{
+          bridge.blur();
+          if (active && typeof active.focus === 'function' && active !== bridge) {{
+              active.focus({{preventScroll: true}});
+          }}
+      }} catch (err) {{}}
+    }}, 120);
+    
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
@@ -605,7 +624,6 @@ function scrollToTop() {{
     if (scrollable) {{
       scrollable.scrollTo({{top: 0, behavior: 'smooth'}});
     }}
-    // Also scroll the iframe itself to top in case it has overflow
     window.scrollTo({{top: 0, behavior: 'smooth'}});
   }} catch(e) {{ console.warn('scrollToTop failed:', e); }}
 }}
@@ -619,7 +637,6 @@ function updateParentPagination() {{
     buttons.forEach(b => {{
       var txt = b.innerText || "";
       
-      // 🚀 MAGIC 0ms CLOSE: Instantly hide the modal container when clicking Close!
       if (txt.includes('Close') && !b.dataset.fastCloseBound) {{
         b.dataset.fastCloseBound = "true";
         b.addEventListener('click', function() {{
@@ -678,7 +695,6 @@ function onImgLoad(img, sid) {{
   if (warns.length) addWarnings(sid, warns);
 }}
 
-// IntersectionObserver lazy loader — fires actual src only when card enters viewport
 var _lazyObserver = null;
 function getLazyObserver() {{
   if (_lazyObserver) return _lazyObserver;
@@ -707,7 +723,6 @@ function activateLazyImages() {{
 
 function onImgError(img, sid) {{
   var card = CARDS.find(c => c.sid === sid);
-  // Resolve lazy-src if it was never swapped in
   var realSrc = img.dataset.lazySrc || (card ? card.img : '');
   if (!img.dataset.triedProxy && realSrc && realSrc.startsWith('http')) {{
       img.dataset.triedProxy = 'true';
@@ -765,7 +780,6 @@ function renderCard(card) {{
   var isEager = imgIdx < {cols_per_row * 2};
   var loadingAttr = isEager ? 'eager' : 'lazy';
   var priorityAttr = isEager ? 'fetchpriority="high"' : 'fetchpriority="low"';
-  // For non-eager images use data-lazy-src so IntersectionObserver fires src when visible
   var imgSrcAttr = isEager
     ? `src="${{safeImgSrcForHtml}}"`
     : `src="${{PLACEHOLDER}}" data-lazy-src="${{safeImgSrcForHtml}}"`;
@@ -857,25 +871,48 @@ function updateSelCount() {{
   updateParentPagination();
 }}
 
+function renderAll() {{
+  var orderedCards = getSortedCards();
+  document.getElementById('card-grid').innerHTML = orderedCards.map(renderCard).join('');
+  updateSelCount();
+  activateLazyImages();
+}}
+
 function getSortedCards() {{
   var sort = window._currentSort;
   if (!sort) return CARDS;
-  var ISSUE_MAP = {{ 'low_res':'Low Resolution','tall':'Tall (Screenshot?)','wide':'Wide Aspect','broken':'Broken Image' }};
+  var ISSUE_MAP = {{
+    'low_res': 'Low Resolution',
+    'tall':    'Tall (Screenshot?)',
+    'wide':    'Wide Aspect',
+    'broken':  'Broken Image',
+  }};
   var sorted = CARDS.slice();
   if (sort === 'no_issue') {{
-    sorted.sort(function(a,b) {{ return ((window._imageIssues[a.sid]||[]).length>0?1:0) - ((window._imageIssues[b.sid]||[]).length>0?1:0); }});
+    sorted.sort(function(a, b) {{
+      var aHas = (window._imageIssues[a.sid] || []).length > 0 ? 1 : 0;
+      var bHas = (window._imageIssues[b.sid] || []).length > 0 ? 1 : 0;
+      return aHas - bHas;
+    }});
   }} else if (ISSUE_MAP[sort]) {{
     var target = ISSUE_MAP[sort];
-    sorted.sort(function(a,b) {{ return ((window._imageIssues[a.sid]||[]).includes(target)?0:1) - ((window._imageIssues[b.sid]||[]).includes(target)?0:1); }});
+    sorted.sort(function(a, b) {{
+      var aHas = (window._imageIssues[a.sid] || []).includes(target) ? 0 : 1;
+      var bHas = (window._imageIssues[b.sid] || []).includes(target) ? 0 : 1;
+      return aHas - bHas;
+    }});
   }}
   return sorted;
 }}
+
 window.applySort = function(val) {{
   window._currentSort = val;
-  ['sort-sel-top','sort-sel-bottom'].forEach(function(id) {{ var el=document.getElementById(id); if(el) el.value=val; }});
+  ['sort-sel-top','sort-sel-bottom'].forEach(function(id) {{
+    var el = document.getElementById(id);
+    if (el) el.value = val;
+  }});
   renderAll();
 }};
-function renderAll() {{ document.getElementById('card-grid').innerHTML = getSortedCards().map(renderCard).join(''); updateSelCount(); activateLazyImages(); }}
 function replaceCard(sid) {{
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
@@ -893,32 +930,56 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{
+  var savedScroll = 0;
   try {{
     var par = window.parent.document;
     var scrollable =
       par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
       par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
       par.querySelector('[role="dialog"]');
-    if (scrollable && scrollable.scrollTop > 0) {{
-      window.parent.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
-    }}
+    if (scrollable) savedScroll = scrollable.scrollTop;
   }} catch(e) {{}}
+
   delete COMMITTED[sid];
   replaceCard(sid);
   updateSelCount();
+
   sendMsg('undo', {{[sid]: true}});
+
+  if (savedScroll <= 0) return;
+  try {{
+    var par2 = window.parent.document;
+    var scrollTarget =
+      par2.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
+      par2.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
+      par2.querySelector('[role="dialog"]');
+    if (!scrollTarget) return;
+
+    var obs = new MutationObserver(function(mutations, observer) {{
+      var hasIframe = scrollTarget.querySelector('iframe');
+      if (hasIframe) {{
+        observer.disconnect();
+        requestAnimationFrame(function() {{
+          scrollTarget.scrollTop = savedScroll;
+        }});
+      }}
+    }});
+    obs.observe(scrollTarget, {{ childList: true, subtree: true }});
+    setTimeout(function() {{ obs.disconnect(); }}, 3000);
+  }} catch(e) {{}}
 }};
 
 window.doBatchReject = function(pos) {{
   var selectId = pos === 'top' ? 'batch-reason-top' : 'batch-reason-bottom';
   var br = document.getElementById(selectId).value;
   var payload = {{}}, count = 0;
+  
   for (var s in staged) {{ payload[s] = staged[s]; count++; }}
   for (var s in selected) {{ payload[s] = br; count++; }}
+  
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
-
-  // Freeze the grid visually so it doesn't flash/disappear during Streamlit rerun.
+  
   try {{
     var par = window.parent.document;
     var iframe = null;
@@ -932,12 +993,17 @@ window.doBatchReject = function(pos) {{
       var ghost = par.createElement('div');
       ghost.id = '__grid_ghost__';
       ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
-        + 'top:' + (rect.top + scrollY) + 'px;left:' + rect.left + 'px;'
-        + 'width:' + rect.width + 'px;height:' + rect.height + 'px;'
+        + 'top:' + (rect.top + scrollY) + 'px;'
+        + 'left:' + rect.left + 'px;'
+        + 'width:' + rect.width + 'px;'
+        + 'height:' + rect.height + 'px;'
         + 'display:flex;align-items:center;justify-content:center;'
         + 'font-family:sans-serif;font-size:14px;font-weight:600;color:#FF8800;'
         + 'transition:opacity 0.4s ease;';
-      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:28px;margin-bottom:8px;">⏳</div><div>Applying rejections…</div></div>';
+      ghost.innerHTML = '<div style="text-align:center;">'
+        + '<div style="font-size:28px;margin-bottom:8px;">⏳</div>'
+        + '<div>Applying rejections…</div>'
+        + '</div>';
       var existing = par.getElementById('__grid_ghost__');
       if (existing) existing.remove();
       par.body.appendChild(ghost);
@@ -984,35 +1050,21 @@ renderAll();
 
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
-    components.html(
-        "<script>"
-        "try {"
-        "  var par = window.parent.document;"
-        "  var scrollable ="
-        "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
-        "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
-        "    par.querySelector('[role=\"dialog\"]');"
-        "  if (scrollable) {"
-        "    var saved = window.parent.sessionStorage.getItem('__grid_scroll__');"
-        "    if (saved !== null) {"
-        "      window.parent.sessionStorage.removeItem('__grid_scroll__');"
-        "      scrollable.scrollTop = parseInt(saved, 10);"
-        "    } else if (" + str(st.session_state.get("do_scroll_top", False)).lower() + ") {"
-        "      scrollable.scrollTo({top: 0, behavior: 'instant'});"
-        "    }"
-        "  }"
-        "  requestAnimationFrame(function() {"
-        "    var active = par.activeElement;"
-        "    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {"
-        "      var dialog = par.querySelector('[data-testid=\"stModal\"]');"
-        "      if (dialog && dialog.contains(active)) { active.blur(); }"
-        "    }"
-        "  });"
-        "} catch(e) {}"
-        "</script>",
-        height=0,
-    )
-    st.session_state.do_scroll_top = False
+    if st.session_state.get("do_scroll_top", False):
+        components.html(
+            "<script>"
+            "try {"
+            "  var par = window.parent.document;"
+            "  var scrollable ="
+            "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
+            "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
+            "    par.querySelector('[role=\"dialog\"]');"
+            "  if (scrollable) scrollable.scrollTo({top: 0, behavior: 'instant'});"
+            "} catch(e) {}"
+            "</script>",
+            height=0,
+        )
+        st.session_state.do_scroll_top = False
 
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
@@ -1034,20 +1086,17 @@ def visual_review_modal(support_files):
             value=st.session_state.get('grid_items_per_page', 50),
         )
     with c4:
-        if st.button("Close", use_container_width=True, type="secondary"):
+        if st.button("✖ Close", use_container_width=True, type="secondary"):
             st.session_state.show_review_modal = False
             st.rerun()
 
     if 'MAIN_IMAGE' not in data.columns:
         data['MAIN_IMAGE'] = ''
 
-    # ── Use pre-warmed cache if available and no quick-rejections have changed ──
-    # The cache is built immediately after validation in test2.py so the modal
-    # opens with zero merge/resolve overhead on first click.
     _cached_review = st.session_state.get("_grid_review_data_cache")
     _cache_valid = (
         _cached_review is not None
-        and not committed_rej_sids   # invalidate once user makes quick-rejections
+        and not committed_rej_sids
         and len(_cached_review) > 0
     )
     if _cache_valid:
@@ -1115,8 +1164,6 @@ def visual_review_modal(support_files):
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
         prefetch_urls = []
-        # URLs already preloaded by the browser via <link rel="preload"> — exclude
-        # them so the JS prefetcher focuses only on pages beyond what was pre-warmed.
         _already_warm = set(st.session_state.get("_grid_warm_urls", []))
         seen_urls = set(_already_warm)
         for prefetch_page in [st.session_state.grid_page + 1, st.session_state.grid_page + 2, st.session_state.grid_page + 3]:
@@ -1179,7 +1226,7 @@ def visual_review_modal(support_files):
             st.session_state.do_scroll_top = True
             st.rerun(scope="fragment")
     with pg_cols_bot[3]:
-        if st.button("Close Review", key="close_bot", use_container_width=True, type="secondary"):
+        if st.button("✖ Close Review", key="close_bot", use_container_width=True, type="secondary"):
             st.session_state.show_review_modal = False
             st.rerun()
 
@@ -1190,10 +1237,6 @@ def render_image_grid(support_files):
 
     st.markdown("---")
 
-    # ── Background image preload ─────────────────────────────────────────────
-    # Inject <link rel="preload"> tags for the first 2 pages of images so the
-    # browser starts fetching them while the user reads the validation results,
-    # before the modal is even opened.
     _warm_urls = st.session_state.get("_grid_warm_urls", [])
     if _warm_urls:
         _preload_tags = "\n".join(
