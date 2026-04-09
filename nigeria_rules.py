@@ -341,7 +341,7 @@ def check_nigeria_powerbanks(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame
         pb_name_rows = d[d["_name"].str.contains(_pb_name_pat, na=False)].copy()
         wrong_cat = pb_name_rows[~pb_name_rows["_cat"].isin(cat_codes)].copy()
         if not wrong_cat.empty:
-            wrong_cat["FLAG"]           = "NG - Powerbank Capacity"
+            wrong_cat["FLAG"]           = "Powerbank Not Authorized"
             wrong_cat["Reason"]         = _WRONG_CAT_REASON
             wrong_cat["Comment_Detail"] = _WRONG_CAT_COMMENT
             chunks.append(wrong_cat)
@@ -360,7 +360,7 @@ def check_nigeria_powerbanks(data: pd.DataFrame, ng_rules: Dict) -> pd.DataFrame
                         m = _mah_pat.search(row["_name"])
                         mah_str = m.group(0) if m else ">=20,000mAh"
                         return _COUNTERFEIT_COMMENT.format(brand=row["BRAND"], mah_str=mah_str)
-                    flagged["FLAG"]           = "NG - Powerbank Capacity"
+                    flagged["FLAG"]           = "Powerbank Not Authorized"
                     flagged["Reason"]         = _COUNTERFEIT_REASON
                     flagged["Comment_Detail"] = flagged.apply(_comment, axis=1)
                     chunks.append(flagged)
