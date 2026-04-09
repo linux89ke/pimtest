@@ -295,7 +295,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.rerun()
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
-                         rejected_state, cols_per_row, prefetch_urls=None):
+                         rejected_state, cols_per_row, prefetch_urls=None, scroll_to_top=False):
     
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
@@ -352,6 +352,19 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
         })
 
     cards_json = json.dumps(cards_data)
+    
+    scroll_js = ""
+    if scroll_to_top:
+        scroll_js = "sessionStorage.removeItem('__inner_iframe_scroll__'); window.scrollTo(0, 0);"
+    else:
+        scroll_js = """
+        var savedInnerScroll = sessionStorage.getItem('__inner_iframe_scroll__');
+        if (savedInnerScroll) {
+            setTimeout(function() {
+                window.scrollTo({top: parseInt(savedInnerScroll, 10), behavior: 'instant'});
+            }, 50);
+        }
+        """
 
     return f"""<!DOCTYPE html>
 <html dir="{html_dir}">
@@ -536,14 +549,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// Shared helper function to find the Streamlit dialog scroll container
-function _getScrollable() {{
-  var par = window.parent.document;
-  return par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-         par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-         par.querySelector('[role="dialog"]');
-}}
-
 // INSTANT CLOSE DIALOG LOCK 
 try {{
   var par = window.parent.document;
@@ -584,36 +589,17 @@ var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
 function showGhostOverlay(msgText) {{
-  try {{
-    var par = window.parent.document;
-    var iframe = null;
-    var frames = par.querySelectorAll('iframe');
-    for (var fi = 0; fi < frames.length; fi++) {{
-      try {{ if (frames[fi].contentWindow === window) {{ iframe = frames[fi]; break; }} }} catch(e) {{}}
-    }}
-    if (iframe) {{
-      var rect = iframe.getBoundingClientRect();
-      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
-      var ghost = par.createElement('div');
-      ghost.id = '__grid_ghost__';
-      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
-        + 'top:' + (rect.top + scrollY) + 'px;'
-        + 'left:' + rect.left + 'px;'
-        + 'width:' + rect.width + 'px;'
-        + 'height:' + rect.height + 'px;'
-        + 'display:flex;align-items:center;justify-content:center;'
-        + 'font-family:sans-serif;color:#FF8800;'
-        + 'transition:opacity 0.4s ease;';
-      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:18px;margin-bottom:8px;font-weight:bold;">' + msgText + '</div></div>';
-      var existing = par.getElementById('__grid_ghost__');
-      if (existing) existing.remove();
-      par.body.appendChild(ghost);
-      setTimeout(function() {{
-        var g = par.getElementById('__grid_ghost__');
-        if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }}, 400); }}
-      }}, 4000);
-    }}
-  }} catch(ghostErr) {{ /* non-fatal */ }}
+  var ghost = document.createElement('div');
+  ghost.id = '__grid_ghost__';
+  ghost.style.cssText = 'position:fixed;z-index:99999;inset:0;background:rgba(255,255,255,0.85);display:flex;align-items:center;justify-content:center;font-family:sans-serif;color:#FF8800;transition:opacity 0.4s ease;';
+  ghost.innerHTML = '<div style="font-size:22px;font-weight:bold;">' + msgText + '</div>';
+  var existing = document.getElementById('__grid_ghost__');
+  if (existing) existing.remove();
+  document.body.appendChild(ghost);
+  setTimeout(function() {{
+    var g = document.getElementById('__grid_ghost__');
+    if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ if(g && g.parentNode) g.remove(); }}, 400); }}
+  }}, 4000);
 }}
 
 function sendMsg(type, payload) {{
@@ -628,17 +614,14 @@ function sendMsg(type, payload) {{
     }}
     if (!bridge) return;
 
-    var scrollable = _getScrollable();
-    if (scrollable) {{
-      par.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
-    }}
-
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
     
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     
+    // React requires the input to be focused to accept the Enter key submission.
+    // We use preventScroll: true, fire the Enter key, and instantly blur it.
     bridge.focus({{preventScroll: true}});
     
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
@@ -650,13 +633,7 @@ function sendMsg(type, payload) {{
 }}
 
 function scrollToTop() {{
-  try {{
-    var scrollable = _getScrollable();
-    if (scrollable) {{
-      scrollable.scrollTo({{top: 0, behavior: 'smooth'}});
-    }}
-    window.scrollTo({{top: 0, behavior: 'smooth'}});
-  }} catch(e) {{ console.warn('scrollToTop failed:', e); }}
+  window.scrollTo({{top: 0, behavior: 'smooth'}});
 }}
 
 function updateParentPagination() {{
@@ -1034,6 +1011,12 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
   setTimeout(prefetchBatch, 800);
 }})();
 
+window.addEventListener("scroll", function() {{
+    sessionStorage.setItem("__inner_iframe_scroll__", window.scrollY);
+}});
+
+{scroll_js}
+
 renderAll();
 </script>
 </body>
@@ -1042,38 +1025,7 @@ renderAll();
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
     
-    components.html(
-        "<script>"
-        "try {"
-        "  var par = window.parent.document;"
-        "  function _getScrollable() {"
-        "    return par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
-        "           par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
-        "           par.querySelector('[role=\"dialog\"]');"
-        "  }"
-        "  var scrollable = _getScrollable();"
-        "  if (scrollable) {"
-        "    var saved = window.parent.sessionStorage.getItem('__grid_scroll__');"
-        "    if (saved !== null) {"
-        "      window.parent.sessionStorage.removeItem('__grid_scroll__');"
-        "      var target = parseInt(saved, 10);"
-        "      var enforce = function() {"
-        "        scrollable.scrollTop = target;"
-        "        var ae = par.activeElement;"
-        "        if (ae && ae.tagName === 'INPUT') ae.blur();"
-        "      };"
-        "      enforce();"
-        "      setTimeout(enforce, 50);"
-        "      setTimeout(enforce, 200);"
-        "      setTimeout(enforce, 500);"
-        "    } else if (" + str(st.session_state.get("do_scroll_top", False)).lower() + ") {"
-        "      scrollable.scrollTo({top: 0, behavior: 'instant'});"
-        "    }"
-        "  }"
-        "} catch(e) {}"
-        "</script>",
-        height=0,
-    )
+    scroll_top_flag = st.session_state.get("do_scroll_top", False)
     st.session_state.do_scroll_top = False
 
     fr   = st.session_state.final_report
@@ -1209,12 +1161,10 @@ def visual_review_modal(support_files):
         rejected_state=rejected_state,
         cols_per_row=cols_per_row,
         prefetch_urls=prefetch_urls,
+        scroll_to_top=scroll_top_flag,
     )
 
-    n_rows = -(-len(page_data) // cols_per_row)
-    grid_height = n_rows * 340 + 200 
-
-    components.html(grid_html, height=grid_height, scrolling=False)
+    components.html(grid_html, height=750, scrolling=True)
 
     st.markdown("---")
     
