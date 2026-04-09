@@ -586,12 +586,6 @@ function sendMsg(type, payload) {{
     var msg = JSON.stringify({{action: type, payload: payload}});
 
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-    // focus({preventScroll:true}) is required — Streamlit only processes the Enter
-    // keydown when the target element is active. preventScroll stops the browser
-    // viewport from jumping to the bridge. blur() fires immediately after so the
-    // bridge does not linger as the active element; the scroll-restore script in
-    // visual_review_modal then blurs whatever Streamlit autofocuses on rerun
-    // (e.g. "Search by Name") so the cursor does not land there.
     bridge.focus({{preventScroll: true}});
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
@@ -604,7 +598,6 @@ function sendMsg(type, payload) {{
 function scrollToTop() {{
   try {{
     var par = window.parent.document;
-    // Streamlit dialog scroll container — try multiple selectors for robustness
     var scrollable =
       par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
       par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
