@@ -518,28 +518,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// 🚀 INSTANT CLOSE DIALOG LOCK 
-// When the "X" Streamlit button is clicked, we instantly hide the modal via CSS
-// so it vanishes at 0ms, while the Streamlit backend reruns and fully destroys it gracefully.
-try {{
-  var par = window.parent.document;
-  if (!par.window.__stModalLocked) {{
-    par.window.__stModalLocked = true;
-    
-    function blockOutsideClicks(e) {{
-      var dialog = par.querySelector('[data-testid="stDialog"]');
-      if (dialog && !dialog.contains(e.target)) {{
-        e.stopPropagation();
-        e.preventDefault();
-      }}
-    }}
-    
-    par.addEventListener('mousedown', blockOutsideClicks, true);
-    par.addEventListener('mouseup', blockOutsideClicks, true);
-    par.addEventListener('click', blockOutsideClicks, true);
-  }}
-}} catch(e) {{ console.error("Could not lock dialog", e); }}
-
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
@@ -573,15 +551,21 @@ function sendMsg(type, payload) {{
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
+// 🚀 SMART SCROLL-TO-TOP FIX
 function scrollToTop() {{
   try {{
-    var dialog = window.parent.document.querySelector('[role="dialog"]');
+    var par = window.parent.document;
+    var dialog = par.querySelector('[data-testid="stDialog"]');
     if (dialog) {{
-      var title = dialog.querySelector('h2');
-      if (title) title.scrollIntoView({{behavior: 'smooth', block: 'start'}});
-      else dialog.scrollTo({{top: 0, behavior: 'smooth'}});
+      // Dynamically find whichever internal container holds the vertical scrollbar
+      var scrollableContainer = Array.from(dialog.querySelectorAll('div')).find(el => el.scrollHeight > el.clientHeight && window.getComputedStyle(el).overflowY !== 'hidden');
+      if (scrollableContainer) {{
+        scrollableContainer.scrollTo({{top: 0, behavior: 'smooth'}});
+      }} else {{
+        dialog.scrollTo({{top: 0, behavior: 'smooth'}}); // Fallback
+      }}
     }}
-  }} catch(e) {{}}
+  }} catch(e) {{ console.error('Scroll failed:', e); }}
 }}
 
 function updateParentPagination() {{
@@ -593,7 +577,7 @@ function updateParentPagination() {{
     buttons.forEach(b => {{
       var txt = b.innerText || "";
       
-      // 🚀 MAGIC 0ms CLOSE: Instantly hide the modal container when clicking Close!
+      // Fast-close UI effect
       if (txt.includes('Close') && !b.dataset.fastCloseBound) {{
         b.dataset.fastCloseBound = "true";
         b.addEventListener('click', function() {{
@@ -606,6 +590,7 @@ function updateParentPagination() {{
         }});
       }}
       
+      // Lock pagination logic
       if (txt.includes('Prev Page') || txt.includes('Next Page') || txt.includes('Close')) {{
         if (pending > 0 && !txt.includes('Close')) {{
           b.style.pointerEvents = 'none';
@@ -853,9 +838,19 @@ renderAll();
 
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
+    # 🚀 Python-side SMART SCROLL-TO-TOP FIX (Triggers when buttons change the page)
     if st.session_state.get("do_scroll_top", False):
         components.html(
-            "<script>try { window.parent.document.querySelector('[role=\"dialog\"] h2').scrollIntoView({behavior:'instant'}); } catch(e) {}</script>",
+            """<script>
+            try {
+                var par = window.parent.document;
+                var dialog = par.querySelector('[data-testid="stDialog"]');
+                if (dialog) {
+                    var scrollableContainer = Array.from(dialog.querySelectorAll('div')).find(el => el.scrollHeight > el.clientHeight && window.getComputedStyle(el).overflowY !== 'hidden');
+                    if (scrollableContainer) scrollableContainer.scrollTop = 0;
+                }
+            } catch(e) {}
+            </script>""",
             height=0,
         )
         st.session_state.do_scroll_top = False
