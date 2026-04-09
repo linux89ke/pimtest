@@ -588,6 +588,9 @@ function sendMsg(type, payload) {{
     bridge.focus({{preventScroll: true}});
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+    // Fire Enter synchronously — the old setTimeout(150ms) let Streamlit re-render
+    // and swap out the bridge element before keydown fired, silently dropping the
+    // first batch-reject click. Dispatching immediately prevents that race condition.
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.blur();
@@ -919,20 +922,51 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{
+  // 1. Capture the dialog scroll position BEFORE the rerun wipes it
+  var savedScroll = 0;
   try {{
     var par = window.parent.document;
     var scrollable =
       par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
       par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
       par.querySelector('[role="dialog"]');
-    if (scrollable && scrollable.scrollTop > 0) {{
-      window.parent.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
-    }}
+    if (scrollable) savedScroll = scrollable.scrollTop;
   }} catch(e) {{}}
+
+  // 2. Update local state immediately so the card re-renders without the overlay
   delete COMMITTED[sid];
   replaceCard(sid);
   updateSelCount();
+
+  // 3. Send undo to Streamlit (triggers rerun + iframe rebuild)
   sendMsg('undo', {{[sid]: true}});
+
+  // 4. Watch for the iframe to be recreated after the rerun, then restore scroll
+  if (savedScroll <= 0) return;
+  try {{
+    var par2 = window.parent.document;
+    var scrollTarget =
+      par2.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
+      par2.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
+      par2.querySelector('[role="dialog"]');
+    if (!scrollTarget) return;
+
+    // Use a MutationObserver on the dialog scroll container to detect when
+    // Streamlit finishes the rerun and re-inserts the iframe, then scroll back.
+    var obs = new MutationObserver(function(mutations, observer) {{
+      var hasIframe = scrollTarget.querySelector('iframe');
+      if (hasIframe) {{
+        observer.disconnect();
+        // Small rAF delay to let the browser finish layout before scrolling
+        requestAnimationFrame(function() {{
+          scrollTarget.scrollTop = savedScroll;
+        }});
+      }}
+    }});
+    obs.observe(scrollTarget, {{ childList: true, subtree: true }});
+    // Safety: disconnect after 3s regardless
+    setTimeout(function() {{ obs.disconnect(); }}, 3000);
+  }} catch(e) {{}}
 }};
 
 window.doBatchReject = function(pos) {{
@@ -1020,92 +1054,21 @@ renderAll();
 
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
-    components.html(
-        "<script>"
-        "try {"
-        "  var par = window.parent.document;"
-        "  var scrollable ="
-        "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
-        "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
-        "    par.querySelector('[role=\"dialog\"]');"
-        "  if (scrollable) {"
-        "    var saved = window.parent.sessionStorage.getItem('__grid_scroll__');"
-        "    if (saved !== null) {"
-        "      window.parent.sessionStorage.removeItem('__grid_scroll__');"
-        "      scrollable.scrollTop = parseInt(saved, 10);"
-        "    } else if (" + str(st.session_state.get("do_scroll_top", False)).lower() + ") {"
-        "      scrollable.scrollTo({top: 0, behavior: 'instant'});"
-        "    }"
-        "  }"
-        "} catch(e) {}"
-        "</script>",
-        height=0,
-    )
-    st.session_state.do_scroll_top = False
-
-    # Bridge input lives inside the dialog so focus() never scrolls the main page
-    st.markdown(
-        "<style>[data-testid='stTextInput'][aria-label='jtbridge'],"
-        " [data-testid='stTextInput'] input[placeholder='JTBRIDGE_UNIQUE_DO_NOT_USE']"
-        " { position:absolute; opacity:0; pointer-events:none; width:1px; height:1px;"
-        "   top:-9999px; left:-9999px; } </style>",
-        unsafe_allow_html=True,
-    )
-    _bridge_val_modal = st.text_input(
-        "jtbridge", value="",
-        placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE",
-        key=f"modal_bridge_{st.session_state.main_bridge_counter}",
-        label_visibility="collapsed",
-    )
-    if _bridge_val_modal:
-        try:
-            _msg = json.loads(_bridge_val_modal)
-            if _msg.get("action") == "reject":
-                _payload = _msg.get("payload", {})
-                if isinstance(_payload, dict) and _payload:
-                    _rgroups = {}
-                    for _sid, _rkey in _payload.items():
-                        _rgroups.setdefault(_rkey, []).append(_sid)
-                    _total = 0
-                    for _rkey, _sids in _rgroups.items():
-                        _flag = st.session_state.get('_reason_map', {}).get(_rkey, "Other Reason (Custom)")
-                        _fm = support_files.get("flags_mapping", {})
-                        _rinfo = _fm.get(_flag, {'reason': "1000007 - Other Reason", 'en': "Manual rejection"})
-                        _code = _rinfo['reason']
-                        _cmt_lang = 'fr' if st.session_state.get('selected_country') == "Morocco" else 'en'
-                        _cmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
-                        st.session_state.final_report.loc[
-                            st.session_state.final_report["ProductSetSid"].isin(_sids),
-                            ["Status", "Reason", "Comment", "FLAG"]
-                        ] = ["Rejected", _code, _cmt, _flag]
-                        for _s in _sids:
-                            st.session_state[f"quick_rej_{_s}"] = True
-                            st.session_state[f"quick_rej_reason_{_s}"] = _flag
-                        _total += len(_sids)
-                    st.session_state.exports_cache.clear()
-                    st.session_state.display_df_cache.clear()
-                    st.session_state.main_toasts.append((f"Rejected {_total} product(s)", ":material/block:"))
-                    st.session_state.main_bridge_counter += 1
-                    st.session_state.do_scroll_top = False
-                    st.rerun()
-            elif _msg.get("action") == "undo":
-                _payload = _msg.get("payload", {})
-                if isinstance(_payload, dict):
-                    for _sid in _payload.keys():
-                        st.session_state.final_report.loc[
-                            st.session_state.final_report['ProductSetSid'] == _sid,
-                            ['Status', 'Reason', 'Comment', 'FLAG']
-                        ] = ['Approved', '', '', 'Approved by User']
-                        st.session_state.pop(f"quick_rej_{_sid}", None)
-                        st.session_state.pop(f"quick_rej_reason_{_sid}", None)
-                    st.session_state.exports_cache.clear()
-                    st.session_state.display_df_cache.clear()
-                    st.session_state.main_bridge_counter += 1
-                    st.session_state.do_scroll_top = False
-                    st.rerun()
-        except Exception as _be:
-            import logging
-            logging.getLogger(__name__).error(f"Modal bridge error: {_be}")
+    if st.session_state.get("do_scroll_top", False):
+        components.html(
+            "<script>"
+            "try {"
+            "  var par = window.parent.document;"
+            "  var scrollable ="
+            "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
+            "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
+            "    par.querySelector('[role=\"dialog\"]');"
+            "  if (scrollable) scrollable.scrollTo({top: 0, behavior: 'instant'});"
+            "} catch(e) {}"
+            "</script>",
+            height=0,
+        )
+        st.session_state.do_scroll_top = False
 
     fr   = st.session_state.final_report
     data = st.session_state.all_data_map
