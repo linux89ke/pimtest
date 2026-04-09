@@ -22,6 +22,8 @@ import concurrent.futures
 from dataclasses import dataclass
 import hashlib
 import base64
+import requests
+from PIL import Image
 
 from translations import LANGUAGES, get_translation
 
@@ -167,6 +169,7 @@ FLAG_RELEVANT_COLS = {
     "Perfume Tester": ["CATEGORY_CODE", "NAME"],
     "Wrong Price": ["GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
     "Category Max Price Exceeded": ["CATEGORY", "GLOBAL_PRICE", "GLOBAL_SALE_PRICE", "CATEGORY_CODE"],
+    "Poor images": ["MAIN_IMAGE"],
     "NG - Gift Card Seller":  ["CATEGORY_CODE", "SELLER_NAME"],
     "NG - Books Seller":      ["NAME", "SELLER_NAME"],
     "NG - TV Brand Seller":   ["CATEGORY_CODE", "BRAND", "SELLER_NAME"],
@@ -205,6 +208,52 @@ def run_cached_check(func, cache_path, ckwargs):
 # -------------------------------------------------
 # STANDARD VALIDATION LOGIC
 # -------------------------------------------------
+
+def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
+    if 'MAIN_IMAGE' not in data.columns:
+        return pd.DataFrame(columns=data.columns)
+        
+    target = data[data['MAIN_IMAGE'].astype(str).str.startswith('http')].copy()
+    if target.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    # Deduplicate URLs so we don't fetch the same image twice
+    unique_urls = target['MAIN_IMAGE'].unique()
+    
+    def fetch_image_ratio(url):
+        try:
+            # stream=True is critical: it only downloads the file headers!
+            r = requests.get(url, stream=True, timeout=3)
+            if r.status_code == 200:
+                img = Image.open(r.raw)
+                w, h = img.size
+                if w > 0:
+                    ratio = h / w
+                    if ratio > 1.5:
+                        return url, f"Tall Aspect Ratio ({w}x{h})"
+                    elif ratio < 0.6:
+                        return url, f"Wide Aspect Ratio ({w}x{h})"
+        except Exception:
+            pass
+        return url, None
+
+    url_issues = {}
+    # Check 20 images in parallel to keep the validation phase lightning fast
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [executor.submit(fetch_image_ratio, url) for url in unique_urls]
+        for future in concurrent.futures.as_completed(futures):
+            url, issue = future.result()
+            if issue:
+                url_issues[url] = issue
+
+    if not url_issues:
+        return pd.DataFrame(columns=data.columns)
+
+    mask = target['MAIN_IMAGE'].isin(url_issues.keys())
+    flagged = target[mask].copy()
+    flagged['Comment_Detail'] = flagged['MAIN_IMAGE'].map(url_issues)
+    
+    return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, compiled_rules: dict = None, cat_path_to_code: dict = None, code_to_path: dict = None) -> pd.DataFrame:
     if not categories_list or not code_to_path:
@@ -669,6 +718,7 @@ if _reg is not None:
         'check_weight_volume_in_name':       check_weight_volume_in_name,
         'check_incomplete_smartphone_name':  check_incomplete_smartphone_name,
         'check_duplicate_products':          check_duplicate_products,
+        'check_poor_images_aspect_ratio':    check_poor_images_aspect_ratio,
         'check_miscellaneous_category':      check_miscellaneous_category,
         'check_wrong_price':                 check_wrong_price,
         'check_category_max_price':          check_category_max_price,
@@ -731,6 +781,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Missing Weight/Volume", check_weight_volume_in_name, {'weight_category_codes': support_files.get('weight_category_codes', [])}),
         ("Incomplete Smartphone Name", check_incomplete_smartphone_name, {'smartphone_category_codes': support_files.get('smartphone_category_codes', [])}),
         ("Duplicate product", check_duplicate_products, {'exempt_categories': support_files.get('duplicate_exempt_codes', []), 'known_colors': support_files.get('colors', [])}),
+        ("Poor images", check_poor_images_aspect_ratio, {}),
         ("Wrong Price", check_wrong_price, {}),
         ("Category Max Price Exceeded", check_category_max_price, {
             'max_price_map': CATEGORY_MAX_PRICES_USD,
@@ -1228,7 +1279,7 @@ if _bridge_val:
                 for _sid, _rkey in _payload.items(): _rgroups.setdefault(_rkey, []).append(_sid)
                 _total = 0
                 for _rkey, _sids in _rgroups.items():
-                    # ── NEW: Handle Custom Comments from the frontend ──
+                    # ── Handle Custom Comments from the frontend ──
                     if _rkey.startswith("Other Reason (Custom): "):
                         _flag = "Other Reason (Custom)"
                         _code = "1000007 - Other Reason"
