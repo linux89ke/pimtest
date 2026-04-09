@@ -373,6 +373,8 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   .batch-btn:hover{{opacity:.88;}}
   .desel-btn{{padding:7px 12px;background:#fff;color:#555;border:1px solid #ccc;border-radius:4px;font-size:12px;cursor:pointer;}}
   .desel-btn:hover{{background:#f5f5f5;}}
+  .top-btn {{margin-left: auto; background: #313133; color: white; border-color: #313133; font-weight: bold;}}
+  .top-btn:hover {{background: #000; color: white;}}
   
   .grid{{display:grid;grid-template-columns:repeat({cols_per_row},1fr);gap:12px;}}
   .card{{border:2px solid #e0e0e0;border-radius:8px;padding:10px;background:#fff;position:relative;transition:border-color .15s,box-shadow .15s;z-index:1;}}
@@ -486,13 +488,13 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('top')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
-  <select class="reason-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">Sort by issue</option>
-    <option value="low_res">Low Resolution</option>
-    <option value="tall">Tall (Screenshot?)</option>
-    <option value="wide">Wide Aspect</option>
-    <option value="broken">Broken Image</option>
-    <option value="no_issue">No Issues First</option>
+  <select class="reason-sel sort-sel" id="sort-sel-top" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">⇅ Sort by issue</option>
+    <option value="low_res">🔍 Low Resolution</option>
+    <option value="tall">📱 Tall (Screenshot?)</option>
+    <option value="wide">↔ Wide Aspect</option>
+    <option value="broken">❌ Broken Image</option>
+    <option value="no_issue">✅ No Issues First</option>
   </select>
 </div>
 
@@ -512,14 +514,15 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <button class="batch-btn" onclick="doBatchReject('bottom')">{_t("batch_reject")}</button>
   <button class="desel-btn" onclick="window.doSelectAll()">{_t("select_all")}</button>
   <button class="desel-btn" onclick="doDeselAll()">{_t("deselect_all")}</button>
-  <select class="reason-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
-    <option value="">Sort by issue</option>
-    <option value="low_res">Low Resolution</option>
-    <option value="tall">Tall (Screenshot?)</option>
-    <option value="wide">Wide Aspect</option>
-    <option value="broken">Broken Image</option>
-    <option value="no_issue">No Issues First</option>
+  <select class="reason-sel sort-sel" id="sort-sel-bottom" onchange="applySort(this.value)" style="max-width:170px;" title="Sort by image issue">
+    <option value="">⇅ Sort by issue</option>
+    <option value="low_res">🔍 Low Resolution</option>
+    <option value="tall">📱 Tall (Screenshot?)</option>
+    <option value="wide">↔ Wide Aspect</option>
+    <option value="broken">❌ Broken Image</option>
+    <option value="no_issue">✅ No Issues First</option>
   </select>
+  <button class="desel-btn top-btn" onclick="scrollToTop()">⬆ Top</button>
 </div>
 
 <div id="zoom-tooltip">
@@ -531,29 +534,35 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 <div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
-// 🚀 INSTANT CLOSE DIALOG LOCK 
-// When the "X" Streamlit button is clicked, we instantly hide the modal via CSS
-// so it vanishes at 0ms, while the Streamlit backend reruns and fully destroys it gracefully.
-try {{
+// Shared helper function to find the Streamlit dialog scroll container
+function _getScrollable() {
   var par = window.parent.document;
-  if (!par.window.__stModalLocked) {{
+  return par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
+         par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
+         par.querySelector('[role="dialog"]');
+}
+
+// 🚀 INSTANT CLOSE DIALOG LOCK 
+try {
+  var par = window.parent.document;
+  if (!par.window.__stModalLocked) {
     par.window.__stModalLocked = true;
     
-    function blockOutsideClicks(e) {{
+    function blockOutsideClicks(e) {
       var dialog = par.querySelector('[data-testid="stDialog"]');
-      if (dialog && !dialog.contains(e.target)) {{
+      if (dialog && !dialog.contains(e.target)) {
         e.stopPropagation();
         e.preventDefault();
-      }}
-    }}
+      }
+    }
     
     par.addEventListener('mousedown', blockOutsideClicks, true);
     par.addEventListener('mouseup', blockOutsideClicks, true);
     par.addEventListener('click', blockOutsideClicks, true);
-  }}
-}} catch(e) {{ console.error("Could not lock dialog", e); }}
+  }
+} catch(e) { console.error("Could not lock dialog", e); }
 
-function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
+function escapeHtml(u){return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
 var PREFETCH_URLS = {prefetch_json};
@@ -569,175 +578,148 @@ window._currentSort = window._currentSort || '';
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
-function _getScrollable() {{
-  try {{
-    var par = window.parent.document;
-    return par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-           par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-           par.querySelector('[role="dialog"]');
-  }} catch(e) {{ return null; }}
-}}
-
-function sendMsg(type, payload) {{
-  try {{
+function sendMsg(type, payload) {
+  try {
     var par = window.parent;
     var inputs = par.document.querySelectorAll('input[type="text"]');
     var bridge = null;
-    for (var i = 0; i < inputs.length; i++) {{
-      if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {{
+    for (var i = 0; i < inputs.length; i++) {
+      if (inputs[i].getAttribute('aria-label') === 'jtbridge' || inputs[i].placeholder === 'JTBRIDGE_UNIQUE_DO_NOT_USE') {
         bridge = inputs[i]; break;
-      }}
-    }}
+      }
+    }
     if (!bridge) return;
 
-    // 1. Snapshot scroll position BEFORE touching the bridge element.
+    // [FIX 2 & 4]: Save scroll using shared helper
     var scrollable = _getScrollable();
-    var savedScroll = scrollable ? scrollable.scrollTop : 0;
-    if (savedScroll > 0) {{
-      par.sessionStorage.setItem('__grid_scroll__', savedScroll);
-    }}
+    if (scrollable) {
+      par.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
+    }
 
-    var msg = JSON.stringify({{action: type, payload: payload}});
+    var msg = JSON.stringify({action: type, payload: payload});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-
-    // 2. Temporarily move the bridge off-screen so browser scroll-into-view
-    //    has nowhere useful to go, then immediately restore after events fire.
-    var origPosition = bridge.style.position;
-    var origTop = bridge.style.top;
-    var origLeft = bridge.style.left;
-    bridge.style.position = 'fixed';
-    bridge.style.top = '-9999px';
-    bridge.style.left = '-9999px';
-
-    bridge.focus();
+    
+    // [FIX 1]: Removed bridge.focus() completely. 
     nativeInputValueSetter.call(bridge, msg);
-    bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.blur();
+    bridge.dispatchEvent(new par.Event('input', {bubbles: true}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {bubbles:true,cancelable:true,key:'Enter',keyCode:13}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {bubbles:true,cancelable:true,key:'Enter',keyCode:13}));
 
-    // 3. Restore bridge position immediately after events dispatched.
-    bridge.style.position = origPosition;
-    bridge.style.top = origTop;
-    bridge.style.left = origLeft;
+  } catch(ex) { console.error('jtbridge error:', ex); }
+}
 
-    // 4. Immediately restore scroll (catches synchronous scroll side-effects).
-    if (scrollable && savedScroll > 0) {{
-      scrollable.scrollTop = savedScroll;
-    }}
-    // 5. Also restore after a short delay (catches async Streamlit rerun scroll).
-    setTimeout(function() {{
-      var s2 = _getScrollable();
-      if (s2 && savedScroll > 0) s2.scrollTop = savedScroll;
-    }}, 80);
-  }} catch(ex) {{ console.error('jtbridge error:', ex); }}
-}}
+function scrollToTop() {
+  try {
+    var scrollable = _getScrollable();
+    if (scrollable) {
+      scrollable.scrollTo({top: 0, behavior: 'smooth'});
+    }
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  } catch(e) { console.warn('scrollToTop failed:', e); }
+}
 
-function updateParentPagination() {{
+function updateParentPagination() {
   var pending = Object.keys(selected).length + Object.keys(staged).length;
-  try {{
+  try {
     var par = window.parent.document;
     
     var buttons = par.querySelectorAll('button');
-    buttons.forEach(b => {{
+    buttons.forEach(b => {
       var txt = b.innerText || "";
       
-      // 🚀 MAGIC 0ms CLOSE: Instantly hide the modal container when clicking Close!
-      if (txt.includes('Close') && !b.dataset.fastCloseBound) {{
+      if (txt.includes('Close') && !b.dataset.fastCloseBound) {
         b.dataset.fastCloseBound = "true";
-        b.addEventListener('click', function() {{
+        b.addEventListener('click', function() {
             var modalContainer = par.querySelector('div[data-testid="stModal"]');
-            if (modalContainer) {{
+            if (modalContainer) {
                 modalContainer.style.transition = 'opacity 0.15s ease-out';
                 modalContainer.style.opacity = '0';
                 setTimeout(() => modalContainer.style.display = 'none', 150);
-            }}
-        }});
-      }}
+            }
+        });
+      }
       
-      if (txt.includes('Prev Page') || txt.includes('Next Page') || txt.includes('Close')) {{
-        if (pending > 0 && !txt.includes('Close')) {{
+      if (txt.includes('Prev Page') || txt.includes('Next Page') || txt.includes('Close')) {
+        if (pending > 0 && !txt.includes('Close')) {
           b.style.pointerEvents = 'none';
           b.style.opacity = '0.3';
           b.title = "Confirm or clear your selections before navigating.";
-        }} else {{
+        } else {
           b.style.pointerEvents = 'auto';
           b.style.opacity = '1';
           b.title = "";
-        }}
-      }}
-    }});
+        }
+      }
+    });
     
     var inputs = par.querySelectorAll('input[type="number"]');
-    inputs.forEach(inp => {{
+    inputs.forEach(inp => {
       var wrapper = inp.closest('div[data-testid="stNumberInput"]');
-      if (wrapper && wrapper.innerText.includes('Jump to Page')) {{
-        if (pending > 0) {{
+      if (wrapper && wrapper.innerText.includes('Jump to Page')) {
+        if (pending > 0) {
           wrapper.style.pointerEvents = 'none';
           wrapper.style.opacity = '0.3';
           wrapper.title = "Confirm or clear your selections before navigating.";
-        }} else {{
+        } else {
           wrapper.style.pointerEvents = 'auto';
           wrapper.style.opacity = '1';
           wrapper.title = "";
-        }}
-      }}
-    }});
-  }} catch(e) {{}}
-}}
+        }
+      }
+    });
+  } catch(e) {}
+}
 
-function onImgLoad(img, sid) {{
+function onImgLoad(img, sid) {
   img.classList.add('img-loaded');
   var wrap = img.closest('.card-img-wrap');
   if (wrap) wrap.classList.add('img-loaded');
   var w = img.naturalWidth, h = img.naturalHeight;
   var warns = [];
-  if (w > 0 && h > 0) {{
+  if (w > 0 && h > 0) {
     if (w < 300 || h < 300) warns.push('Low Resolution');
     var ratio = h / w;
     if (ratio > 1.5) warns.push('Tall (Screenshot?)');
     else if (ratio < 0.6) warns.push('Wide Aspect');
-  }}
+  }
   if (warns.length) addWarnings(sid, warns);
-}}
+}
 
-// IntersectionObserver lazy loader — fires actual src only when card enters viewport
 var _lazyObserver = null;
-function getLazyObserver() {{
+function getLazyObserver() {
   if (_lazyObserver) return _lazyObserver;
   if (!('IntersectionObserver' in window)) return null;
-  _lazyObserver = new IntersectionObserver(function(entries) {{
-    entries.forEach(function(entry) {{
+  _lazyObserver = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
       if (!entry.isIntersecting) return;
       var img = entry.target;
-      if (img.dataset.lazySrc) {{
+      if (img.dataset.lazySrc) {
         img.src = img.dataset.lazySrc;
         delete img.dataset.lazySrc;
         _lazyObserver.unobserve(img);
-      }}
-    }});
-  }}, {{rootMargin: '200px 0px', threshold: 0.01}});
+      }
+    });
+  }, {rootMargin: '200px 0px', threshold: 0.01});
   return _lazyObserver;
-}}
+}
 
-function activateLazyImages() {{
+function activateLazyImages() {
   var observer = getLazyObserver();
   if (!observer) return;
-  document.querySelectorAll('img.card-img[data-lazy-src]').forEach(function(img) {{
+  document.querySelectorAll('img.card-img[data-lazy-src]').forEach(function(img) {
     observer.observe(img);
-  }});
-}}
+  });
+}
 
-function onImgError(img, sid) {{
+function onImgError(img, sid) {
   var card = CARDS.find(c => c.sid === sid);
-  // Resolve lazy-src if it was never swapped in
   var realSrc = img.dataset.lazySrc || (card ? card.img : '');
-  if (!img.dataset.triedProxy && realSrc && realSrc.startsWith('http')) {{
+  if (!img.dataset.triedProxy && realSrc && realSrc.startsWith('http')) {
       img.dataset.triedProxy = 'true';
       delete img.dataset.lazySrc;
       img.src = "https://wsrv.nl/?url=" + encodeURIComponent(realSrc);
       return;
-  }}
+  }
   img.onerror = null;
   delete img.dataset.lazySrc;
   img.src = PLACEHOLDER;
@@ -746,28 +728,28 @@ function onImgError(img, sid) {{
   if (!window._imageIssues[sid].includes('Broken Image')) window._imageIssues[sid].push('Broken Image');
   addWarnings(sid, ['Broken Image']);
   var debugDiv = document.getElementById('debug-' + escapeHtml(sid));
-  if (debugDiv) {{
+  if (debugDiv) {
       debugDiv.style.display = 'block';
       debugDiv.innerHTML = "<b>FAILED URL:</b><br>" + escapeHtml(realSrc);
-  }}
-}}
+  }
+}
 
-function addWarnings(sid, warns) {{
+function addWarnings(sid, warns) {
   var wrap = document.querySelector('#card-' + escapeHtml(sid) + ' .warn-wrap');
   if (!wrap) return;
-  warns.forEach(w => {{
+  warns.forEach(w => {
     var badge = document.createElement('span');
     badge.className = 'warn-badge';
     badge.textContent = w;
     wrap.appendChild(badge);
-  }});
+  });
   if (!window._imageIssues[sid]) window._imageIssues[sid] = [];
-  warns.forEach(w => {{ if (!window._imageIssues[sid].includes(w)) window._imageIssues[sid].push(w); }});
-}}
+  warns.forEach(w => { if (!window._imageIssues[sid].includes(w)) window._imageIssues[sid].push(w); });
+}
 
-function renderCard(card) {{
+function renderCard(card) {
   var sid = card.sid;
-  var safeSid = sid.replace(/'/g, "\\\\'");
+  var safeSid = sid.replace(/'/g, "\\'");
   var isCommitted = sid in COMMITTED;
   var isStaged = sid in staged;
   var isSelected = !isCommitted && !isStaged && (sid in selected);
@@ -775,10 +757,10 @@ function renderCard(card) {{
 
   var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '\u2026' : escapeHtml(card.name);
-  var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${{escapeHtml(w)}}</span>`).join('');
-  var priceHtml = card.price ? `<div class="price-badge">${{escapeHtml(card.price)}}</div>` : '';
+  var warnHtml = (card.warnings || []).map(w => `<span class="warn-badge">${escapeHtml(w)}</span>`).join('');
+  var priceHtml = card.price ? `<div class="price-badge">${escapeHtml(card.price)}</div>` : '';
 
-  var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${{safeSid}}', event)" title="Preview">
+  var zoomHtml = `<button class="zoom-btn" onclick="event.stopPropagation();showZoom('${safeSid}', event)" title="Preview">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
@@ -788,58 +770,57 @@ function renderCard(card) {{
   var isEager = imgIdx < {cols_per_row * 2};
   var loadingAttr = isEager ? 'eager' : 'lazy';
   var priorityAttr = isEager ? 'fetchpriority="high"' : 'fetchpriority="low"';
-  // For non-eager images use data-lazy-src so IntersectionObserver fires src when visible
   var imgSrcAttr = isEager
-    ? `src="${{safeImgSrcForHtml}}"`
-    : `src="${{PLACEHOLDER}}" data-lazy-src="${{safeImgSrcForHtml}}"`;
+    ? `src="${safeImgSrcForHtml}"`
+    : `src="${PLACEHOLDER}" data-lazy-src="${safeImgSrcForHtml}"`;
 
   var overlayHtml = '', actHtml = '';
-  if (isCommitted) {{
-    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${{escapeHtml(LABELS.rejected)}}</div><div class="rej-label">${{escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${{safeSid}}')">${{escapeHtml(LABELS.undo)}}</button></div>`;
-  }} else if (isStaged) {{
+  if (isCommitted) {
+    overlayHtml = `<div class="rej-overlay"><div class="rej-badge">${escapeHtml(LABELS.rejected)}</div><div class="rej-label">${escapeHtml((COMMITTED[sid]||'').replace(/_/g,' '))}</div><button class="undo-btn" onclick="event.stopPropagation();window.undoReject('${safeSid}')">${escapeHtml(LABELS.undo)}</button></div>`;
+  } else if (isStaged) {
     overlayHtml = `<div class="rej-overlay staged">
-      <div class="rej-badge pending">${{escapeHtml(LABELS.rejected)}}</div>
-      <div class="rej-label">Pending reason:<br>${{escapeHtml((staged[sid]||'').replace(/_/g,' '))}}</div>
-      <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{safeSid}}')">${{escapeHtml(LABELS.clear_sel)}}</button>
+      <div class="rej-badge pending">${escapeHtml(LABELS.rejected)}</div>
+      <div class="rej-label">Pending reason:<br>${escapeHtml((staged[sid]||'').replace(/_/g,' '))}</div>
+      <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${safeSid}')">${escapeHtml(LABELS.clear_sel)}</button>
     </div>`;
-  }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option></select></div>`;
-  }}
+  } else {
+    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${safeSid}','REJECT_POOR_IMAGE')">${escapeHtml(LABELS.poor_img)}</button><select class="act-more" onchange="if(this.value){event.stopPropagation();window.stageReject('${safeSid}',this.value);this.value=''}"><option value="">${escapeHtml(LABELS.more_options)}</option><option value="REJECT_WRONG_CAT">${escapeHtml(LABELS.wrong_cat)}</option><option value="REJECT_FAKE">${escapeHtml(LABELS.fake_prod)}</option><option value="REJECT_BRAND">${escapeHtml(LABELS.restr_brand)}</option><option value="REJECT_PROHIBITED">${escapeHtml(LABELS.prohibited)}</option><option value="REJECT_COLOR">${escapeHtml(LABELS.missing_color)}</option><option value="REJECT_WRONG_BRAND">${escapeHtml(LABELS.wrong_brand)}</option></select></div>`;
+  }
 
-  return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
-    <div class="card-img-wrap" onclick="window.toggleSelect('${{safeSid}}',event)">
-      ${{priceHtml}}
-      <div class="warn-wrap">${{warnHtml}}</div>
-      <div id="debug-${{escapeHtml(sid)}}" class="debug-hud"></div>
-      <img class="card-img-placeholder" src="${{PLACEHOLDER}}" alt="">
-      <img class="card-img" decoding="async" loading="${{loadingAttr}}" ${{priorityAttr}} ${{imgSrcAttr}} referrerpolicy="no-referrer"
-           onload="onImgLoad(this,'${{safeSid}}')" onerror="onImgError(this,'${{safeSid}}')">
-      ${{zoomHtml}}
-      ${{overlayHtml}}
+  return `<div class="${cls}" id="card-${escapeHtml(sid)}">
+    <div class="card-img-wrap" onclick="window.toggleSelect('${safeSid}',event)">
+      ${priceHtml}
+      <div class="warn-wrap">${warnHtml}</div>
+      <div id="debug-${escapeHtml(sid)}" class="debug-hud"></div>
+      <img class="card-img-placeholder" src="${PLACEHOLDER}" alt="">
+      <img class="card-img" decoding="async" loading="${loadingAttr}" ${priorityAttr} ${imgSrcAttr} referrerpolicy="no-referrer"
+           onload="onImgLoad(this,'${safeSid}')" onerror="onImgError(this,'${safeSid}')">
+      ${zoomHtml}
+      ${overlayHtml}
       <div class="tick">\u2714</div>
     </div>
     <div class="meta">
-      <div class="nm" title="${{escapeHtml(card.name)}}">${{shortName}}</div>
-      <div class="br" title="${{escapeHtml(card.brand)}}">${{escapeHtml(card.brand)}}</div>
-      <div class="ct">${{escapeHtml(card.cat)}}</div>
-      <div class="sl" title="${{escapeHtml(card.seller)}}">${{escapeHtml(card.seller)}}</div>
+      <div class="nm" title="${escapeHtml(card.name)}">${shortName}</div>
+      <div class="br" title="${escapeHtml(card.brand)}">${escapeHtml(card.brand)}</div>
+      <div class="ct">${escapeHtml(card.cat)}</div>
+      <div class="sl" title="${escapeHtml(card.seller)}">${escapeHtml(card.seller)}</div>
     </div>
-    ${{actHtml}}
+    ${actHtml}
   </div>`;
-}}
+}
 
-window.showZoom = function(sid, event) {{
+window.showZoom = function(sid, event) {
   var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {{
+  if (tooltip.style.display === 'block' && window.currentZoomSid === sid) {
       closeZoom();
       return;
-  }}
+  }
   var card = CARDS.find(c => c.sid === sid);
   if (!card) return;
   var img = document.getElementById('tooltip-img');
   
   img.src = card.img || PLACEHOLDER;
-  img.onerror = function() {{ img.src = PLACEHOLDER; img.onerror = null; }};
+  img.onerror = function() { img.src = PLACEHOLDER; img.onerror = null; };
   
   tooltip.style.display = 'block';
   window.currentZoomSid = sid;
@@ -850,9 +831,9 @@ window.showZoom = function(sid, event) {{
   var y = event.pageY; 
 
   var left = x + 15;
-  if (left + tw > document.body.scrollWidth) {{
+  if (left + tw > document.body.scrollWidth) {
       left = x - tw - 15;
-  }}
+  }
 
   var top = y - (th / 2);
   if (top < 10) top = 10;
@@ -860,104 +841,141 @@ window.showZoom = function(sid, event) {{
 
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
-}};
+};
 
-window.closeZoom = function() {{
+window.closeZoom = function() {
   document.getElementById('zoom-tooltip').style.display = 'none';
   window.currentZoomSid = null;
-}};
+};
 
-document.addEventListener('click', function(e) {{
+document.addEventListener('click', function(e) {
   var tooltip = document.getElementById('zoom-tooltip');
-  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {{
+  if (tooltip.style.display === 'block' && !tooltip.contains(e.target) && !e.target.closest('.zoom-btn')) {
     closeZoom();
-  }}
-}});
+  }
+});
 
-function updateSelCount() {{ 
+function updateSelCount() { 
   var pendingText = (Object.keys(selected).length + Object.keys(staged).length) + ' ' + LABELS.items_pending; 
   document.querySelectorAll('.sel-count-text').forEach(el => el.textContent = pendingText);
   updateParentPagination();
-}}
+}
 
-function getSortedCards() {{
+function getSortedCards() {
   var sort = window._currentSort;
   if (!sort) return CARDS;
-  var ISSUE_MAP = {{ 'low_res':'Low Resolution','tall':'Tall (Screenshot?)','wide':'Wide Aspect','broken':'Broken Image' }};
+  var ISSUE_MAP = { 'low_res':'Low Resolution','tall':'Tall (Screenshot?)','wide':'Wide Aspect','broken':'Broken Image' };
   var sorted = CARDS.slice();
-  if (sort === 'no_issue') {{
-    sorted.sort(function(a,b) {{ return ((window._imageIssues[a.sid]||[]).length>0?1:0) - ((window._imageIssues[b.sid]||[]).length>0?1:0); }});
-  }} else if (ISSUE_MAP[sort]) {{
+  if (sort === 'no_issue') {
+    sorted.sort(function(a,b) { return ((window._imageIssues[a.sid]||[]).length>0?1:0) - ((window._imageIssues[b.sid]||[]).length>0?1:0); });
+  } else if (ISSUE_MAP[sort]) {
     var target = ISSUE_MAP[sort];
-    sorted.sort(function(a,b) {{ return ((window._imageIssues[a.sid]||[]).includes(target)?0:1) - ((window._imageIssues[b.sid]||[]).includes(target)?0:1); }});
-  }}
+    sorted.sort(function(a,b) { return ((window._imageIssues[a.sid]||[]).includes(target)?0:1) - ((window._imageIssues[b.sid]||[]).includes(target)?0:1); });
+  }
   return sorted;
-}}
-window.applySort = function(val) {{
+}
+
+window.applySort = function(val) {
   window._currentSort = val;
-  ['sort-sel-top','sort-sel-bottom'].forEach(function(id) {{ var el=document.getElementById(id); if(el) el.value=val; }});
+  ['sort-sel-top','sort-sel-bottom'].forEach(function(id) { var el=document.getElementById(id); if(el) el.value=val; });
   renderAll();
-}};
-function renderAll() {{ document.getElementById('card-grid').innerHTML = getSortedCards().map(renderCard).join(''); updateSelCount(); activateLazyImages(); }}
-function replaceCard(sid) {{
+};
+
+function renderAll() { document.getElementById('card-grid').innerHTML = getSortedCards().map(renderCard).join(''); updateSelCount(); activateLazyImages(); }
+
+function replaceCard(sid) {
   var el = document.getElementById('card-' + escapeHtml(sid));
   if (!el) return;
   var card = CARDS.find(c => c.sid === sid);
-  if (card) {{ var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); activateLazyImages(); }}
-}}
-window.doSelectAll = function() {{ CARDS.forEach(c => {{ if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }}); renderAll(); updateSelCount(); }};
-window.toggleSelect = function(sid, e) {{
+  if (card) { var t = document.createElement('div'); t.innerHTML = renderCard(card); el.replaceWith(t.firstElementChild); activateLazyImages(); }
+}
+
+window.doSelectAll = function() { CARDS.forEach(c => { if (!(c.sid in COMMITTED) && !(c.sid in staged)) selected[c.sid] = true; }); renderAll(); updateSelCount(); };
+window.toggleSelect = function(sid, e) {
   if (sid in COMMITTED) return;
   if (sid in staged) delete staged[sid];
   else if (sid in selected) delete selected[sid];
   else selected[sid] = true;
   replaceCard(sid); updateSelCount();
-}};
-window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
-window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
-window.undoReject = function(sid) {{
+};
+window.stageReject = function(sid, r) { if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); };
+window.clearStaged = function(sid) { delete staged[sid]; replaceCard(sid); updateSelCount(); };
+
+window.undoReject = function(sid) {
   delete COMMITTED[sid];
   replaceCard(sid);
   updateSelCount();
-  sendMsg('undo', {{[sid]: true}});
-}};
+  sendMsg('undo', {[sid]: true});
+};
 
-window.doBatchReject = function(pos) {{
+window.doBatchReject = function(pos) {
   var selectId = pos === 'top' ? 'batch-reason-top' : 'batch-reason-bottom';
   var br = document.getElementById(selectId).value;
-  var payload = {{}}, count = 0;
-  for (var s in staged) {{ payload[s] = staged[s]; count++; }}
-  for (var s in selected) {{ payload[s] = br; count++; }}
+  var payload = {}, count = 0;
+  for (var s in staged) { payload[s] = staged[s]; count++; }
+  for (var s in selected) { payload[s] = br; count++; }
   if (count === 0) return;
-  for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
+  for (var s in payload) { COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }
+  
+  try {
+    var par = window.parent.document;
+    var iframe = null;
+    var frames = par.querySelectorAll('iframe');
+    for (var fi = 0; fi < frames.length; fi++) {
+      try { if (frames[fi].contentWindow === window) { iframe = frames[fi]; break; } } catch(e) {}
+    }
+    if (iframe) {
+      var rect = iframe.getBoundingClientRect();
+      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
+      var ghost = par.createElement('div');
+      ghost.id = '__grid_ghost__';
+      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
+        + 'top:' + (rect.top + scrollY) + 'px;'
+        + 'left:' + rect.left + 'px;'
+        + 'width:' + rect.width + 'px;'
+        + 'height:' + rect.height + 'px;'
+        + 'display:flex;align-items:center;justify-content:center;'
+        + 'font-family:sans-serif;font-size:14px;font-weight:600;color:#FF8800;'
+        + 'transition:opacity 0.4s ease;';
+      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:28px;margin-bottom:8px;">⏳</div><div>Applying rejections…</div></div>';
+      var existing = par.getElementById('__grid_ghost__');
+      if (existing) existing.remove();
+      par.body.appendChild(ghost);
+      setTimeout(function() {
+        var g = par.getElementById('__grid_ghost__');
+        if (g) { g.style.opacity = '0'; setTimeout(function() { var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }, 400); }
+      }, 4000);
+    }
+  } catch(ghostErr) { /* non-fatal */ }
+
   renderAll();
   updateSelCount();
   sendMsg('reject', payload);
-}};
+};
 
-window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); }};
+window.doDeselAll = function() { for (var k in selected) delete selected[k]; for (var k in staged) delete staged[k]; renderAll(); updateSelCount(); };
 
-(function() {{
+(function() {
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
   var container = document.getElementById('prefetch-container');
   var statusEl = document.getElementById('prefetch-status');
   var i = 0, total = PREFETCH_URLS.length, done = 0;
-  var runner = window.requestIdleCallback || function(fn){{setTimeout(fn,300);}};
-  function prefetchBatch() {{
+  var runner = window.requestIdleCallback || function(fn){setTimeout(fn,300);};
+  function prefetchBatch() {
     var limit = 8, processed = 0;
-    while (i < total && processed < limit) {{
+    while (i < total && processed < limit) {
       var url = PREFETCH_URLS[i++]; processed++;
       var img = new Image();
       img.referrerPolicy = "no-referrer";
-      img.onload = () => {{ done++; if (statusEl) statusEl.textContent = `Prefetched ${{done}}/${{total}}`; }};
+      img.onload = () => { done++; if (statusEl) statusEl.textContent = `Prefetched ${done}/${total}`; };
       img.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
       container.appendChild(img);
       img.src = url;
-    }}
+    }
     if (i < total) runner(prefetchBatch);
-  }}
+  }
   setTimeout(prefetchBatch, 800);
-}})();
+})();
 
 renderAll();
 </script>
@@ -966,19 +984,32 @@ renderAll();
 
 @st.dialog("Visual Review Mode", width="large", icon=":material/pageview:", dismissible=False)
 def visual_review_modal(support_files):
+    
+    # [FIX 3 & 4]: The cascading async retries to fight Streamlit's rendering behavior, utilizing the shared selector logic
     components.html(
         "<script>"
         "try {"
         "  var par = window.parent.document;"
-        "  var scrollable ="
-        "    par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
-        "    par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
-        "    par.querySelector('[role=\"dialog\"]');"
+        "  function _getScrollable() {"
+        "    return par.querySelector('[data-testid=\"stModal\"] [data-testid=\"stDialogScrollContent\"]') ||"
+        "           par.querySelector('[data-testid=\"stModal\"] > div > div > div:last-child') ||"
+        "           par.querySelector('[role=\"dialog\"]');"
+        "  }"
+        "  var scrollable = _getScrollable();"
         "  if (scrollable) {"
         "    var saved = window.parent.sessionStorage.getItem('__grid_scroll__');"
         "    if (saved !== null) {"
         "      window.parent.sessionStorage.removeItem('__grid_scroll__');"
-        "      scrollable.scrollTop = parseInt(saved, 10);"
+        "      var target = parseInt(saved, 10);"
+        "      var enforce = function() {"
+        "        scrollable.scrollTop = target;"
+        "        var ae = par.activeElement;"
+        "        if (ae && ae.tagName === 'INPUT') ae.blur();"
+        "      };"
+        "      enforce();"
+        "      setTimeout(enforce, 50);"
+        "      setTimeout(enforce, 200);"
+        "      setTimeout(enforce, 500);"
         "    } else if (" + str(st.session_state.get("do_scroll_top", False)).lower() + ") {"
         "      scrollable.scrollTo({top: 0, behavior: 'instant'});"
         "    }"
