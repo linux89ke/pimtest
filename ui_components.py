@@ -572,6 +572,15 @@ window._currentSort = window._currentSort || '';
 var selected = window._gridSelected;
 var staged = window._stagedRejections;
 
+function _getScrollable() {{
+  try {{
+    var par = window.parent.document;
+    return par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
+           par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
+           par.querySelector('[role="dialog"]');
+  }} catch(e) {{ return null; }}
+}}
+
 function sendMsg(type, payload) {{
   try {{
     var par = window.parent;
@@ -583,43 +592,58 @@ function sendMsg(type, payload) {{
       }}
     }}
     if (!bridge) return;
+
+    // 1. Snapshot scroll position BEFORE touching the bridge element.
+    var scrollable = _getScrollable();
+    var savedScroll = scrollable ? scrollable.scrollTop : 0;
+    if (savedScroll > 0) {{
+      par.sessionStorage.setItem('__grid_scroll__', savedScroll);
+    }}
+
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-    // Save scroll position before activating bridge so post-rerun restore works.
-    try {{
-      var scrollable =
-        par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-        par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-        par.querySelector('[role="dialog"]');
-      if (scrollable && scrollable.scrollTop > 0) {{
-        par.defaultView.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
-      }}
-    }} catch(_e) {{}}
-    // focus with preventScroll:true so Streamlit registers the input event
-    // without the browser jumping to the element. blur() immediately after
-    // so Streamlit doesn't keep it as the active field on rerun.
-    bridge.focus({{preventScroll: true}});
+
+    // 2. Temporarily move the bridge off-screen so browser scroll-into-view
+    //    has nowhere useful to go, then immediately restore after events fire.
+    var origPosition = bridge.style.position;
+    var origTop = bridge.style.top;
+    var origLeft = bridge.style.left;
+    bridge.style.position = 'fixed';
+    bridge.style.top = '-9999px';
+    bridge.style.left = '-9999px';
+
+    bridge.focus();
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.blur();
+
+    // 3. Restore bridge position immediately after events dispatched.
+    bridge.style.position = origPosition;
+    bridge.style.top = origTop;
+    bridge.style.left = origLeft;
+
+    // 4. Immediately restore scroll (catches synchronous scroll side-effects).
+    if (scrollable && savedScroll > 0) {{
+      scrollable.scrollTop = savedScroll;
+    }}
+    // 5. Also restore after a short delay (catches async Streamlit rerun scroll).
+    setTimeout(function() {{
+      var s2 = _getScrollable();
+      if (s2 && savedScroll > 0) s2.scrollTop = savedScroll;
+    }}, 80);
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
 function scrollToTop() {{
   try {{
-    var par = window.parent.document;
-    // Streamlit dialog scroll container — try multiple selectors for robustness
-    var scrollable =
-      par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-      par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-      par.querySelector('[role="dialog"]');
+    // Clear any saved scroll so post-rerun restore doesn't fight us
+    window.parent.sessionStorage.removeItem('__grid_scroll__');
+    var scrollable = _getScrollable();
     if (scrollable) {{
       scrollable.scrollTo({{top: 0, behavior: 'smooth'}});
     }}
-    // Also scroll the iframe itself to top in case it has overflow
-    window.scrollTo({{top: 0, behavior: 'smooth'}});
   }} catch(e) {{ console.warn('scrollToTop failed:', e); }}
 }}
 
@@ -906,16 +930,6 @@ window.toggleSelect = function(sid, e) {{
 window.stageReject = function(sid, r) {{ if (sid in selected) delete selected[sid]; staged[sid] = r; replaceCard(sid); updateSelCount(); }};
 window.clearStaged = function(sid) {{ delete staged[sid]; replaceCard(sid); updateSelCount(); }};
 window.undoReject = function(sid) {{
-  try {{
-    var par = window.parent.document;
-    var scrollable =
-      par.querySelector('[data-testid="stModal"] [data-testid="stDialogScrollContent"]') ||
-      par.querySelector('[data-testid="stModal"] > div > div > div:last-child') ||
-      par.querySelector('[role="dialog"]');
-    if (scrollable && scrollable.scrollTop > 0) {{
-      window.parent.sessionStorage.setItem('__grid_scroll__', scrollable.scrollTop);
-    }}
-  }} catch(e) {{}}
   delete COMMITTED[sid];
   replaceCard(sid);
   updateSelCount();
