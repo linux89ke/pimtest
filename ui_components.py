@@ -584,19 +584,22 @@ function sendMsg(type, payload) {{
     }}
     if (!bridge) return;
     var msg = JSON.stringify({{action: type, payload: payload}});
+
+    // Strategy: set the value via the native setter (so React's synthetic onChange
+    // fires), then dispatch Enter on the bridge's closest <form> — Streamlit listens
+    // at the form level so the submission works WITHOUT ever calling bridge.focus().
+    // Not focusing means the browser never scrolls to the bridge and Streamlit's
+    // rerun does not autofocus it (or any adjacent text_input like "Search by Name").
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-    // focus() with preventScroll is required so Streamlit processes the Enter key
-    // as a form submission — without it the keydown fires on an unfocused element
-    // and the on_change never triggers. preventScroll stops the browser jumping to
-    // the bridge element, and blur() immediately after prevents it lingering as the
-    // active input (which was the original cause of scroll-jumps and JSON leaking
-    // into other text fields on rerun).
-    bridge.focus({{preventScroll: true}});
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.blur();
+
+    // Fire Enter on the form so Streamlit's form-submit listener triggers without
+    // needing the bridge to be the focused/active element.
+    var form = bridge.closest('form');
+    var enterTarget = form || bridge;
+    enterTarget.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    enterTarget.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
 }}
 
@@ -923,6 +926,37 @@ window.doBatchReject = function(pos) {{
   for (var s in selected) {{ payload[s] = br; count++; }}
   if (count === 0) return;
   for (var s in payload) {{ COMMITTED[s] = payload[s]; delete selected[s]; delete staged[s]; }}
+
+  // Freeze the grid visually so it doesn't flash/disappear during Streamlit rerun.
+  try {{
+    var par = window.parent.document;
+    var iframe = null;
+    var frames = par.querySelectorAll('iframe');
+    for (var fi = 0; fi < frames.length; fi++) {{
+      try {{ if (frames[fi].contentWindow === window) {{ iframe = frames[fi]; break; }} }} catch(e) {{}}
+    }}
+    if (iframe) {{
+      var rect = iframe.getBoundingClientRect();
+      var scrollY = par.documentElement.scrollTop || par.body.scrollTop;
+      var ghost = par.createElement('div');
+      ghost.id = '__grid_ghost__';
+      ghost.style.cssText = 'position:absolute;z-index:99998;pointer-events:none;background:#fff;border-radius:4px;'
+        + 'top:' + (rect.top + scrollY) + 'px;left:' + rect.left + 'px;'
+        + 'width:' + rect.width + 'px;height:' + rect.height + 'px;'
+        + 'display:flex;align-items:center;justify-content:center;'
+        + 'font-family:sans-serif;font-size:14px;font-weight:600;color:#FF8800;'
+        + 'transition:opacity 0.4s ease;';
+      ghost.innerHTML = '<div style="text-align:center;"><div style="font-size:28px;margin-bottom:8px;">⏳</div><div>Applying rejections…</div></div>';
+      var existing = par.getElementById('__grid_ghost__');
+      if (existing) existing.remove();
+      par.body.appendChild(ghost);
+      setTimeout(function() {{
+        var g = par.getElementById('__grid_ghost__');
+        if (g) {{ g.style.opacity = '0'; setTimeout(function() {{ var g2 = par.getElementById('__grid_ghost__'); if(g2) g2.remove(); }}, 400); }}
+      }}, 4000);
+    }}
+  }} catch(ghostErr) {{ /* non-fatal */ }}
+
   renderAll();
   updateSelCount();
   sendMsg('reject', payload);
