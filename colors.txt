@@ -3,6 +3,7 @@ Multicolored
 Multicolor
 Multi
 Multicolour
+MULTICOLORS
 Woody
 clear
 plastic
