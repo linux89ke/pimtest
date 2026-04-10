@@ -637,32 +637,104 @@ def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categorie
     
     valid_colors = load_valid_colors()
     null_like = {'nan', '', 'none', 'null', 'n/a', 'na', '-'}
-    
+
+    # Placeholder/junk values that are NOT real colors — always flag these
+    _JUNK_COLORS = {
+        'random', 'random color', 'random colour', 'assorted', 'various',
+        'as in the picture', 'as in the pictures', 'as the picture',
+        'as per image', 'as shown', 'see image', 'see photo',
+        'all color available', 'all color availble', 'all colors available',
+        'multicolour', 'multicolored', 'multicoloured', 'multi colour',
+        'multi color', 'multi-colour', 'multi-color', 'multicolors',
+        'mult', 'multic',
+    }
+
+    # Color modifier words — "dark brown" → "brown" is the real color token
+    # These alone are NOT colors but combined with a base color they are valid
+    _MODIFIER_WORDS = {
+        'dark', 'light', 'bright', 'deep', 'pale', 'soft', 'matte', 'matt',
+        'glossy', 'metallic', 'neon', 'pastel', 'dusty', 'warm', 'cool',
+        'royal', 'navy', 'olive', 'mustard', 'burnt', 'forest', 'sky',
+        'baby', 'hot', 'ice', 'mint', 'rose', 'coral', 'nude', 'tan',
+        'charcoal', 'ash', 'sand', 'cream', 'ivory', 'champagne', 'coffee',
+        'chocolate', 'caramel', 'wine', 'burgundy', 'nordic', 'jungle',
+        'emerald', 'sapphire', 'ruby', 'amber', 'teal', 'aqua', 'indigo',
+        'violet', 'lavender', 'lilac', 'magenta', 'fuchsia', 'maroon',
+        'copper', 'bronze', 'gold', 'silver', 'platinum',
+        # Descriptive phrases that should NOT count as a base color token
+        'dominantly', 'accent', 'accents', 'print', 'stripe', 'striped',
+        'check', 'checked', 'pattern', 'bead', 'beaded', 'ring', 'with',
+        'and', 'or',
+    }
+
+    def _is_valid_color(color_str: str, valid_set: set) -> bool:
+        """
+        Returns True if color_str represents a real, specific color.
+
+        Strategy:
+        1. Reject known junk/placeholder values outright.
+        2. Split by all common multi-color separators (comma, slash, ampersand,
+           hyphen, pipe, 'and', 'or', 'with').
+        3. For each part, check:
+           a. Exact match against valid_set (full part).
+           b. Word-level token match — any single word in the part that is in
+              valid_set and is NOT a pure modifier word.
+           This handles "Dark brown" (token "brown"), "nordic blue" (token "blue"),
+           "BLACK-RED" (tokens "black", "red"), etc.
+        """
+        c = color_str.strip().lower()
+
+        # Step 1: reject known junk
+        if c in _JUNK_COLORS:
+            return False
+        # Also catch truncated/symbol-only values
+        if re.match(r'^[.\-_*]{1,5}$', c):
+            return False
+
+        if not valid_set:
+            # No whitelist loaded — accept any non-null, non-junk value
+            return True
+
+        # Step 2: split on all separator types
+        # Handles: "BLACK-RED", "light grey|dark grey|yellow",
+        #          "Black and white", "Black white beige light blue light grey"
+        parts = re.split(r'[,/&|\-]|\s+and\s+|\s+or\s+|\s+with\s+', c)
+
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            # 3a. Exact match on the whole part
+            if part in valid_set:
+                return True
+
+            # 3b. Word-token match — any token that is a known color (not just modifier)
+            tokens = part.split()
+            for token in tokens:
+                token = token.strip()
+                if token in valid_set and token not in _MODIFIER_WORDS:
+                    return True
+
+        return False
+
     mask = []
     for n, c in zip(names, colors):
         # Pass Condition 1: Valid color word in Title
         is_name_valid = bool(pattern.search(n))
-        
-        # Pass Condition 2: Check for whitelisted colors (allowing comma/slash splits)
+
+        # Pass Condition 2: Valid color in COLOR field
         is_col_valid = False
         if has_color and c not in null_like:
-            if valid_colors:
-                # Split by common multi-color separators like "," or "/" or "&"
-                color_parts = re.split(r'[&,/]', c)
-                # Pass if ANY part of the string matches your whitelist
-                if any(part.strip() in valid_colors for part in color_parts):
-                    is_col_valid = True
-            else:
-                # Fallback: if no whitelist exists, allow non-null strings
-                is_col_valid = True
-            
+            is_col_valid = _is_valid_color(c, valid_colors)
+
         if is_col_valid or is_name_valid:
-            mask.append(False) 
+            mask.append(False)
         else:
-            mask.append(True)  
-            
+            mask.append(True)
+
     flagged = target[mask].copy()
-    
+
     if not flagged.empty:
         def get_reason(row):
             c_val = str(row.get('COLOR', '')).strip().lower()
