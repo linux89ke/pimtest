@@ -295,12 +295,13 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                     st.rerun()
 
 def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
-                         rejected_state, cols_per_row, prefetch_urls=None, scroll_to_top=False):
+                         rejected_state, cols_per_row, poor_img_sids=None, prefetch_urls=None, scroll_to_top=False):
     
     O = JUMIA_COLORS["primary_orange"]
     G = JUMIA_COLORS["success_green"]
     R = JUMIA_COLORS["jumia_red"]
     committed_json = json.dumps(rejected_state)
+    poor_img_sids_json = json.dumps(list(poor_img_sids or []))
     prefetch_json = json.dumps(prefetch_urls or [])
     html_dir = "rtl" if st.session_state.get('ui_lang') == "ar" else "ltr"
 
@@ -436,7 +437,15 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   
   .rej-overlay{{display:none;position:absolute;inset:0;background:rgba(255,255,255,.90);border-radius:8px;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:12px;text-align:center;}}
   .card.committed-rej .rej-overlay{{display:flex;}}
-  
+  /* Poor-image auto-rejections: semi-transparent so the actual image is still visible */
+  .card.committed-rej.poor-img-rej .rej-overlay{{background:rgba(0,0,0,.45);backdrop-filter:blur(1px);}}
+  .card.committed-rej.poor-img-rej{{border-color:{R};opacity:1;}}
+  .card.committed-rej.poor-img-rej .card-img{{filter:none;}}
+  .card.committed-rej.poor-img-rej .rej-badge{{background:rgba(231,60,23,.9);}}
+  .card.committed-rej.poor-img-rej .rej-label{{color:#fff;}}
+  .card.committed-rej.poor-img-rej .undo-btn{{background:#fff;color:{R};}}
+  .card.committed-rej.poor-img-rej .undo-btn:hover{{background:#f0f0f0;}}
+
   .card.staged-rej .rej-overlay.staged{{display:flex; background:rgba(211,47,47,0.85);}}
   .card.staged-rej .rej-badge.pending{{background:transparent; color:#fff; font-size:22px; font-weight:900; padding:0; letter-spacing:1px;}}
   .card.staged-rej .rej-label{{color:#fff; font-size:13px; font-weight:600; line-height:1.2; max-width:140px;}}
@@ -581,6 +590,7 @@ try {{
 function escapeHtml(u){{return(u||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");}}
 var CARDS = {cards_json};
 var COMMITTED = {committed_json};
+var POOR_IMG_SIDS = new Set({poor_img_sids_json});
 var PREFETCH_URLS = {prefetch_json};
 var PLACEHOLDER = "{_PLACEHOLDER_SVG}";
 var LABELS = {labels_json};
@@ -780,7 +790,8 @@ function renderCard(card) {{
   var isCommitted = sid in COMMITTED;
   var isStaged = sid in staged;
   var isSelected = sid in selected;
-  var cls = 'card' + (isCommitted ? ' committed-rej' : isStaged ? ' staged-rej' : '') + (isSelected ? ' selected' : '');
+  var isPoorImgRej = isCommitted && POOR_IMG_SIDS.has(sid);
+  var cls = 'card' + (isCommitted ? ' committed-rej' + (isPoorImgRej ? ' poor-img-rej' : '') : isStaged ? ' staged-rej' : '') + (isSelected ? ' selected' : '');
 
   var safeImgSrcForHtml = card.img ? card.img.replace(/'/g, "%27").replace(/"/g, "%22") : PLACEHOLDER;
   var shortName = card.name.length > 38 ? escapeHtml(card.name.slice(0,38)) + '\u2026' : escapeHtml(card.name);
@@ -1231,6 +1242,7 @@ def visual_review_modal(support_files):
         page_warnings=page_warnings,
         rejected_state=rejected_state,
         cols_per_row=cols_per_row,
+        poor_img_sids=poor_img_rej_sids,
         prefetch_urls=prefetch_urls,
         scroll_to_top=scroll_top_flag,
     )
