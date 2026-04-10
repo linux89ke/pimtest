@@ -43,7 +43,7 @@ from nigeria_rules import (
     check_nigeria_xmas_tree, check_nigeria_rice, check_nigeria_powerbanks
 )
 from morocco_rules import load_morocco_qc_rules, check_morocco_prohibited_brands
-from pricing_rules import check_wrong_price, check_category_max_price, CATEGORY_MAX_PRICES_USD
+from pricing_rules import check_wrong_price, check_category_max_price, check_suspicious_discount, CATEGORY_MAX_PRICES_USD
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
@@ -169,6 +169,7 @@ FLAG_RELEVANT_COLS = {
     "Perfume Tester": ["CATEGORY_CODE", "NAME"],
     "Wrong Price": ["GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
     "Category Max Price Exceeded": ["CATEGORY", "GLOBAL_PRICE", "GLOBAL_SALE_PRICE", "CATEGORY_CODE"],
+    "Suspicious Discount": ["GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
     "Poor images": ["MAIN_IMAGE"],
     "Image Stretched": ["MAIN_IMAGE"],
     "Image Blurry": ["MAIN_IMAGE"],
@@ -951,6 +952,7 @@ if _reg is not None:
         'check_miscellaneous_category':      check_miscellaneous_category,
         'check_wrong_price':                 check_wrong_price,
         'check_category_max_price':          check_category_max_price,
+        'check_suspicious_discount':         check_suspicious_discount,
         'compile_regex_patterns':            compile_regex_patterns,
         'check_nigeria_gift_card':           check_nigeria_gift_card,
         'check_nigeria_books':               check_nigeria_books,
@@ -1018,8 +1020,10 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Wrong Price", check_wrong_price, {}),
         ("Category Max Price Exceeded", check_category_max_price, {
             'max_price_map': CATEGORY_MAX_PRICES_USD,
-            'code_to_path': support_files.get('code_to_path', {})
+            'code_to_path': support_files.get('code_to_path', {}),
+            'country_code': country_validator.code,
         }),
+        ("Suspicious Discount", check_suspicious_discount, {}),
     ]
 
     if country_validator.code == "NG":
