@@ -122,10 +122,10 @@ def load_df_parquet(filename):
 class CountryValidator:
     COUNTRY_CONFIG = {
         "Kenya": {"code": "KE", "skip_validations": []},
-        "Uganda": {"code": "UG", "skip_validations": ["Counterfeit Sneakers", "Product Warranty", "Generic BRAND Issues"]},
+        "Uganda": {"code": "UG", "skip_validations": ["Counterfeit Sneakers", "Product Warranty"]},
         "Nigeria": {"code": "NG", "skip_validations": []},
         "Ghana": {"code": "GH", "skip_validations": []},
-        "Morocco": {"code": "MA", "skip_validations": []}
+        "Morocco": {"code": "MA", "skip_validations": ["Generic BRAND Issues"]}
     }
 
     def __init__(self, country: str):
