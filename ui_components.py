@@ -200,7 +200,9 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         "Fashion brand issues", "BRAND name repeated in NAME", "Wrong Variation",
         "Generic branded products with genuine brands", "Missing COLOR",
         "Missing Weight/Volume", "Incomplete Smartphone Name", "Duplicate product",
-        "Poor images", "Perfume Tester", "NG - Gift Card Seller", "NG - Books Seller",
+        "Poor images", "Image Stretched", "Image Blurry",
+        "Image Mismatch", "Image Infringing", "Image Too Many things displayed",
+        "Perfume Tester", "NG - Gift Card Seller", "NG - Books Seller",
         "NG - TV Brand Seller", "NG - HP Toners Seller", "NG - Apple Seller",
         "NG - Xmas Tree Seller", "NG - Rice Brand Seller", "NG - Powerbank Capacity",
         "Wrong Price", "Category Max Price Exceeded", "Color Mismatch", "Other Reason (Custom)",
@@ -507,6 +509,11 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
   <select class="reason-sel" id="batch-reason-top">
     <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
+    <option value="REJECT_IMG_STRETCHED">Image Stretched</option>
+    <option value="REJECT_IMG_BLURRY">Image Blurry</option>
+    <option value="REJECT_IMG_MISMATCH">Image Mismatch</option>
+    <option value="REJECT_IMG_INFRINGING">Image Infringing</option>
+    <option value="REJECT_IMG_TOO_MANY">Image Too Many Things</option>
     <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
     <option value="REJECT_FAKE">{_t("fake_prod")}</option>
     <option value="REJECT_BRAND">{_t("restr_brand")}</option>
@@ -535,6 +542,11 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
   <select class="reason-sel" id="batch-reason-bottom">
     <option value="REJECT_POOR_IMAGE">{_t("poor_img")}</option>
+    <option value="REJECT_IMG_STRETCHED">Image Stretched</option>
+    <option value="REJECT_IMG_BLURRY">Image Blurry</option>
+    <option value="REJECT_IMG_MISMATCH">Image Mismatch</option>
+    <option value="REJECT_IMG_INFRINGING">Image Infringing</option>
+    <option value="REJECT_IMG_TOO_MANY">Image Too Many Things</option>
     <option value="REJECT_WRONG_CAT">{_t("wrong_cat")}</option>
     <option value="REJECT_FAKE">{_t("fake_prod")}</option>
     <option value="REJECT_BRAND">{_t("restr_brand")}</option>
@@ -824,7 +836,7 @@ function renderCard(card) {{
       <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{safeSid}}')">${{escapeHtml(LABELS.clear_sel)}}</button>
     </div>`;
   }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option><option value="OTHER_CUSTOM">Other Reason (Custom)</option></select></div>`;
+    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_IMG_STRETCHED">Image Stretched</option><option value="REJECT_IMG_BLURRY">Image Blurry</option><option value="REJECT_IMG_MISMATCH">Image Mismatch</option><option value="REJECT_IMG_INFRINGING">Image Infringing</option><option value="REJECT_IMG_TOO_MANY">Image Too Many Things</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option><option value="OTHER_CUSTOM">Other Reason (Custom)</option></select></div>`;
   }}
 
   return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
@@ -1080,12 +1092,12 @@ def visual_review_modal(support_files):
         for k in st.session_state.keys()
         if k.startswith("quick_rej_") and "reason" not in k
     }
-    # Also include products auto-rejected by Poor images validation (Tall/Wide aspect)
-    # so the reviewer can see them and decide whether to un-reject them.
+    # Also include products auto-rejected by image validations so the
+    # reviewer can see them and decide whether to un-reject them.
     poor_img_rej_sids = set(
         fr[
             (fr["Status"] == "Rejected") &
-            (fr["FLAG"] == "Poor images")
+            (fr["FLAG"].isin(["Poor images", "Image Stretched", "Image Blurry"]))
         ]["ProductSetSid"].astype(str)
     )
     valid_grid_df = fr[
@@ -1187,18 +1199,22 @@ def visual_review_modal(support_files):
     # sort-by-issue dropdown works correctly even before images have loaded in
     # the browser. Without this, page_warnings was always an empty dict and
     # sorting only worked for images that happened to have already loaded client-side.
-    _poor_img_comments = fr[fr["FLAG"] == "Poor images"].set_index("ProductSetSid")["Comment"].to_dict()
+    _poor_img_comments = (
+        fr[fr["FLAG"].isin(["Image Stretched", "Image Blurry", "Poor images"])]
+        .set_index("ProductSetSid")["Comment"]
+        .to_dict()
+    )
     page_warnings = {}
     for _sid in page_data["PRODUCT_SET_SID"].astype(str):
         _comment = _poor_img_comments.get(_sid, "")
         _warns = []
         if _comment:
             _cl = _comment.lower()
-            if "tall" in _cl:
+            if "stretched" in _cl or "tall" in _cl:
                 _warns.append("Tall (Screenshot?)")
-            if "wide" in _cl:
+            if "stretched" in _cl or "wide" in _cl:
                 _warns.append("Wide Aspect")
-            if "low res" in _cl or "resolution" in _cl:
+            if "blurry" in _cl or "low res" in _cl or "resolution" in _cl or "small" in _cl:
                 _warns.append("Low Resolution")
         if _warns:
             page_warnings[_sid] = _warns
