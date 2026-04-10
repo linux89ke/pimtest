@@ -111,7 +111,7 @@ REASON_MAP = {
     "REJECT_PROHIBITED":     "Prohibited products",
     "REJECT_COLOR":          "Missing COLOR",
     "REJECT_WRONG_BRAND":    "Generic branded products with genuine brands",
-    "REJECT_SUSP_DISCOUNT":  "Suspicious Discount",
+    "REJECT_SUSP_DISCOUNT":  "Discount too high",
     "OTHER_CUSTOM":          "Other Reason (Custom)"
 }
 
