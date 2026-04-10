@@ -99,14 +99,19 @@ for _base_color, _variants in COLOR_PATTERNS.items():
         COLOR_VARIANT_TO_BASE[_variant] = _base_color
 
 REASON_MAP = {
-    "REJECT_POOR_IMAGE": "Poor images",
-    "REJECT_WRONG_CAT": "Wrong Category",
-    "REJECT_FAKE": "Suspected Fake product",
-    "REJECT_BRAND": "Restricted brands",
-    "REJECT_PROHIBITED": "Prohibited products",
-    "REJECT_COLOR": "Missing COLOR",
-    "REJECT_WRONG_BRAND": "Generic branded products with genuine brands",
-    "OTHER_CUSTOM": "Other Reason (Custom)"
+    "REJECT_POOR_IMAGE":     "Poor images",
+    "REJECT_IMG_STRETCHED":  "Image Stretched",
+    "REJECT_IMG_BLURRY":     "Image Blurry",
+    "REJECT_IMG_MISMATCH":   "Image Mismatch",
+    "REJECT_IMG_INFRINGING": "Image Infringing",
+    "REJECT_IMG_TOO_MANY":   "Image Too Many things displayed",
+    "REJECT_WRONG_CAT":      "Wrong Category",
+    "REJECT_FAKE":           "Suspected Fake product",
+    "REJECT_BRAND":          "Restricted brands",
+    "REJECT_PROHIBITED":     "Prohibited products",
+    "REJECT_COLOR":          "Missing COLOR",
+    "REJECT_WRONG_BRAND":    "Generic branded products with genuine brands",
+    "OTHER_CUSTOM":          "Other Reason (Custom)"
 }
 
 SPLIT_LIMIT = 9998
