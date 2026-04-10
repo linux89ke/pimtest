@@ -168,7 +168,7 @@ FLAG_RELEVANT_COLS = {
     "Duplicate product": ["NAME", "SELLER_NAME", "BRAND", "CATEGORY_CODE"],
     "Perfume Tester": ["CATEGORY_CODE", "NAME"],
     "Wrong Price": ["GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
-    "Category Max Price Exceeded": ["CATEGORY", "GLOBAL_PRICE", "GLOBAL_SALE_PRICE", "CATEGORY_CODE"],
+    "Category Max Price Exceeded": ["CATEGORY_CODE", "GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
     "Suspicious Discount": ["GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
     "Poor images": ["MAIN_IMAGE"],
     "Image Stretched": ["MAIN_IMAGE"],
@@ -1017,13 +1017,13 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Image Mismatch", check_image_mismatch, {}),
         ("Image Infringing", check_image_infringing, {}),
         ("Image Too Many things displayed", check_image_too_many_things, {}),
-        ("Wrong Price", check_wrong_price, {}),
+        ("Wrong Price", check_wrong_price, {'country_code': country_validator.code}),
         ("Category Max Price Exceeded", check_category_max_price, {
             'max_price_map': CATEGORY_MAX_PRICES_USD,
             'code_to_path': support_files.get('code_to_path', {}),
             'country_code': country_validator.code,
         }),
-        ("Suspicious Discount", check_suspicious_discount, {}),
+        ("Suspicious Discount", check_suspicious_discount, {'country_code': country_validator.code}),
     ]
 
     if country_validator.code == "NG":
