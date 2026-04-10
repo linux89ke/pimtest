@@ -790,7 +790,7 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             _TAIL_STOP = {'and', 'or', 'of', 'for', 'the', 'a', 'an', 'in', 'to',
                           'with', 'by', 'at', 'from', 'on', 'is', 'are', 'was', 'be',
                           'as', 'it', 'non', 'amp', 'new', 'set', 'pack'}
-            _MIN_TOKEN_LEN = 5  # ignore very short tokens to avoid noise
+            _MIN_TOKEN_LEN = 4  # 4 catches meaningful short words: comb, hair, pick, wax, tool
 
             _last_two = _get_last_segments(current_full, 2)
             _name_tokens = {t for t in re.sub(r'[^a-z0-9\s]', ' ', name.lower()).split()
