@@ -1069,7 +1069,19 @@ def visual_review_modal(support_files):
         for k in st.session_state.keys()
         if k.startswith("quick_rej_") and "reason" not in k
     }
-    valid_grid_df = fr[(fr["Status"] == "Approved") | (fr["ProductSetSid"].isin(committed_rej_sids))]
+    # Also include products auto-rejected by Poor images validation (Tall/Wide aspect)
+    # so the reviewer can see them and decide whether to un-reject them.
+    poor_img_rej_sids = set(
+        fr[
+            (fr["Status"] == "Rejected") &
+            (fr["FLAG"] == "Poor images")
+        ]["ProductSetSid"].astype(str)
+    )
+    valid_grid_df = fr[
+        (fr["Status"] == "Approved") |
+        (fr["ProductSetSid"].isin(committed_rej_sids)) |
+        (fr["ProductSetSid"].isin(poor_img_rej_sids))
+    ]
 
     c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.5, 0.8], gap="large", vertical_alignment="bottom")
     with c1:
@@ -1096,6 +1108,7 @@ def visual_review_modal(support_files):
     _cache_valid = (
         _cached_review is not None
         and not committed_rej_sids   # invalidate once user makes quick-rejections
+        and not poor_img_rej_sids    # invalidate when poor-image products need to appear
         and len(_cached_review) > 0
     )
     if _cache_valid:
@@ -1158,7 +1171,26 @@ def visual_review_modal(support_files):
 
     page_start = st.session_state.grid_page * ipp
     page_data  = review_data.iloc[page_start: page_start + ipp]
+
+    # Populate page_warnings from the validation results (Comment) so that the
+    # sort-by-issue dropdown works correctly even before images have loaded in
+    # the browser. Without this, page_warnings was always an empty dict and
+    # sorting only worked for images that happened to have already loaded client-side.
+    _poor_img_comments = fr[fr["FLAG"] == "Poor images"].set_index("ProductSetSid")["Comment"].to_dict()
     page_warnings = {}
+    for _sid in page_data["PRODUCT_SET_SID"].astype(str):
+        _comment = _poor_img_comments.get(_sid, "")
+        _warns = []
+        if _comment:
+            _cl = _comment.lower()
+            if "tall" in _cl:
+                _warns.append("Tall (Screenshot?)")
+            if "wide" in _cl:
+                _warns.append("Wide Aspect")
+            if "low res" in _cl or "resolution" in _cl:
+                _warns.append("Low Resolution")
+        if _warns:
+            page_warnings[_sid] = _warns
 
     _prefetch_cache_key = f"prefetch_{st.session_state.grid_page}_{len(review_data)}"
     if _prefetch_cache_key not in st.session_state:
@@ -1185,6 +1217,11 @@ def visual_review_modal(support_files):
         for sid in page_data["PRODUCT_SET_SID"].astype(str)
         if st.session_state.get(f"quick_rej_{sid}")
     }
+    # Merge in poor-image auto-rejections so their cards render with the
+    # REJECTED overlay and undo button, letting the reviewer un-reject them.
+    for _sid in page_data["PRODUCT_SET_SID"].astype(str):
+        if _sid in poor_img_rej_sids and _sid not in rejected_state:
+            rejected_state[_sid] = "Poor images"
     
     cols_per_row = 3 if st.session_state.get('layout_mode') == "centered" else 4
     grid_html = build_fast_grid_html(
