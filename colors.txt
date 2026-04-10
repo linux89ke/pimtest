@@ -11,6 +11,94 @@ navy
 black
 yellow
 red
+Amarante
+Capucine
+Cramoisi
+Fraise
+Incarnat
+Rouge sang
+Rouge tomate
+Rose bonbon
+Rose poudré
+Bleu ardoise
+Bleu canard
+Bleu ciel
+Bleu majorelle
+Bleu nuit
+Bleu outremer
+Bleu paon
+Bleu pastel
+Bleu pétrole
+Bleu roi
+Glauque
+Vert anis
+Vert bouteille
+Vert céladon
+Vert d'eau
+Vert kaki
+Vert mousse
+Vert pomme
+Vert sapin
+Vert tilleul
+Abricot
+Cuivre
+Fauve
+Jaune canari
+Jaune paille
+Jaune poussin
+Mandarine
+Safran
+Acajou
+Alezan
+Bistre
+Cacao
+Cannelle
+Châtain
+Noisette
+Rouille
+Roux
+Ardoise
+Aurore
+Azur
+Bleu cobalt
+Bleu pervenche
+Bourgogne
+Bronze
+Carmin
+Chameau
+Coquelicot
+Craie
+Ficelle
+Grège
+Jade
+Lapis-lazuli
+Mauve
+Menthe à l'eau
+Nacré
+Orchidée
+Potiron
+Sang de bœuf
+Sauge
+Terre cuite
+Vert prairie
+Vert véronèse
+Vison
+Zibeline
+Sépia
+Taupe
+Albâtre
+Blanc cassé
+Cendre
+Écru
+Gris perle
+Gris souris
+Mastic
+Neige
+Plomb
+Lilas
+Parme
+Prune
+Violine
 blue
 green
 orange
