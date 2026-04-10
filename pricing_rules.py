@@ -209,19 +209,22 @@ CATEGORY_MAP_XLSX = "category_map.xlsx"
 
 
 # ---------------------------------------------------------------------------
-# VALIDATION 1 — Wrong Price
-# Prices in the upload are in USD; we convert to local for display but the
-# zero/negative and extreme-discount checks are currency-agnostic ratios.
+# VALIDATION 1 — Discount too high
+# Flags products where discount exceeds 51% (when both prices are present
+# and valid). If either price is blank/zero/missing, the check is skipped.
 # ---------------------------------------------------------------------------
 def check_wrong_price(data: pd.DataFrame, country_code: str = "KE") -> pd.DataFrame:
     """
-    Flags products with:
-      • A base price that is missing, zero, or negative
-      • A sale price that is explicitly set (non-null, non-zero) but negative
-      • An extreme discount > 95 % (sale price is almost nothing vs base price)
+    Flags products with a discount > 51% (sale price vs regular price).
+
+    Rules:
+      • If GLOBAL_PRICE is blank/zero/missing → skip (no discount to check)
+      • If GLOBAL_SALE_PRICE is blank/zero/missing → skip (no discount applied)
+      • Only flag when both prices are valid positive numbers AND
+        discount = (1 - sale/price) > 0.51
 
     Input prices are assumed to be in USD and are converted to local currency
-    for the comment string only — the ratio checks are currency-neutral.
+    for the comment string only — the ratio check is currency-neutral.
     """
     if not {"GLOBAL_PRICE", "GLOBAL_SALE_PRICE"}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
@@ -233,47 +236,28 @@ def check_wrong_price(data: pd.DataFrame, country_code: str = "KE") -> pd.DataFr
     d["price"]      = pd.to_numeric(d["GLOBAL_PRICE"],      errors="coerce")
     d["sale_price"] = pd.to_numeric(d["GLOBAL_SALE_PRICE"], errors="coerce")
 
-    # Bad base price: null or <= 0
-    invalid_base = d["price"].isna() | (d["price"] <= 0)
+    # Both prices must be present and positive — skip if either is blank/zero
+    valid_both = (
+        d["price"].notna()      & (d["price"]      > 0) &
+        d["sale_price"].notna() & (d["sale_price"] > 0)
+    )
 
-    # Bad sale price: explicitly provided (non-null, non-zero) but negative.
-    # Zero means "no sale price set" — not flagged here.
-    invalid_sale = d["sale_price"].notna() & (d["sale_price"] < 0)
+    discount_pct  = 1 - (d["sale_price"] / d["price"])
+    high_discount = valid_both & (discount_pct > 0.51)
 
-    invalid_price = invalid_base | invalid_sale
-
-    # Extreme discount only when both prices are valid and positive
-    valid_both      = (d["price"] > 0) & d["sale_price"].notna() & (d["sale_price"] > 0)
-    discount_pct    = 1 - (d["sale_price"] / d["price"])
-    extreme_discount = valid_both & (discount_pct > 0.95)
-
-    flagged = d[invalid_price | extreme_discount].copy()
+    flagged = d[high_discount].copy()
 
     if not flagged.empty:
         def build_comment(row):
             p_usd  = row["price"]
             sp_usd = row["sale_price"]
-            # Convert to local for display
-            p_loc  = p_usd * rate  if pd.notna(p_usd)  else None
-            sp_loc = sp_usd * rate if pd.notna(sp_usd) else None
-
-            if pd.isna(p_usd) or p_usd <= 0:
-                return (
-                    f"Invalid base price "
-                    f"(USD {p_usd} → {sym}{p_loc:,.0f} if converted)"
-                    if p_loc is not None
-                    else f"Missing/zero base price (GLOBAL_PRICE: {p_usd})"
-                )
-            if pd.notna(sp_usd) and sp_usd < 0:
-                return (
-                    f"Negative sale price "
-                    f"(USD {sp_usd} → {sym}{sp_loc:,.0f})"
-                )
-            pct = (1 - sp_usd / p_usd) * 100
+            pct    = (1 - sp_usd / p_usd) * 100
+            p_loc  = p_usd  * rate
+            sp_loc = sp_usd * rate
             return (
-                f"Extreme discount {pct:.1f}% "
-                f"(Price: USD {p_usd} / {sym}{p_loc:,.0f} → "
-                f"Sale: USD {sp_usd} / {sym}{sp_loc:,.0f})"
+                f"Discount too high: {pct:.1f}% "
+                f"(Price: USD {p_usd:,.2f} / {sym}{p_loc:,.0f} → "
+                f"Sale: USD {sp_usd:,.2f} / {sym}{sp_loc:,.0f})"
             )
 
         flagged["Comment_Detail"] = flagged.apply(build_comment, axis=1)
@@ -401,7 +385,8 @@ def check_suspicious_discount(data: pd.DataFrame, country_code: str = "KE") -> p
 
     discount_pct = 1 - (d["sale_price"] / d["price"])
 
-    # Only the 50–95 % window — > 95 % is Wrong Price's responsibility
+    # Only the 51–95 % window is now handled by check_wrong_price (> 51 %).
+    # Suspicious Discount covers the same range for legacy/separate reporting.
     flagged_mask = valid & (discount_pct > 0.50) & (discount_pct <= 0.95)
 
     flagged = d[flagged_mask].copy()
