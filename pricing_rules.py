@@ -1,24 +1,24 @@
 import pandas as pd
 import re
 
-# Realistic Maximum Prices in USD for Jumia Kenya/Nigeria
+
 CATEGORY_MAX_PRICES_USD = {
-    "Automobile": 2000.0,            # Boda-bodas, heavy-duty batteries, car stereos
-    "Computing": 5000.0,             # Apple MacBook Pro M-series, high-end gaming laptops
-    "Electronics": 5000.0,           # 85"+ QLED/OLED Smart TVs, professional DSLR cameras
-    "Home & Office": 3000.0,         # Double-door smart fridges, large L-shaped sofas
-    "Industrial & Scientific": 2500.0, # Commercial welding machines, heavy power tools
-    "Garden & Outdoors": 2000.0,     # Large backup generators, premium patio furniture
-    "Musical Instruments": 2000.0,   # Digital grand pianos, professional DJ controllers
-    "Sporting Goods": 2000.0,        # Commercial-grade treadmills, electric bicycles
-    "Gaming": 1200.0,                # PS5/Xbox console bundles, premium VR headsets
-    "Baby Products": 600.0,          # Premium travel systems/strollers, electronic cribs
-    "Toys & Games": 500.0,           # Kids' electric ride-on cars, large trampolines
-    "Fashion": 500.0,                # Authentic premium sneakers, mid-tier watches
-    "Health & Beauty": 500.0,        # Luxury fragrances, professional salon equipment
-    "Grocery": 300.0,                # Premium liquor, bulk wholesale pallets
-    "Books, Movies & Music": 250.0,  # Textbook bundles, rare box sets
-    "Pet Supplies": 200.0            # 20kg+ bags of premium food, heavy-duty kennels
+    "Automobile": 2000.0,            
+    "Computing": 5000.0,             
+    "Electronics": 5000.0,           
+    "Home & Office": 3000.0,         
+    "Industrial & Scientific": 2500.0, 
+    "Garden & Outdoors": 2000.0,     
+    "Musical Instruments": 2000.0,   
+    "Sporting Goods": 2000.0,        
+    "Gaming": 1200.0,                
+    "Baby Products": 600.0,          
+    "Toys & Games": 500.0,           
+    "Fashion": 500.0,                
+    "Health & Beauty": 500.0,        
+    "Grocery": 300.0,                
+    "Books, Movies & Music": 250.0,  
+    "Pet Supplies": 200.0            
 }
 
 def check_wrong_price(data: pd.DataFrame) -> pd.DataFrame:
