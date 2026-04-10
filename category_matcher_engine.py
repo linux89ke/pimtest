@@ -757,6 +757,65 @@ def check_wrong_category(data: pd.DataFrame, categories_list: list, compiled_rul
             if blocked:
                 continue
 
+            # ── Books domain exemption ────────────────────────────────────────────
+            # Never flag products in the Books / Movies & Music domain — titles are
+            # intentionally broad and TF-IDF picks up incidental topic words.
+            _BOOKS_DOMAIN_PREFIXES = ('books', 'movies', 'music', 'books, movies')
+            c_full_top = current_full.strip().lower().split('/')[0].strip() if '/' in current_full else \
+                         current_full.strip().lower().split('>')[0].strip()
+            if any(c_full_top.startswith(bp) for bp in _BOOKS_DOMAIN_PREFIXES):
+                continue
+
+            # ── Name-keyword-in-last-two-levels suppression ───────────────────────
+            # If key words from the product name overlap with the last 1-2 segments
+            # of the CURRENT category path, the product is correctly placed — suppress.
+            #
+            # Uses both exact token match AND substring match (handles minor typos /
+            # plurals like "wax"->"waxes", "speaker"->"speakers", "polish"->"polishes").
+            #
+            # e.g. name="Car Wax Polish Paste 300g"
+            #      current=".../Car Polishes & Waxes"  -> "polish" in "polishes" -> suppress
+            # e.g. name="v622 hi-fi multimedia xbox speaker system"
+            #      current=".../Speakers / Subwoofers" -> "speaker" in "speakers" -> suppress
+            # e.g. name="800g Flour miller-Kisiagi"
+            #      current=".../Sanders & Grinders / Power Grinders" -> no overlap -> FLAG
+            def _get_last_segments(path, n=2):
+                """Return the last n segments of a category path, lowercased and joined."""
+                for sep in ('/', '>'):
+                    if sep in path:
+                        parts = [p.strip().lower() for p in path.split(sep)]
+                        return ' '.join(parts[-n:])
+                return path.strip().lower()
+
+            _TAIL_STOP = {'and', 'or', 'of', 'for', 'the', 'a', 'an', 'in', 'to',
+                          'with', 'by', 'at', 'from', 'on', 'is', 'are', 'was', 'be',
+                          'as', 'it', 'non', 'amp', 'new', 'set', 'pack'}
+            _MIN_TOKEN_LEN = 5  # ignore very short tokens to avoid noise
+
+            _last_two = _get_last_segments(current_full, 2)
+            _name_tokens = {t for t in re.sub(r'[^a-z0-9\s]', ' ', name.lower()).split()
+                            if len(t) >= _MIN_TOKEN_LEN} - _TAIL_STOP
+            _cat_tail_tokens = {t for t in re.sub(r'[^a-z0-9\s]', ' ', _last_two).split()
+                                 if len(t) >= _MIN_TOKEN_LEN} - _TAIL_STOP
+
+            _name_fits = False
+            if _name_tokens and _cat_tail_tokens:
+                # 1. Exact token overlap
+                if _name_tokens & _cat_tail_tokens:
+                    _name_fits = True
+                else:
+                    # 2. Substring match — handles plurals/typos
+                    for _ct in _cat_tail_tokens:
+                        for _nt in _name_tokens:
+                            if _ct in _nt or _nt in _ct:
+                                _name_fits = True
+                                break
+                        if _name_fits:
+                            break
+
+            if _name_fits:
+                continue
+
             if p_leaf != c_leaf:
                 flagged_indices.append(idx)
                 comment_map[idx] = f"Wrong Category. Suggested: {predicted}"
