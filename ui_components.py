@@ -205,7 +205,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
         "Perfume Tester", "NG - Gift Card Seller", "NG - Books Seller",
         "NG - TV Brand Seller", "NG - HP Toners Seller", "NG - Apple Seller",
         "NG - Xmas Tree Seller", "NG - Rice Brand Seller", "NG - Powerbank Capacity",
-        "Wrong Price", "Category Max Price Exceeded", "Suspicious Discount", "Color Mismatch", "Other Reason (Custom)",
+        "Discount too high", "Category Max Price Exceeded", "Suspicious Discount", "Color Mismatch", "Other Reason (Custom)",
     ]
 
     btn_col1, btn_col2 = st.columns(2)
