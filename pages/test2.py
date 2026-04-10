@@ -1017,27 +1017,26 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             if sid in processed: continue
             processed.add(sid)
             det = r.get('Comment_Detail', '')
-            # If a powerbank product was flagged because it's in the wrong category,
-            # re-route it to the "Wrong Category" flag instead.
             det_str = str(det) if pd.notna(det) and det else ''
-            is_wrong_cat_powerbank = (
-                name == "Powerbank Not Authorized"
-                and 'wrong category' in det_str.lower()
-            )
-            effective_flag = "Wrong Category" if is_wrong_cat_powerbank else name
-            effective_rinfo = flags_mapping.get(effective_flag, rinfo) if is_wrong_cat_powerbank else rinfo
-            effective_base_comment = effective_rinfo.get(target_lang, effective_rinfo.get('en'))
+            # Powerbank in wrong category: emit directly as Wrong Category
+            # using whatever Reason/Comment check_nigeria_powerbanks already set.
+            if name == "Powerbank Not Authorized" and reason_map.get(sid, ''):
+                pb_reason = reason_map.get(sid, '')
+                if 'wrong category' in str(pb_reason).lower() or 'wrong_cat' in str(pb_reason).lower():
+                    wc_rinfo = flags_mapping.get("Wrong Category", rinfo)
+                    rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': pb_reason, 'Comment': det_str or wc_rinfo.get(target_lang, wc_rinfo.get('en')), 'FLAG': 'Wrong Category', 'SellerName': r.get('SELLER_NAME', '')})
+                    continue
             # Use Comment_Detail directly as the full comment if it looks like a full sentence,
             # otherwise fall back to the standard base_comment + detail pattern
             if det_str and len(det_str) > 60:
                 comment_str = det_str
             elif det_str:
-                comment_str = f"{effective_base_comment} ({det_str})"
+                comment_str = f"{base_comment} ({det_str})"
             else:
-                comment_str = effective_base_comment
+                comment_str = base_comment
             # Honour a Reason override set by the check function itself
-            row_reason = reason_map.get(sid, effective_rinfo['reason'])
-            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': row_reason, 'Comment': comment_str, 'FLAG': effective_flag, 'SellerName': r.get('SELLER_NAME', '')})
+            row_reason = reason_map.get(sid, rinfo['reason'])
+            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': row_reason, 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', '')})
 
     for _, r in data[~data['PRODUCT_SET_SID'].astype(str).str.strip().isin(processed)].iterrows():
         sid = str(r['PRODUCT_SET_SID']).strip()
