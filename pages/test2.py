@@ -971,7 +971,14 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
                         expanded_sids = set()
                         for sid in set(res['PRODUCT_SET_SID'].unique()): expanded_sids.update(dup_groups.get(sid, [sid]))
                         final_res = data[data['PRODUCT_SET_SID'].isin(expanded_sids)].copy()
-                        if 'Comment_Detail' in res.columns: final_res['Comment_Detail'] = res['Comment_Detail']
+                        # Use SID-keyed maps — direct index assignment breaks when
+                        # final_res (subset of data) and res have different indices.
+                        if 'Comment_Detail' in res.columns:
+                            _cd_map = res.set_index('PRODUCT_SET_SID')['Comment_Detail'].to_dict()
+                            final_res['Comment_Detail'] = final_res['PRODUCT_SET_SID'].map(_cd_map)
+                        if 'Reason' in res.columns:
+                            _r_map = res.set_index('PRODUCT_SET_SID')['Reason'].to_dict()
+                            final_res['Reason'] = final_res['PRODUCT_SET_SID'].map(_r_map)
                         if name in results and not results[name].empty: results[name] = pd.concat([results[name], final_res]).drop_duplicates(subset=['PRODUCT_SET_SID'])
                         else: results[name] = final_res
                     else:
@@ -1018,13 +1025,17 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             processed.add(sid)
             det = r.get('Comment_Detail', '')
             det_str = str(det) if pd.notna(det) and det else ''
-            # Powerbank in wrong category: emit directly as Wrong Category
-            # using whatever Reason/Comment check_nigeria_powerbanks already set.
-            if name == "Powerbank Not Authorized" and reason_map.get(sid, ''):
-                pb_reason = reason_map.get(sid, '')
-                if 'wrong category' in str(pb_reason).lower() or 'wrong_cat' in str(pb_reason).lower():
-                    wc_rinfo = flags_mapping.get("Wrong Category", rinfo)
-                    rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': pb_reason, 'Comment': det_str or wc_rinfo.get(target_lang, wc_rinfo.get('en')), 'FLAG': 'Wrong Category', 'SellerName': r.get('SELLER_NAME', '')})
+            # Powerbank in wrong category: emit directly as Wrong Category.
+            # Match on Comment_Detail text (set by check_nigeria_powerbanks) OR
+            # the Reason code — either signal is enough.
+            if name == "Powerbank Not Authorized":
+                _pb_reason = reason_map.get(sid, '')
+                _is_wrong_cat = (
+                    'wrong category' in str(_pb_reason).lower()
+                    or 'power bank' in det_str.lower() and 'category' in det_str.lower()
+                )
+                if _is_wrong_cat:
+                    rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': _pb_reason or '1000007 - Wrong Category', 'Comment': det_str or flags_mapping.get("Wrong Category", rinfo).get(target_lang, ''), 'FLAG': 'Wrong Category', 'SellerName': r.get('SELLER_NAME', '')})
                     continue
             # Use Comment_Detail directly as the full comment if it looks like a full sentence,
             # otherwise fall back to the standard base_comment + detail pattern
