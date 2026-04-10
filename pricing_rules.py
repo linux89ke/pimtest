@@ -7,8 +7,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# LEGACY FALLBACK: level-1 USD caps (kept for backwards compatibility and as
-# a final safety net when the category map can't be loaded)
+# LEGACY FALLBACK: level-1 USD caps (kept as final safety net when the
+# category map can't be loaded).  These are in USD and will be converted
+# to local currency via the exchange-rate helper before comparison.
 # ---------------------------------------------------------------------------
 CATEGORY_MAX_PRICES_USD = {
     "Automobile": 2000.0,
@@ -46,18 +47,54 @@ _COUNTRY_COL = {
     "UG": 10,
 }
 
-# Cache so the file is only parsed once per process
+# ---------------------------------------------------------------------------
+# Country metadata: name, currency symbol, and approximate USD exchange rate.
+# Rates are used to convert USD-denominated input prices to local currency
+# for comparison against the local-currency caps in category_map.xlsx.
+# Update these rates periodically or wire in a live rates API if needed.
+# ---------------------------------------------------------------------------
+_COUNTRY_META = {
+    "KE": {"name": "Kenya",   "symbol": "KSh", "usd_rate": 129.0},
+    "UG": {"name": "Uganda",  "symbol": "USh", "usd_rate": 3700.0},
+    "NG": {"name": "Nigeria", "symbol": "₦",   "usd_rate": 1550.0},
+    "GH": {"name": "Ghana",   "symbol": "GH₵", "usd_rate": 15.5},
+    "MA": {"name": "Morocco", "symbol": "MAD", "usd_rate": 10.0},
+    "EG": {"name": "Egypt",   "symbol": "EGP", "usd_rate": 48.5},
+    "SN": {"name": "Senegal", "symbol": "XOF", "usd_rate": 615.0},
+    "IC": {"name": "Ivory Coast", "symbol": "XOF", "usd_rate": 615.0},
+}
+
+
+def _get_usd_rate(country_code: str) -> float:
+    """Return the USD → local currency conversion rate for a country code."""
+    return _COUNTRY_META.get(country_code, {}).get("usd_rate", 1.0)
+
+
+def _get_symbol(country_code: str) -> str:
+    """Return the local currency symbol for a country code."""
+    return _COUNTRY_META.get(country_code, {}).get("symbol", "$")
+
+
+def usd_to_local(amount_usd: float, country_code: str) -> float:
+    """Convert a USD amount to the local currency for the given country."""
+    return amount_usd * _get_usd_rate(country_code)
+
+
+# ---------------------------------------------------------------------------
+# Cache so the xlsx is only parsed once per process lifetime.
+# Call _load_category_price_map.cache_clear() if the file changes at runtime.
+# ---------------------------------------------------------------------------
 @functools.lru_cache(maxsize=1)
 def _load_category_price_map(xlsx_path: str) -> dict:
     """
     Returns a nested dict:
         { country_code: { category_code_str: max_price_local_currency } }
 
-    Also stores a per-country "level-1 fallback" so that if an exact code is
-    missing we can still cap by the root category.
+    The caps stored in the xlsx are already in local currency for each country
+    column — no conversion is needed for the xlsx path.
 
-    Looks for the xlsx file in:
-      1. The path passed in (absolute or relative)
+    Looks for the xlsx in:
+      1. The path passed in (absolute or relative to CWD)
       2. Same directory as this script
       3. CWD
     """
@@ -75,7 +112,8 @@ def _load_category_price_map(xlsx_path: str) -> dict:
 
     if found_path is None:
         logger.warning(
-            "category_map xlsx not found at any of: %s — falling back to USD caps",
+            "category_map xlsx not found at any of: %s — "
+            "falling back to USD caps (will be converted to local currency)",
             candidates,
         )
         return {}
@@ -123,83 +161,120 @@ def _resolve_price_cap(
     usd_fallback_map: dict,
 ) -> tuple[float, str]:
     """
-    Returns (cap, source_description).
+    Returns (cap_in_local_currency, source_description).
 
     Resolution order:
-      1. Exact category code → per-country local-currency cap from xlsx
-      2. Walk up the category path (parent → grandparent …) and use the
-         first ancestor that has a cap
-      3. Level-1 USD fallback from CATEGORY_MAX_PRICES_USD
-      4. Hard default: 999_999_999 (never flag) if nothing matches
+      1. Exact category code  → per-country local-currency cap from xlsx
+      2. Walk up category path (parent → grandparent …) → first ancestor cap
+      3. Level-1 USD fallback from CATEGORY_MAX_PRICES_USD, converted to local
+      4. Hard default 999_999_999 (never flag) if nothing matches
     """
     country_caps = price_map.get(country_code, {})
     clean_code = str(cat_code).strip().split(".")[0]
 
-    # 1. Exact match
+    # 1. Exact match (already in local currency)
     if clean_code in country_caps:
         return country_caps[clean_code], f"exact code {clean_code}"
 
-    # 2. Walk up the path hierarchy
+    # 2. Walk up the path hierarchy (already in local currency)
     full_path = code_to_path.get(clean_code, "")
     if full_path and ">" in full_path:
         parts = [p.strip() for p in full_path.split(">")]
-        # Reverse-walk: immediate parent first
         for depth in range(len(parts) - 1, 0, -1):
             ancestor_path = " > ".join(parts[:depth])
-            # Find a code whose path matches the ancestor path
             for code, path in code_to_path.items():
                 if path.strip() == ancestor_path and code in country_caps:
                     return country_caps[code], f"ancestor '{ancestor_path}'"
 
-    # 3. USD fallback — use level-1 root from path or CATEGORY column
+    # 3. USD fallback — convert to local currency before returning
     level_1 = (
         full_path.split(">")[0].strip()
         if ">" in full_path
         else full_path.strip()
     )
     if level_1 in usd_fallback_map:
-        return usd_fallback_map[level_1], f"USD fallback for '{level_1}'"
+        cap_usd = usd_fallback_map[level_1]
+        cap_local = usd_to_local(cap_usd, country_code)
+        rate = _get_usd_rate(country_code)
+        return cap_local, f"USD fallback for '{level_1}' (${cap_usd:,.0f} × {rate} rate)"
 
     # 4. No cap found
     return 999_999_999.0, "no cap"
 
 
 # ---------------------------------------------------------------------------
-# CATEGORY MAP FILE NAME — update this if your file is in a different location
+# CATEGORY MAP FILE NAME — update if your file lives elsewhere
 # ---------------------------------------------------------------------------
 CATEGORY_MAP_XLSX = "category_map.xlsx"
 
 
 # ---------------------------------------------------------------------------
 # VALIDATION 1 — Wrong Price
+# Prices in the upload are in USD; we convert to local for display but the
+# zero/negative and extreme-discount checks are currency-agnostic ratios.
 # ---------------------------------------------------------------------------
-def check_wrong_price(data: pd.DataFrame) -> pd.DataFrame:
+def check_wrong_price(data: pd.DataFrame, country_code: str = "KE") -> pd.DataFrame:
     """
-    Flags products with missing/zero prices or extreme, unrealistic discounts (>95%).
+    Flags products with:
+      • A base price that is missing, zero, or negative
+      • A sale price that is explicitly set (non-null, non-zero) but negative
+      • An extreme discount > 95 % (sale price is almost nothing vs base price)
+
+    Input prices are assumed to be in USD and are converted to local currency
+    for the comment string only — the ratio checks are currency-neutral.
     """
     if not {"GLOBAL_PRICE", "GLOBAL_SALE_PRICE"}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
+
+    rate = _get_usd_rate(country_code)
+    sym  = _get_symbol(country_code)
 
     d = data.copy()
     d["price"]      = pd.to_numeric(d["GLOBAL_PRICE"],      errors="coerce")
     d["sale_price"] = pd.to_numeric(d["GLOBAL_SALE_PRICE"], errors="coerce")
 
-    invalid_base = d["price"].notna()     & (d["price"]      <= 0)
-    invalid_sale = d["sale_price"].notna() & (d["sale_price"] <= 0)
+    # Bad base price: null or <= 0
+    invalid_base = d["price"].isna() | (d["price"] <= 0)
+
+    # Bad sale price: explicitly provided (non-null, non-zero) but negative.
+    # Zero means "no sale price set" — not flagged here.
+    invalid_sale = d["sale_price"].notna() & (d["sale_price"] < 0)
+
     invalid_price = invalid_base | invalid_sale
 
-    valid_prices    = (d["price"] > 0) & d["sale_price"].notna() & (d["sale_price"] > 0)
+    # Extreme discount only when both prices are valid and positive
+    valid_both      = (d["price"] > 0) & d["sale_price"].notna() & (d["sale_price"] > 0)
     discount_pct    = 1 - (d["sale_price"] / d["price"])
-    extreme_discount = valid_prices & (discount_pct > 0.95)
+    extreme_discount = valid_both & (discount_pct > 0.95)
 
     flagged = d[invalid_price | extreme_discount].copy()
 
     if not flagged.empty:
         def build_comment(row):
-            p, sp = row["price"], row["sale_price"]
-            if pd.isna(p) or p <= 0 or (pd.notna(sp) and sp <= 0):
-                return f"Invalid price detected (Price: {p}, Sale: {sp})"
-            return f"Extreme discount > 95% (Price: {p}, Sale: {sp})"
+            p_usd  = row["price"]
+            sp_usd = row["sale_price"]
+            # Convert to local for display
+            p_loc  = p_usd * rate  if pd.notna(p_usd)  else None
+            sp_loc = sp_usd * rate if pd.notna(sp_usd) else None
+
+            if pd.isna(p_usd) or p_usd <= 0:
+                return (
+                    f"Invalid base price "
+                    f"(USD {p_usd} → {sym}{p_loc:,.0f} if converted)"
+                    if p_loc is not None
+                    else f"Missing/zero base price (GLOBAL_PRICE: {p_usd})"
+                )
+            if pd.notna(sp_usd) and sp_usd < 0:
+                return (
+                    f"Negative sale price "
+                    f"(USD {sp_usd} → {sym}{sp_loc:,.0f})"
+                )
+            pct = (1 - sp_usd / p_usd) * 100
+            return (
+                f"Extreme discount {pct:.1f}% "
+                f"(Price: USD {p_usd} / {sym}{p_loc:,.0f} → "
+                f"Sale: USD {sp_usd} / {sym}{sp_loc:,.0f})"
+            )
 
         flagged["Comment_Detail"] = flagged.apply(build_comment, axis=1)
 
@@ -212,24 +287,24 @@ def check_wrong_price(data: pd.DataFrame) -> pd.DataFrame:
 
 # ---------------------------------------------------------------------------
 # VALIDATION 2 — Category Max Price Exceeded
-# Reads per-category per-country local-currency caps from category_map.xlsx.
+# Upload prices are in USD → convert to local currency before comparing
+# against the local-currency caps stored in category_map.xlsx.
 # ---------------------------------------------------------------------------
 def check_category_max_price(
     data: pd.DataFrame,
-    max_price_map: dict,          # kept for signature compatibility (ignored)
+    max_price_map: dict,          # legacy USD dict — still used as fallback
     code_to_path: dict = None,
     country_code: str = "KE",
     xlsx_path: str = None,
 ) -> pd.DataFrame:
     """
-    Flags products whose price exceeds the per-category maximum for the
-    given country (local currency), sourced from category_map.xlsx.
+    Flags products whose price (converted from USD to local currency) exceeds
+    the per-category cap for the given country.
 
     Parameters
     ----------
-    data          : product DataFrame
-    max_price_map : legacy USD dict — kept so callers don't need to change;
-                    used only as fallback when the xlsx is unavailable
+    data          : product DataFrame (prices in USD)
+    max_price_map : legacy USD fallback caps (converted to local at runtime)
     code_to_path  : dict mapping category_code str → full category path str
     country_code  : two-letter country code, e.g. "KE", "NG", "GH"
     xlsx_path     : override path to category_map.xlsx (default: auto-resolve)
@@ -244,39 +319,42 @@ def check_category_max_price(
     _xlsx = xlsx_path or CATEGORY_MAP_XLSX
     price_map = _load_category_price_map(_xlsx)
 
+    # --- Hoist all per-country lookups outside the row loop ---
+    rate = _get_usd_rate(country_code)
+    sym  = _get_symbol(country_code)
+
     d = data.copy()
-    d["price"]      = pd.to_numeric(d["GLOBAL_PRICE"],      errors="coerce").fillna(0)
-    d["sale_price"] = pd.to_numeric(d["GLOBAL_SALE_PRICE"], errors="coerce").fillna(0)
-    d["max_listed_price"] = d[["price", "sale_price"]].max(axis=1)
+    # Parse USD prices, fill NaN with 0 so max() works cleanly
+    d["price_usd"]      = pd.to_numeric(d["GLOBAL_PRICE"],      errors="coerce").fillna(0)
+    d["sale_price_usd"] = pd.to_numeric(d["GLOBAL_SALE_PRICE"], errors="coerce").fillna(0)
+
+    # Convert to local currency for comparison against local-currency caps
+    d["price_local"]      = d["price_usd"]      * rate
+    d["sale_price_local"] = d["sale_price_usd"] * rate
+
+    # Use the higher of the two local prices as the "listed price" to check
+    d["max_listed_local"] = d[["price_local", "sale_price_local"]].max(axis=1)
 
     flagged_indices = []
     comment_map     = {}
 
     for idx, row in d.iterrows():
-        listed_price = row["max_listed_price"]
-        if listed_price <= 0:
+        listed_local = row["max_listed_local"]
+        if listed_local <= 0:
             continue
 
         cat_code = str(row.get("CATEGORY_CODE", "")).strip().split(".")[0]
-        cap, cap_source = _resolve_price_cap(
+        cap_local, cap_source = _resolve_price_cap(
             cat_code, country_code, price_map, code_to_path, max_price_map
         )
 
-        if listed_price > cap:
+        if listed_local > cap_local:
             flagged_indices.append(idx)
-            # Determine local currency symbol for readable comment
-            from constants import COUNTRY_CURRENCY
-            _cc_map = {v["code"][:2]: v["symbol"] for k, v in COUNTRY_CURRENCY.items()}
-            # match by country code via COUNTRY_CONFIG equivalent
-            _country_name = {
-                "KE": "Kenya", "UG": "Uganda", "NG": "Nigeria",
-                "GH": "Ghana",  "MA": "Morocco",
-            }.get(country_code, country_code)
-            from constants import COUNTRY_CURRENCY as _CCY
-            _sym = _CCY.get(_country_name, {}).get("symbol", "")
+            # Original USD price for context
+            usd_price = row["price_usd"] if row["price_usd"] >= row["sale_price_usd"] else row["sale_price_usd"]
             comment_map[idx] = (
-                f"Price ({_sym}{listed_price:,.0f}) exceeds max for this category "
-                f"({_sym}{cap:,.0f}) [{cap_source}]"
+                f"Price (USD {usd_price:,.2f} → {sym}{listed_local:,.0f}) "
+                f"exceeds category max ({sym}{cap_local:,.0f}) [{cap_source}]"
             )
 
     if not flagged_indices:
@@ -286,51 +364,59 @@ def check_category_max_price(
     result["Comment_Detail"] = result.index.map(comment_map)
     return (
         result
-        .drop(columns=["price", "sale_price", "max_listed_price"], errors="ignore")
+        .drop(columns=["price_usd", "sale_price_usd", "price_local",
+                        "sale_price_local", "max_listed_local"], errors="ignore")
         .drop_duplicates(subset=["PRODUCT_SET_SID"])
     )
 
 
 # ---------------------------------------------------------------------------
-# VALIDATION 3 — Suspicious Discount (>50 %)
+# VALIDATION 3 — Suspicious Discount (> 50 %, up to 95 %)
+# Discounts > 95 % are handled exclusively by check_wrong_price.
 # ---------------------------------------------------------------------------
-def check_suspicious_discount(data: pd.DataFrame) -> pd.DataFrame:
+def check_suspicious_discount(data: pd.DataFrame, country_code: str = "KE") -> pd.DataFrame:
     """
     Flags products where the sale price is more than 50 % below the regular
-    price.  Both GLOBAL_PRICE and GLOBAL_SALE_PRICE must be present and
-    positive for the check to apply.
+    price.  The 50–95 % window is checked here; > 95 % belongs to Wrong Price.
 
-    A discount of exactly 50 % is acceptable; only strictly > 50 % is flagged.
-    Products with discounts > 95 % are already handled by check_wrong_price,
-    but we flag them here too so the seller gets a clearer message.
+    Input prices are in USD; they are converted to local currency for the
+    comment string so QC agents see familiar figures.
     """
     if not {"GLOBAL_PRICE", "GLOBAL_SALE_PRICE"}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
+
+    rate = _get_usd_rate(country_code)
+    sym  = _get_symbol(country_code)
 
     d = data.copy()
     d["price"]      = pd.to_numeric(d["GLOBAL_PRICE"],      errors="coerce")
     d["sale_price"] = pd.to_numeric(d["GLOBAL_SALE_PRICE"], errors="coerce")
 
-    # Only compare rows where both prices are valid and positive
+    # Both prices must be valid, positive, and sale must actually be lower
     valid = (
         d["price"].notna()      & (d["price"]      > 0) &
         d["sale_price"].notna() & (d["sale_price"] > 0) &
-        (d["sale_price"] < d["price"])   # sale must actually be lower
+        (d["sale_price"] < d["price"])
     )
 
     discount_pct = 1 - (d["sale_price"] / d["price"])
-    flagged_mask = valid & (discount_pct > 0.50)
+
+    # Only the 50–95 % window — > 95 % is Wrong Price's responsibility
+    flagged_mask = valid & (discount_pct > 0.50) & (discount_pct <= 0.95)
 
     flagged = d[flagged_mask].copy()
 
     if not flagged.empty:
         def build_comment(row):
-            p   = row["price"]
-            sp  = row["sale_price"]
-            pct = (1 - sp / p) * 100
+            p_usd  = row["price"]
+            sp_usd = row["sale_price"]
+            pct    = (1 - sp_usd / p_usd) * 100
+            p_loc  = p_usd  * rate
+            sp_loc = sp_usd * rate
             return (
                 f"Suspicious discount of {pct:.1f}% "
-                f"(Regular: {p:,.2f} → Sale: {sp:,.2f})"
+                f"(Regular: USD {p_usd:,.2f} / {sym}{p_loc:,.0f} → "
+                f"Sale: USD {sp_usd:,.2f} / {sym}{sp_loc:,.0f})"
             )
 
         flagged["Comment_Detail"] = flagged.apply(build_comment, axis=1)
