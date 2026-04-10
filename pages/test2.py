@@ -170,6 +170,11 @@ FLAG_RELEVANT_COLS = {
     "Wrong Price": ["GLOBAL_PRICE", "GLOBAL_SALE_PRICE"],
     "Category Max Price Exceeded": ["CATEGORY", "GLOBAL_PRICE", "GLOBAL_SALE_PRICE", "CATEGORY_CODE"],
     "Poor images": ["MAIN_IMAGE"],
+    "Image Stretched": ["MAIN_IMAGE"],
+    "Image Blurry": ["MAIN_IMAGE"],
+    "Image Mismatch": ["MAIN_IMAGE"],
+    "Image Infringing": ["MAIN_IMAGE"],
+    "Image Too Many things displayed": ["MAIN_IMAGE"],
     "NG - Gift Card Seller":  ["CATEGORY_CODE", "SELLER_NAME"],
     "NG - Books Seller":      ["NAME", "SELLER_NAME"],
     "NG - TV Brand Seller":   ["CATEGORY_CODE", "BRAND", "SELLER_NAME"],
@@ -209,16 +214,17 @@ def run_cached_check(func, cache_path, ckwargs):
 # STANDARD VALIDATION LOGIC
 # -------------------------------------------------
 
-def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
+def check_image_stretched(data: pd.DataFrame) -> pd.DataFrame:
+    """Flags images with tall (ratio > 1.5) or wide (ratio < 0.6) aspect ratios."""
     if 'MAIN_IMAGE' not in data.columns:
         return pd.DataFrame(columns=data.columns)
-        
+
     target = data[data['MAIN_IMAGE'].astype(str).str.startswith('http')].copy()
     if target.empty:
         return pd.DataFrame(columns=data.columns)
 
     unique_urls = target['MAIN_IMAGE'].unique()
-    
+
     def fetch_image_ratio(url):
         try:
             r = requests.get(url, stream=True, timeout=3)
@@ -228,9 +234,9 @@ def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
                 if w > 0:
                     ratio = h / w
                     if ratio > 1.5:
-                        return url, f"Tall Aspect Ratio ({w}x{h})"
+                        return url, f"Image Stretched - Tall Aspect Ratio ({w}x{h})"
                     elif ratio < 0.6:
-                        return url, f"Wide Aspect Ratio ({w}x{h})"
+                        return url, f"Image Stretched - Wide Aspect Ratio ({w}x{h})"
         except Exception:
             pass
         return url, None
@@ -249,8 +255,110 @@ def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
     mask = target['MAIN_IMAGE'].isin(url_issues.keys())
     flagged = target[mask].copy()
     flagged['Comment_Detail'] = flagged['MAIN_IMAGE'].map(url_issues)
-    
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
+
+
+def check_image_blurry(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flags images based on resolution:
+      - <= 200x200 px  → rejected (Comment_Detail set, Status driven by validation runner)
+      - > 200x200 and < 300x300 px → commentary only (Status stays Approved, just a note)
+    Returns ONLY rows that should be REJECTED (i.e. <= 200x200).
+    Rows in the 201–299 range are stored in session state as commentary but NOT rejected.
+    """
+    if 'MAIN_IMAGE' not in data.columns:
+        return pd.DataFrame(columns=data.columns)
+
+    target = data[data['MAIN_IMAGE'].astype(str).str.startswith('http')].copy()
+    if target.empty:
+        return pd.DataFrame(columns=data.columns)
+
+    unique_urls = target['MAIN_IMAGE'].unique()
+
+    def fetch_image_size(url):
+        try:
+            r = requests.get(url, stream=True, timeout=3)
+            if r.status_code == 200:
+                img = Image.open(r.raw)
+                w, h = img.size
+                return url, w, h
+        except Exception:
+            pass
+        return url, None, None
+
+    url_data = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [executor.submit(fetch_image_size, url) for url in unique_urls]
+        for future in concurrent.futures.as_completed(futures):
+            url, w, h = future.result()
+            if w is not None:
+                url_data[url] = (w, h)
+
+    if not url_data:
+        return pd.DataFrame(columns=data.columns)
+
+    # Collect commentary-only rows (201–299 range) into session state
+    commentary_map = {}
+    reject_map = {}
+    for url, (w, h) in url_data.items():
+        if w <= 200 and h <= 200:
+            reject_map[url] = f"Image too small/blurry ({w}x{h}px) — below 200x200"
+        elif w < 300 and h < 300:
+            commentary_map[url] = f"Image resolution low ({w}x{h}px) — consider upgrading"
+
+    # Store commentary in session state so the UI can surface it without rejection
+    try:
+        existing = st.session_state.get('_image_blurry_commentary', {})
+        sid_to_comment = {}
+        for row in target.itertuples():
+            url = str(getattr(row, 'MAIN_IMAGE', ''))
+            sid = str(getattr(row, 'PRODUCT_SET_SID', ''))
+            if url in commentary_map:
+                sid_to_comment[sid] = commentary_map[url]
+        existing.update(sid_to_comment)
+        st.session_state['_image_blurry_commentary'] = existing
+    except Exception:
+        pass
+
+    if not reject_map:
+        return pd.DataFrame(columns=data.columns)
+
+    mask = target['MAIN_IMAGE'].isin(reject_map.keys())
+    flagged = target[mask].copy()
+    flagged['Comment_Detail'] = flagged['MAIN_IMAGE'].map(reject_map)
+    return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
+
+
+def check_image_mismatch(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Placeholder validation for Image Mismatch.
+    This flag is intended for manual use via the image grid reject dropdown.
+    The check returns an empty DataFrame (no automatic flagging) but registers
+    the validation so it appears in the flags_mapping lookup and export.
+    """
+    return pd.DataFrame(columns=data.columns)
+
+
+def check_image_infringing(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Placeholder validation for Image Infringing.
+    This flag is intended for manual use via the image grid reject dropdown.
+    """
+    return pd.DataFrame(columns=data.columns)
+
+
+def check_image_too_many_things(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Placeholder validation for Image Too Many Things Displayed.
+    This flag is intended for manual use via the image grid reject dropdown.
+    """
+    return pd.DataFrame(columns=data.columns)
+
+
+# Keep the old name as an alias so existing cache/registry references don't break
+def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
+    """Backwards-compatibility alias → delegates to check_image_stretched."""
+    return check_image_stretched(data)
 
 def check_miscellaneous_category(data: pd.DataFrame, categories_list: list = None, compiled_rules: dict = None, cat_path_to_code: dict = None, code_to_path: dict = None) -> pd.DataFrame:
     if not categories_list or not code_to_path:
@@ -835,6 +943,11 @@ if _reg is not None:
         'check_incomplete_smartphone_name':  check_incomplete_smartphone_name,
         'check_duplicate_products':          check_duplicate_products,
         'check_poor_images_aspect_ratio':    check_poor_images_aspect_ratio,
+        'check_image_stretched':             check_image_stretched,
+        'check_image_blurry':               check_image_blurry,
+        'check_image_mismatch':             check_image_mismatch,
+        'check_image_infringing':           check_image_infringing,
+        'check_image_too_many_things':      check_image_too_many_things,
         'check_miscellaneous_category':      check_miscellaneous_category,
         'check_wrong_price':                 check_wrong_price,
         'check_category_max_price':          check_category_max_price,
@@ -897,7 +1010,11 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         ("Missing Weight/Volume", check_weight_volume_in_name, {'weight_category_codes': support_files.get('weight_category_codes', [])}),
         ("Incomplete Smartphone Name", check_incomplete_smartphone_name, {'smartphone_category_codes': support_files.get('smartphone_category_codes', [])}),
         ("Duplicate product", check_duplicate_products, {'exempt_categories': support_files.get('duplicate_exempt_codes', []), 'known_colors': support_files.get('colors', [])}),
-        ("Poor images", check_poor_images_aspect_ratio, {}),
+        ("Image Stretched", check_image_stretched, {}),
+        ("Image Blurry", check_image_blurry, {}),
+        ("Image Mismatch", check_image_mismatch, {}),
+        ("Image Infringing", check_image_infringing, {}),
+        ("Image Too Many things displayed", check_image_too_many_things, {}),
         ("Wrong Price", check_wrong_price, {}),
         ("Category Max Price Exceeded", check_category_max_price, {
             'max_price_map': CATEGORY_MAX_PRICES_USD,
@@ -1421,7 +1538,15 @@ if _bridge_val:
                         _code = "1000007 - Other Reason"
                         _cmt = _rkey.split(": ", 1)[1] # Extract the comment they typed
                     else:
-                        _flag = REASON_MAP.get(_rkey, "Other Reason (Custom)")
+                        # Inline fallback for new image flags not yet in constants.REASON_MAP
+                        _IMAGE_FLAG_FALLBACK = {
+                            "REJECT_IMG_STRETCHED":  "Image Stretched",
+                            "REJECT_IMG_BLURRY":     "Image Blurry",
+                            "REJECT_IMG_MISMATCH":   "Image Mismatch",
+                            "REJECT_IMG_INFRINGING": "Image Infringing",
+                            "REJECT_IMG_TOO_MANY":   "Image Too Many things displayed",
+                        }
+                        _flag = REASON_MAP.get(_rkey) or _IMAGE_FLAG_FALLBACK.get(_rkey, "Other Reason (Custom)")
                         _rinfo = support_files["flags_mapping"].get(_flag, {'reason': "1000007 - Other Reason", 'en': "Manual rejection"})
                         _code = _rinfo['reason']
                         _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
@@ -1488,6 +1613,32 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
                 st.metric(label=label, value=value)
 
     st.subheader(f":material/flag: {_t('flags_breakdown')}", anchor=False)
+
+    # ── Near-blurry image commentary (201–299px) — informational, not rejected ──
+    _blurry_commentary = st.session_state.get('_image_blurry_commentary', {})
+    _commentary_in_scope = {
+        sid: comment for sid, comment in _blurry_commentary.items()
+        if fr[fr['ProductSetSid'] == sid]['Status'].eq('Approved').any()
+    }
+    if _commentary_in_scope:
+        with st.expander(f":material/info: Low Resolution Advisory — {len(_commentary_in_scope)} product(s) (not rejected)", expanded=False):
+            st.info(
+                "These products have images between 201–299px. They have **not** been rejected, "
+                "but image quality could be improved. Products ≤200px are automatically rejected as **Image Blurry**.",
+                icon=":material/photo_camera:"
+            )
+            _advisory_rows = []
+            for _sid, _comment in _commentary_in_scope.items():
+                _row = data[data['PRODUCT_SET_SID'] == _sid]
+                if not _row.empty:
+                    _advisory_rows.append({
+                        'PRODUCT_SET_SID': _sid,
+                        'NAME': _row.iloc[0].get('NAME', ''),
+                        'SELLER_NAME': _row.iloc[0].get('SELLER_NAME', ''),
+                        'Resolution Note': _comment,
+                    })
+            if _advisory_rows:
+                st.dataframe(pd.DataFrame(_advisory_rows), hide_index=True, use_container_width=True)
     if not rej_df.empty:
         if not st.session_state.flags_expanded_initialized and not rej_df.empty:
             top_flag = rej_df['FLAG'].value_counts().index[0]
