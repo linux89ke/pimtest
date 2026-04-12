@@ -719,9 +719,15 @@ function sendMsg(type, payload) {{
 
     var msg = JSON.stringify({{action: type, payload: payload}});
     var nativeInputValueSetter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
-    
+
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+
+    // Streamlit only processes the bridge value when Enter is submitted —
+    // the input event alone updates React state but does not trigger a rerun.
+    bridge.focus({{preventScroll: true}});
+    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
     bridge.blur();
 
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
