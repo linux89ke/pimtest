@@ -1228,12 +1228,13 @@ rtl_css = """
 st.markdown(f"""
     <style>
         {rtl_css}
-        div[data-testid="stTextInput"]:has(input[placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE"]) {{
+        div[data-testid="stTextInput"]:has(input[placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE"]),
+        div[data-testid="stTextInput"]:has(input[placeholder="COUNTRY_BRIDGE_DO_NOT_USE"]) {
             position: absolute !important; width: 1px !important; height: 1px !important;
             padding: 0 !important; margin: -1px !important; overflow: hidden !important;
             clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important;
             border: 0 !important; opacity: 0 !important; z-index: -9999 !important;
-        }}
+        }
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
         :root {{
             --jumia-orange: {JUMIA_COLORS['primary_orange']};
@@ -1335,24 +1336,161 @@ st.header(f":material/upload_file: {_t('upload_files')}", anchor=False)
 
 current_country = st.session_state.get('selected_country', get_default_country())
 
-_COUNTRY_LABELS = {
-    "Kenya":   "🇰🇪 Kenya",
-    "Uganda":  "🇺🇬 Uganda",
-    "Nigeria": "🇳🇬 Nigeria",
-    "Ghana":   "🇬🇭 Ghana",
-    "Morocco": "🇲🇦 Morocco",
+# ── Flag SVG definitions (inline, no external files needed) ───────────────────
+_FLAG_SVGS = {
+    "Kenya": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path fill="#006600" d="M0 0h512v512H0z"/>
+  <path fill="#fff" d="M0 170.7h512v170.7H0z"/>
+  <path fill="#000" d="M0 192h512v128H0z"/>
+  <path fill="#c8102e" d="M224 256 80 160v192zm64 0 144-96v192z"/>
+  <ellipse cx="256" cy="256" rx="30" ry="50" fill="#fff" stroke="#c8102e" stroke-width="8"/>
+  <ellipse cx="256" cy="256" rx="18" ry="36" fill="#c8102e"/>
+</svg>""",
+    "Uganda": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path fill="#000" d="M0 0h512v85.3H0z"/>
+  <path fill="#fcdc04" d="M0 85.3h512v85.4H0z"/>
+  <path fill="#c8102e" d="M0 170.7h512V256H0z"/>
+  <path fill="#000" d="M0 256h512v85.3H0z"/>
+  <path fill="#fcdc04" d="M0 341.3h512v85.4H0z"/>
+  <path fill="#c8102e" d="M0 426.7h512V512H0z"/>
+  <circle cx="256" cy="256" r="72" fill="#fff"/>
+  <circle cx="256" cy="256" r="60" fill="#c8102e"/>
+  <path fill="#000" d="M256 208c-13 0-22 8-22 18s6 14 14 20c-10 4-20 14-20 30h56c0-16-10-26-20-30 8-6 14-10 14-20s-9-18-22-18z"/>
+</svg>""",
+    "Nigeria": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path fill="#008751" d="M0 0h170.7v512H0z"/>
+  <path fill="#fff" d="M170.7 0h170.6v512H170.7z"/>
+  <path fill="#008751" d="M341.3 0H512v512H341.3z"/>
+</svg>""",
+    "Ghana": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path fill="#006b3f" d="M0 0h512v170.7H0z"/>
+  <path fill="#fcd116" d="M0 170.7h512v170.6H0z"/>
+  <path fill="#ce1126" d="M0 341.3h512V512H0z"/>
+  <path fill="#000" d="M256 183l18 55h58l-47 34 18 55-47-34-47 34 18-55-47-34h58z"/>
+</svg>""",
+    "Morocco": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path fill="#c1272d" d="M512 0H0v512h512z"/>
+  <path fill="none" stroke="#006233" stroke-width="12.5" d="m256 191.4-38 116.8 99.4-72.2H194.6l99.3 72.2z"/>
+</svg>""",
 }
-_country_keys   = list(_COUNTRY_LABELS.keys())
-_country_labels = list(_COUNTRY_LABELS.values())
 
-_country_label_choice = st.segmented_control(
-    "Country",
-    _country_labels,
-    default=_COUNTRY_LABELS.get(current_country, _country_labels[0]),
-    key="country_selector",
+def _svg_to_b64(svg_str: str) -> str:
+    return "data:image/svg+xml;base64," + base64.b64encode(svg_str.strip().encode()).decode()
+
+# Load from local SVG files if present, fall back to inline definitions
+_FLAG_DIR = Path("flags")  # put ke.svg, ug.svg, ng.svg, gh.svg, ma.svg here
+_FILE_MAP = {"Kenya":"ke","Uganda":"ug","Nigeria":"ng","Ghana":"gh","Morocco":"ma"}
+_flag_b64 = {}
+for _cname, _code in _FILE_MAP.items():
+    _svg_path = _FLAG_DIR / f"{_code}.svg"
+    if _svg_path.exists():
+        try:
+            _flag_b64[_cname] = _svg_to_b64(_svg_path.read_text())
+        except Exception:
+            _flag_b64[_cname] = _svg_to_b64(_FLAG_SVGS[_cname])
+    else:
+        _flag_b64[_cname] = _svg_to_b64(_FLAG_SVGS[_cname])
+
+_countries = ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"]
+_O = JUMIA_COLORS["primary_orange"]
+
+_flag_buttons_html = "".join([
+    f"""<button
+        onclick="selectCountry('{c}')"
+        id="btn-{c}"
+        class="flag-btn {'active' if c == current_country else ''}"
+        title="{c}">
+      <img src="{_flag_b64[c]}" alt="{c} flag" class="flag-img">
+      <span class="flag-label">{c}</span>
+    </button>"""
+    for c in _countries
+])
+
+_flag_selector_html = f"""
+<style>
+  .flag-bar {{
+    display: flex; gap: 8px; align-items: center;
+    padding: 6px 0; flex-wrap: wrap;
+  }}
+  .flag-btn {{
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 14px 7px 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    font-family: sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #444;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+    outline: none;
+  }}
+  .flag-btn:hover {{
+    border-color: {_O};
+    background: #fff8f2;
+  }}
+  .flag-btn.active {{
+    border-color: {_O};
+    background: #fff3e6;
+    color: {_O};
+    box-shadow: 0 0 0 3px rgba(255,136,0,.15);
+  }}
+  .flag-img {{
+    width: 26px; height: 20px;
+    border-radius: 3px;
+    object-fit: cover;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    flex-shrink: 0;
+  }}
+  .flag-label {{ white-space: nowrap; }}
+</style>
+<div class="flag-bar" id="flag-bar">
+  {_flag_buttons_html}
+</div>
+<script>
+function selectCountry(name) {{
+  document.querySelectorAll('.flag-btn').forEach(b => b.classList.remove('active'));
+  var btn = document.getElementById('btn-' + name);
+  if (btn) btn.classList.add('active');
+
+  // Write to Streamlit bridge
+  try {{
+    var par = window.parent;
+    var inputs = par.document.querySelectorAll('input[type="text"]');
+    var bridge = null;
+    for (var i = 0; i < inputs.length; i++) {{
+      if (inputs[i].placeholder === 'COUNTRY_BRIDGE_DO_NOT_USE') {{
+        bridge = inputs[i]; break;
+      }}
+    }}
+    if (!bridge) return;
+    var setter = Object.getOwnPropertyDescriptor(par.HTMLInputElement.prototype, 'value').set;
+    setter.call(bridge, name);
+    bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
+    bridge.focus({{preventScroll: true}});
+    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
+    bridge.blur();
+  }} catch(e) {{ console.error('country bridge error', e); }}
+}}
+</script>
+"""
+
+components.html(_flag_selector_html, height=70, scrolling=False)
+
+# Bridge input — hidden, receives country name from the HTML selector
+_country_bridge = st.text_input(
+    "country_bridge",
+    value="",
+    placeholder="COUNTRY_BRIDGE_DO_NOT_USE",
+    key=f"country_bridge_{st.session_state.get('country_bridge_counter', 0)}",
+    label_visibility="collapsed",
 )
-# Map the label back to the plain country name used everywhere else
-country_choice = _country_keys[_country_labels.index(_country_label_choice)] if _country_label_choice else None
+if 'country_bridge_counter' not in st.session_state:
+    st.session_state.country_bridge_counter = 0
+
+country_choice = _country_bridge.strip() if _country_bridge.strip() in _countries else None
 
 if country_choice and country_choice != current_country:
     st.session_state.selected_country = country_choice
@@ -1363,7 +1501,9 @@ if country_choice and country_choice != current_country:
     st.session_state.display_df_cache = {}
     st.session_state.flags_expanded_initialized = False
     st.session_state.ui_lang = "fr" if country_choice == "Morocco" else "en"
+    st.session_state.country_bridge_counter += 1  # reset bridge so it doesn't re-fire
     st.toast(f"Switching to {country_choice}…", icon=":material/public:")
+    st.rerun()
 
 country_validator = CountryValidator(st.session_state.selected_country)
 
