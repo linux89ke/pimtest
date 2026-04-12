@@ -1334,7 +1334,25 @@ with st.sidebar:
 st.header(f":material/upload_file: {_t('upload_files')}", anchor=False)
 
 current_country = st.session_state.get('selected_country', get_default_country())
-country_choice = st.segmented_control("Country", ["Kenya", "Uganda", "Nigeria", "Ghana", "Morocco"], default=current_country, key="country_selector")
+
+_COUNTRY_LABELS = {
+    "Kenya":   "🇰🇪 Kenya",
+    "Uganda":  "🇺🇬 Uganda",
+    "Nigeria": "🇳🇬 Nigeria",
+    "Ghana":   "🇬🇭 Ghana",
+    "Morocco": "🇲🇦 Morocco",
+}
+_country_keys   = list(_COUNTRY_LABELS.keys())
+_country_labels = list(_COUNTRY_LABELS.values())
+
+_country_label_choice = st.segmented_control(
+    "Country",
+    _country_labels,
+    default=_COUNTRY_LABELS.get(current_country, _country_labels[0]),
+    key="country_selector",
+)
+# Map the label back to the plain country name used everywhere else
+country_choice = _country_keys[_country_labels.index(_country_label_choice)] if _country_label_choice else None
 
 if country_choice and country_choice != current_country:
     st.session_state.selected_country = country_choice
@@ -1349,12 +1367,45 @@ if country_choice and country_choice != current_country:
 
 country_validator = CountryValidator(st.session_state.selected_country)
 
+# ── Clear-all shortcut ────────────────────────────────────────────────────────
+# Cycling the key forces Streamlit to unmount + remount the file_uploader,
+# which is the only reliable way to clear its internal file list.
+if 'uploader_key' not in st.session_state:
+    st.session_state.uploader_key = 0
+
+_has_files = bool(st.session_state.get("cached_uploaded_files"))
+if _has_files:
+    if st.button(
+        "✕ Clear all files",
+        key="clear_files_btn",
+        type="secondary",
+        help="Remove all uploaded files and reset the tool",
+    ):
+        st.session_state.cached_uploaded_files = []
+        st.session_state.final_report = pd.DataFrame()
+        st.session_state.all_data_map = pd.DataFrame()
+        st.session_state.file_mode = None
+        st.session_state.exports_cache = {}
+        st.session_state.display_df_cache = {}
+        st.session_state.last_processed_files = "empty"
+        st.session_state.intersection_sids = set()
+        st.session_state.intersection_count = 0
+        st.session_state.grid_page = 0
+        st.session_state.flags_expanded_initialized = False
+        st.session_state.pop("_grid_review_data_cache", None)
+        st.session_state.pop("_grid_warm_urls", None)
+        _dead_keys = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_", "_sf_"))]
+        for k in _dead_keys:
+            del st.session_state[k]
+        st.session_state.uploader_key += 1  # remounts the uploader, clearing its UI
+        st.rerun()
+
 uploaded_files = st.file_uploader(
-    "Upload files",                                # non-empty label
+    "Upload files",
     type=['csv', 'xlsx'],
     accept_multiple_files=True,
-    key="daily_files",
-    label_visibility="collapsed"             # hides it visually, same look as before
+    key=f"daily_files_{st.session_state.uploader_key}",
+    label_visibility="collapsed"
 )
 
 if uploaded_files:
@@ -1367,6 +1418,29 @@ elif uploaded_files is not None and len(uploaded_files) == 0:
     st.session_state.exports_cache = {}
     st.session_state.display_df_cache = {}
     st.session_state.last_processed_files = "empty"
+
+# ── Large-file guard: quick row-count estimate from cached bytes ──────────────
+_large_file_threshold = 5_000
+_total_estimated_rows = 0
+for _fc in st.session_state.get("cached_uploaded_files", []):
+    try:
+        _peek = BytesIO(_fc["bytes"])
+        if _fc["name"].endswith(".xlsx"):
+            _total_estimated_rows += pd.read_excel(_peek, engine="openpyxl", nrows=1, dtype=str).shape[0]  # just check it opens
+            # Estimate from file size: ~500 bytes/row for xlsx
+            _total_estimated_rows += max(0, len(_fc["bytes"]) // 500 - 1)
+        else:
+            # CSV: count newlines for a fast estimate
+            _total_estimated_rows += _fc["bytes"].count(b"\n")
+    except Exception:
+        pass
+
+if _total_estimated_rows > _large_file_threshold:
+    st.info(
+        f"📂 **Large file detected** (~{_total_estimated_rows:,} rows estimated) — "
+        "validation may take 30–60 seconds. Image checks run in parallel to keep things fast.",
+        icon=":material/hourglass_top:",
+    )
 
 _files_for_processing = st.session_state.get("cached_uploaded_files", [])
 process_signature = str(sorted([f["name"] + hashlib.md5(f["bytes"]).hexdigest() for f in _files_for_processing])) + f"_{country_validator.code}" if _files_for_processing else "empty"
@@ -1403,106 +1477,133 @@ if st.session_state.get('last_processed_files') != process_signature:
             st.toast("Loaded from cache", icon=":material/bolt:")
         else:
             try:
-                all_dfs = []
-                file_sids_sets = []
-                detected_modes = []
-                for uf in _files_for_processing:
-                    _buf = BytesIO(uf["bytes"])
-                    if uf["name"].endswith('.xlsx'): raw_data = pd.read_excel(_buf, engine='openpyxl', dtype=str)
-                    else: raw_data = _detect_and_read_csv(_buf)
-                    raw_data = _repair_mojibake(raw_data)
-                    detected_modes.append(detect_file_type(raw_data) if 'detect_file_type' in globals() else 'pre_qc')
-                    all_dfs.append(raw_data)
+                with st.status("⚙️ Processing files…", expanded=True) as _status:
+                    # ── Step 1: Read files ───────────────────────────────────
+                    st.write("📂 Reading uploaded file(s)…")
+                    all_dfs = []
+                    file_sids_sets = []
+                    detected_modes = []
+                    for uf in _files_for_processing:
+                        _buf = BytesIO(uf["bytes"])
+                        if uf["name"].endswith('.xlsx'): raw_data = pd.read_excel(_buf, engine='openpyxl', dtype=str)
+                        else: raw_data = _detect_and_read_csv(_buf)
+                        raw_data = _repair_mojibake(raw_data)
+                        detected_modes.append(detect_file_type(raw_data) if 'detect_file_type' in globals() else 'pre_qc')
+                        all_dfs.append(raw_data)
 
-                file_mode = detected_modes[0] if detected_modes else 'pre_qc'
-                st.session_state.file_mode = file_mode
+                    file_mode = detected_modes[0] if detected_modes else 'pre_qc'
+                    st.session_state.file_mode = file_mode
 
-                if file_mode == 'post_qc':
-                    st.info("Post-QC file detected. Please use the Post-QC page.", icon=":material/fact_check:")
-                    st.session_state.last_processed_files = process_signature
-                else:
-                    std_dfs = []
-                    for raw_data in all_dfs:
-                        std_data = standardize_input_data(raw_data)
-                        if 'PRODUCT_SET_SID' in std_data.columns:
-                            std_data['PRODUCT_SET_SID'] = std_data['PRODUCT_SET_SID'].astype(str).str.strip()
-                            file_sids_sets.append(set(std_data['PRODUCT_SET_SID'].unique()))
-                        std_dfs.append(std_data)
-                    
-                    merged_data = pd.concat(std_dfs, ignore_index=True)
-                    st.session_state.intersection_sids = set.intersection(*file_sids_sets) if len(file_sids_sets) > 1 else set()
-                    st.session_state.intersection_count = len(st.session_state.intersection_sids)
-                    data_prop = propagate_metadata(merged_data)
-                    is_valid, errors = validate_input_schema(data_prop)
-                    
-                    if is_valid:
-                        data_filtered, det_names = filter_by_country(data_prop, country_validator)
-                        if data_filtered.empty:
-                            st.error(f"No {country_validator.country} products found.", icon=":material/error:")
-                            st.stop()
-                        
-                        actual_counts = data_filtered.groupby('PRODUCT_SET_SID')['PRODUCT_SET_SID'].transform('count')
-                        if 'COUNT_VARIATIONS' in data_filtered.columns:
-                            file_counts = pd.to_numeric(data_filtered['COUNT_VARIATIONS'], errors='coerce').fillna(1)
-                            data_filtered['COUNT_VARIATIONS'] = actual_counts.combine(file_counts, max)
-                        else:
-                            data_filtered['COUNT_VARIATIONS'] = actual_counts
-                            
-                        data = data_filtered.drop_duplicates(subset=['PRODUCT_SET_SID'], keep='first')
-                        if '_IS_MULTI_COUNTRY' not in data.columns: data['_IS_MULTI_COUNTRY'] = False
-                        data_has_warranty = all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION'])
-                        for c in ['NAME', 'BRAND', 'COLOR', 'SELLER_NAME', 'CATEGORY_CODE', 'LIST_VARIATIONS']:
-                            if c in data.columns: data[c] = data[c].astype(str).fillna('')
-                        if 'COLOR_FAMILY' not in data.columns: data['COLOR_FAMILY'] = ""
-
-                        data_hash = df_hash(data) + country_validator.code
-                        final_report, _ = cached_validate_products(data_hash, data, support_files, country_validator.code, data_has_warranty)
-
-                        st.session_state.final_report = final_report
-                        st.session_state.all_data_map = data
+                    if file_mode == 'post_qc':
+                        _status.update(label="Post-QC file detected", state="complete", expanded=False)
+                        st.info("Post-QC file detected. Please use the Post-QC page.", icon=":material/fact_check:")
                         st.session_state.last_processed_files = process_signature
-
-                        save_df_parquet(data, f"{sig_hash}_data.parquet")
-                        save_df_parquet(final_report, f"{sig_hash}_report.parquet")
-
-                        # ── Pre-warm the visual review grid data while user reads results ──
-                        # Build and cache review_data + first-page image URLs now so the
-                        # modal opens instantly instead of computing on first click.
-                        try:
-                            from constants import GRID_COLS
-                            _fr = final_report
-                            _committed_sids = set()
-                            _valid_sids = _fr[_fr["Status"] == "Approved"]["ProductSetSid"].tolist()
-                            if "MAIN_IMAGE" not in data.columns:
-                                data["MAIN_IMAGE"] = ""
-                            _available_cols = [c for c in GRID_COLS if c in data.columns]
-                            if "CATEGORY_CODE" in data.columns and "CATEGORY_CODE" not in _available_cols:
-                                _available_cols.append("CATEGORY_CODE")
-                            _valid_df = _fr[_fr["Status"] == "Approved"][["ProductSetSid"]]
-                            _review_data = pd.merge(
-                                _valid_df, data[_available_cols],
-                                left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
-                            )
-                            _code_to_path = support_files.get("code_to_path", {})
-                            if _code_to_path and "CATEGORY_CODE" in _review_data.columns:
-                                _review_data = _review_data.copy()
-                                _review_data["CATEGORY"] = _review_data["CATEGORY_CODE"].apply(
-                                    lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ""
-                                )
-                            st.session_state["_grid_review_data_cache"] = _review_data
-                            # Pre-fetch URLs for first 2 pages at default 50 ipp
-                            _ipp = 50
-                            _warm_urls = set()
-                            for _url in _review_data.iloc[:_ipp * 2]["MAIN_IMAGE"].astype(str):
-                                _url = _url.strip().replace("http://", "https://", 1)
-                                if _url.startswith("https"):
-                                    _warm_urls.add(_url)
-                            st.session_state["_grid_warm_urls"] = list(_warm_urls)
-                        except Exception as _pw_err:
-                            logger.warning("Grid pre-warm failed: %s", _pw_err)
                     else:
-                        for e in errors: st.error(e)
-                        st.session_state.last_processed_files = "error"
+                        # ── Step 2: Standardise & merge ─────────────────────
+                        st.write("🔧 Standardising and merging data…")
+                        std_dfs = []
+                        for raw_data in all_dfs:
+                            std_data = standardize_input_data(raw_data)
+                            if 'PRODUCT_SET_SID' in std_data.columns:
+                                std_data['PRODUCT_SET_SID'] = std_data['PRODUCT_SET_SID'].astype(str).str.strip()
+                                file_sids_sets.append(set(std_data['PRODUCT_SET_SID'].unique()))
+                            std_dfs.append(std_data)
+                        
+                        merged_data = pd.concat(std_dfs, ignore_index=True)
+                        st.session_state.intersection_sids = set.intersection(*file_sids_sets) if len(file_sids_sets) > 1 else set()
+                        st.session_state.intersection_count = len(st.session_state.intersection_sids)
+
+                        # ── Step 3: Schema validation ────────────────────────
+                        st.write("✅ Validating file schema…")
+                        data_prop = propagate_metadata(merged_data)
+                        is_valid, errors = validate_input_schema(data_prop)
+                        
+                        if is_valid:
+                            data_filtered, det_names = filter_by_country(data_prop, country_validator)
+                            if data_filtered.empty:
+                                _status.update(label="No matching products found", state="error", expanded=True)
+                                st.error(f"No {country_validator.country} products found.", icon=":material/error:")
+                                st.stop()
+                            
+                            actual_counts = data_filtered.groupby('PRODUCT_SET_SID')['PRODUCT_SET_SID'].transform('count')
+                            if 'COUNT_VARIATIONS' in data_filtered.columns:
+                                file_counts = pd.to_numeric(data_filtered['COUNT_VARIATIONS'], errors='coerce').fillna(1)
+                                data_filtered['COUNT_VARIATIONS'] = actual_counts.combine(file_counts, max)
+                            else:
+                                data_filtered['COUNT_VARIATIONS'] = actual_counts
+                                
+                            data = data_filtered.drop_duplicates(subset=['PRODUCT_SET_SID'], keep='first')
+                            if '_IS_MULTI_COUNTRY' not in data.columns: data['_IS_MULTI_COUNTRY'] = False
+                            data_has_warranty = all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION'])
+                            for c in ['NAME', 'BRAND', 'COLOR', 'SELLER_NAME', 'CATEGORY_CODE', 'LIST_VARIATIONS']:
+                                if c in data.columns: data[c] = data[c].astype(str).fillna('')
+                            if 'COLOR_FAMILY' not in data.columns: data['COLOR_FAMILY'] = ""
+
+                            # ── Step 4: Run validators ───────────────────────
+                            st.write(f"🔍 Running validation rules on {len(data):,} products…")
+                            data_hash = df_hash(data) + country_validator.code
+                            final_report, _ = cached_validate_products(data_hash, data, support_files, country_validator.code, data_has_warranty)
+
+                            # ── Step 5: Image checks summary ─────────────────
+                            _img_flags = ["Poor images", "Image Stretched", "Image Blurry", "Image Mismatch"]
+                            _img_count = int(final_report[final_report['FLAG'].isin(_img_flags)].shape[0])
+                            if _img_count:
+                                st.write(f"🖼️ Image checks complete — {_img_count} product(s) flagged.")
+                            else:
+                                st.write("🖼️ Image checks complete — no image issues found.")
+
+                            # ── Step 6: Save & pre-warm ──────────────────────
+                            st.write("💾 Saving results and pre-warming review grid…")
+                            st.session_state.final_report = final_report
+                            st.session_state.all_data_map = data
+                            st.session_state.last_processed_files = process_signature
+
+                            save_df_parquet(data, f"{sig_hash}_data.parquet")
+                            save_df_parquet(final_report, f"{sig_hash}_report.parquet")
+
+                            try:
+                                from constants import GRID_COLS
+                                _fr = final_report
+                                _committed_sids = set()
+                                _valid_sids = _fr[_fr["Status"] == "Approved"]["ProductSetSid"].tolist()
+                                if "MAIN_IMAGE" not in data.columns:
+                                    data["MAIN_IMAGE"] = ""
+                                _available_cols = [c for c in GRID_COLS if c in data.columns]
+                                if "CATEGORY_CODE" in data.columns and "CATEGORY_CODE" not in _available_cols:
+                                    _available_cols.append("CATEGORY_CODE")
+                                _valid_df = _fr[_fr["Status"] == "Approved"][["ProductSetSid"]]
+                                _review_data = pd.merge(
+                                    _valid_df, data[_available_cols],
+                                    left_on="ProductSetSid", right_on="PRODUCT_SET_SID", how="left",
+                                )
+                                _code_to_path = support_files.get("code_to_path", {})
+                                if _code_to_path and "CATEGORY_CODE" in _review_data.columns:
+                                    _review_data = _review_data.copy()
+                                    _review_data["CATEGORY"] = _review_data["CATEGORY_CODE"].apply(
+                                        lambda c: _code_to_path.get(str(c).strip(), str(c)) if pd.notna(c) else ""
+                                    )
+                                st.session_state["_grid_review_data_cache"] = _review_data
+                                _ipp = 50
+                                _warm_urls = set()
+                                for _url in _review_data.iloc[:_ipp * 2]["MAIN_IMAGE"].astype(str):
+                                    _url = _url.strip().replace("http://", "https://", 1)
+                                    if _url.startswith("https"):
+                                        _warm_urls.add(_url)
+                                st.session_state["_grid_warm_urls"] = list(_warm_urls)
+                            except Exception as _pw_err:
+                                logger.warning("Grid pre-warm failed: %s", _pw_err)
+
+                            _rej_count = int(final_report[final_report['Status'] == 'Rejected'].shape[0])
+                            _app_count = int(final_report[final_report['Status'] == 'Approved'].shape[0])
+                            _status.update(
+                                label=f"✅ Done — {_app_count:,} approved, {_rej_count:,} rejected",
+                                state="complete",
+                                expanded=False,
+                            )
+                        else:
+                            _status.update(label="Schema validation failed", state="error", expanded=True)
+                            for e in errors: st.error(e)
+                            st.session_state.last_processed_files = "error"
             except Exception as e:
                 st.error(f"Processing error: {e}")
                 st.code(traceback.format_exc())
