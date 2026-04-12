@@ -41,14 +41,32 @@ def bulk_approve_dialog(sids_to_process, title, subset_data, data_has_warranty_c
         _CAT_MATCHER_AVAILABLE = False
 
     st.warning(f"You are about to approve **{len(sids_to_process)}** items from `{title}`.")
+    _preview_cols = [c for c in ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'SELLER_NAME'] if c in subset_data.columns]
+    _preview_df = subset_data[subset_data['PRODUCT_SET_SID'].isin(sids_to_process)][_preview_cols].reset_index(drop=True)
+    with st.expander(f"Preview {len(_preview_df)} item(s) to be approved", expanded=len(_preview_df) <= 10):
+        st.dataframe(_preview_df, hide_index=True, use_container_width=True)
     if st.button(_t("approve_btn"), type="primary", use_container_width=True):
-        with st.spinner("Processing..."):
-            data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
-            new_report, _ = validation_runner(
-                data_hash, subset_data, support_files,
-                country_validator.code, data_has_warranty_cols_check,
-                skip_validators=[title]
-            )
+        with st.spinner("Validating…"):
+            _progress = st.progress(0, text="Running validation…")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _executor:
+                data_hash = df_hash(subset_data) + country_validator.code + "_skip_" + title
+                _future = _executor.submit(
+                    validation_runner,
+                    data_hash, subset_data, support_files,
+                    country_validator.code, data_has_warranty_cols_check,
+                    [title]
+                )
+                # Poll so we can update the progress bar while waiting
+                import time as _time
+                _elapsed = 0
+                while not _future.done():
+                    _time.sleep(0.1)
+                    _elapsed += 0.1
+                    # Animate progress up to 90% while waiting
+                    _progress.progress(min(0.9, _elapsed / 10), text="Running validation…")
+                new_report, _ = _future.result()
+            _progress.progress(1.0, text="Done!")
+            _progress.empty()
             msg_moved, msg_approved = {}, 0
             for sid in sids_to_process:
                 new_row = new_report[new_report['ProductSetSid'] == sid]
@@ -110,7 +128,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     except ImportError:
         _CAT_MATCHER_AVAILABLE = False
 
-    cache_key = f"display_df_{title}"
+    cache_key = f"display_df_{title}_{df_hash(data)}"
     base_display_cols = ['PRODUCT_SET_SID', 'NAME', 'BRAND', 'CATEGORY', 'COLOR',
                          'GLOBAL_SALE_PRICE', 'GLOBAL_PRICE', 'PARENTSKU', 'SELLER_NAME']
     current_display_cols = base_display_cols.copy()
@@ -144,17 +162,23 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     with c1:
         search_term = st.text_input(_t("search_grid"), placeholder="Name, Brand...", icon=":material/search:", key=f"s_{title}")
     with c2:
+        _seller_key = f"f_{title}"
         seller_filter = st.multiselect(
             "Filter by Seller",
             sorted(df_display['SELLER_NAME'].astype(str).unique()),
-            key=f"f_{title}"
+            default=st.session_state.get(f"_sf_{title}", []),
+            key=_seller_key,
         )
+        st.session_state[f"_sf_{title}"] = seller_filter
 
     df_view = df_display.copy()
     if search_term:
-        df_view = df_view[df_view.apply(
-            lambda x: x.astype(str).str.contains(search_term, case=False).any(), axis=1
-        )]
+        _search_cols = [c for c in ['NAME', 'BRAND', 'SELLER_NAME'] if c in df_view.columns]
+        if _search_cols:
+            mask = df_view[_search_cols].apply(
+                lambda col: col.astype(str).str.contains(search_term, case=False, na=False)
+            ).any(axis=1)
+            df_view = df_view[mask]
     if seller_filter:
         df_view = df_view[df_view['SELLER_NAME'].isin(seller_filter)]
     df_view = df_view.reset_index(drop=True)
@@ -187,8 +211,15 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
     )
     raw_selected = list(event.selection.rows)
     selected_indices = [i for i in raw_selected if i < len(df_view)]
-    st.caption(f"{len(selected_indices)} / {len(df_view)} selected")
     has_selection = len(selected_indices) > 0
+    _sel_color = JUMIA_COLORS["primary_orange"] if has_selection else "#aaa"
+    st.markdown(
+        f"<div style='display:inline-block;background:{_sel_color};color:#fff;"
+        f"padding:4px 14px;border-radius:9999px;font-size:13px;font-weight:700;"
+        f"margin-bottom:8px;'>"
+        f"✔ {len(selected_indices)} / {len(df_view)} selected</div>",
+        unsafe_allow_html=True,
+    )
 
     _fm = support_files['flags_mapping']
     _reason_options = [
@@ -251,7 +282,7 @@ def render_flag_expander(title, df_flagged_sids, data, data_has_warranty_cols_ch
                 _rinfo = _fm.get(chosen_reason, {'reason': '1000007 - Other Reason', 'en': chosen_reason})
                 _rcode = _rinfo['reason']
                 _rcmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
-                st.caption(f"Code: {_rcode[:40]}...")
+                st.info(f"**Seller message:** {_rcmt}", icon=":material/chat:")
                 if st.button("Apply", key=f"apply_dd_{title}", type="primary",
                              use_container_width=True, disabled=not has_selection):
                     to_reject = df_view.iloc[selected_indices]['PRODUCT_SET_SID'].tolist()
@@ -463,7 +494,7 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   /* Floating Tooltip */
   #zoom-tooltip {{
     display: none;
-    position: absolute; 
+    position: fixed; 
     z-index: 100000;
     background: #fff;
     padding: 10px;
@@ -500,11 +531,53 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
   }}
   .tooltip-close:hover {{ background: #000; }}
 
-  #prefetch-status{{font-size:10px;color:#aaa;text-align:right;padding:4px 8px;margin-top:8px;}}
-  .debug-hud{{position:absolute;inset:0;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:9px;padding:5px;display:none;word-break:break-all;z-index:100;}}
+  /* Custom reason inline panel */
+  #custom-reason-panel {{
+    display: none;
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #fff;
+    border: 2px solid {O};
+    border-radius: 8px;
+    padding: 16px 20px;
+    z-index: 999999;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    min-width: 340px;
+    max-width: 480px;
+  }}
+  #custom-reason-panel h4 {{ margin: 0 0 10px 0; font-size: 13px; color: #333; }}
+  #custom-reason-input {{
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+  }}
+  #custom-reason-input:focus {{ outline: 2px solid {O}; border-color: {O}; }}
+  .custom-panel-btns {{ display: flex; gap: 8px; }}
+  .custom-panel-btns button {{ flex: 1; padding: 7px; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer; border: none; }}
+  .custom-panel-confirm {{ background: {O}; color: #fff; }}
+  .custom-panel-confirm:hover {{ opacity: 0.88; }}
+  .custom-panel-cancel {{ background: #e0e0e0; color: #333; }}
+  .custom-panel-cancel:hover {{ background: #ccc; }}
 </style>
 </head>
 <body>
+
+<!-- Inline custom reason panel (replaces browser prompt()) -->
+<div id="custom-reason-panel">
+  <h4>✏️ Enter custom rejection reason</h4>
+  <input id="custom-reason-input" type="text" placeholder="Type your reason here…" maxlength="200">
+  <div class="custom-panel-btns">
+    <button class="custom-panel-confirm" onclick="confirmCustomReason()">Apply</button>
+    <button class="custom-panel-cancel" onclick="cancelCustomReason()">Cancel</button>
+  </div>
+</div>
+
 <div class="ctrl-bar">
   <span class="sel-count sel-count-text">0 {_t("items_pending")}</span>
   <select class="reason-sel" id="batch-reason-top">
@@ -576,7 +649,6 @@ def build_fast_grid_html(page_data, flags_mapping, country, page_warnings,
 </div>
 
 <div id="prefetch-status"></div>
-<div id="prefetch-container" style="display:none;position:absolute;width:1px;height:1px;overflow:hidden;"></div>
 
 <script>
 // INSTANT CLOSE DIALOG LOCK 
@@ -650,14 +722,6 @@ function sendMsg(type, payload) {{
     
     nativeInputValueSetter.call(bridge, msg);
     bridge.dispatchEvent(new par.Event('input', {{bubbles: true}}));
-    
-    // React requires the input to be focused to accept the Enter key submission.
-    // We use preventScroll: true, fire the Enter key, and instantly blur it.
-    bridge.focus({{preventScroll: true}});
-    
-    bridge.dispatchEvent(new par.KeyboardEvent('keydown', {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    bridge.dispatchEvent(new par.KeyboardEvent('keyup',   {{bubbles:true,cancelable:true,key:'Enter',keyCode:13}}));
-    
     bridge.blur();
 
   }} catch(ex) {{ console.error('jtbridge error:', ex); }}
@@ -796,6 +860,35 @@ function addWarnings(sid, warns) {{
   warns.forEach(w => {{ if (!window._imageIssues[sid].includes(w)) window._imageIssues[sid].push(w); }});
 }}
 
+function buildCardActionsHtml(safeSid) {{
+  var opts = [
+    ['REJECT_IMG_STRETCHED', 'Image Stretched'],
+    ['REJECT_IMG_BLURRY',    'Image Blurry'],
+    ['REJECT_IMG_MISMATCH',  'Image Mismatch'],
+    ['REJECT_IMG_INFRINGING','Image Infringing'],
+    ['REJECT_IMG_TOO_MANY',  'Image Too Many Things'],
+    ['REJECT_WRONG_CAT',     escapeHtml(LABELS.wrong_cat)],
+    ['REJECT_FAKE',          escapeHtml(LABELS.fake_prod)],
+    ['REJECT_BRAND',         escapeHtml(LABELS.restr_brand)],
+    ['REJECT_PROHIBITED',    escapeHtml(LABELS.prohibited)],
+    ['REJECT_COLOR',         escapeHtml(LABELS.missing_color)],
+    ['REJECT_WRONG_BRAND',   escapeHtml(LABELS.wrong_brand)],
+    ['OTHER_CUSTOM',         'Other Reason (Custom)'],
+  ];
+  var optionsHtml = opts.map(function(o) {{
+    return `<option value="${{o[0]}}">${{o[1]}}</option>`;
+  }}).join('');
+  return (
+    `<div class="acts">` +
+      `<button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button>` +
+      `<select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}">` +
+        `<option value="">${{escapeHtml(LABELS.more_options)}}</option>` +
+        optionsHtml +
+      `</select>` +
+    `</div>`
+  );
+}}
+
 function renderCard(card) {{
   var sid = card.sid;
   var safeSid = sid.replace(/'/g, "\\\\'");
@@ -836,7 +929,7 @@ function renderCard(card) {{
       <button class="undo-btn" onclick="event.stopPropagation();window.clearStaged('${{safeSid}}')">${{escapeHtml(LABELS.clear_sel)}}</button>
     </div>`;
   }} else {{
-    actHtml = `<div class="acts"><button class="act-btn" onclick="event.stopPropagation();window.stageReject('${{safeSid}}','REJECT_POOR_IMAGE')">${{escapeHtml(LABELS.poor_img)}}</button><select class="act-more" onchange="if(this.value){{event.stopPropagation();window.stageReject('${{safeSid}}',this.value);this.value=''}}"><option value="">${{escapeHtml(LABELS.more_options)}}</option><option value="REJECT_IMG_STRETCHED">Image Stretched</option><option value="REJECT_IMG_BLURRY">Image Blurry</option><option value="REJECT_IMG_MISMATCH">Image Mismatch</option><option value="REJECT_IMG_INFRINGING">Image Infringing</option><option value="REJECT_IMG_TOO_MANY">Image Too Many Things</option><option value="REJECT_WRONG_CAT">${{escapeHtml(LABELS.wrong_cat)}}</option><option value="REJECT_FAKE">${{escapeHtml(LABELS.fake_prod)}}</option><option value="REJECT_BRAND">${{escapeHtml(LABELS.restr_brand)}}</option><option value="REJECT_PROHIBITED">${{escapeHtml(LABELS.prohibited)}}</option><option value="REJECT_COLOR">${{escapeHtml(LABELS.missing_color)}}</option><option value="REJECT_WRONG_BRAND">${{escapeHtml(LABELS.wrong_brand)}}</option><option value="OTHER_CUSTOM">Other Reason (Custom)</option></select></div>`;
+    actHtml = buildCardActionsHtml(safeSid);
   }}
 
   return `<div class="${{cls}}" id="card-${{escapeHtml(sid)}}">
@@ -880,18 +973,23 @@ window.showZoom = function(sid, event) {{
 
   var tw = 360; 
   var th = 360; 
-  var x = event.pageX; 
-  var y = event.pageY; 
+  var x = event.clientX; 
+  var y = event.clientY; 
+
+  var vw = window.innerWidth;
+  var vh = window.innerHeight;
 
   var left = x + 15;
-  if (left + tw > document.body.scrollWidth) {{
+  if (left + tw > vw - 10) {{
       left = x - tw - 15;
   }}
+  if (left < 10) left = 10;
 
   var top = y - (th / 2);
   if (top < 10) top = 10;
-  if (top + th > document.body.scrollHeight) top = document.body.scrollHeight - th - 10;
+  if (top + th > vh - 10) top = vh - th - 10;
 
+  tooltip.style.position = 'fixed';
   tooltip.style.left = left + 'px';
   tooltip.style.top = top + 'px';
 }};
@@ -960,9 +1058,15 @@ window.toggleSelect = function(sid, e) {{
 
 window.stageReject = function(sid, r) {{ 
   if (r === 'OTHER_CUSTOM') {{
-      var cmt = prompt("Enter custom rejection reason:");
-      if (!cmt) return;
-      r = "Other Reason (Custom): " + cmt;
+      showCustomReasonPanel(function(cmt) {{
+          if (!cmt) return;
+          var reason = "Other Reason (Custom): " + cmt;
+          if (sid in selected) delete selected[sid]; 
+          staged[sid] = reason; 
+          replaceCard(sid); 
+          updateSelCount();
+      }});
+      return;
   }}
   if (sid in selected) delete selected[sid]; 
   staged[sid] = r; 
@@ -996,14 +1100,18 @@ window.doBatchReject = function(pos) {{
   var br = sel.value;
   
   if (br === 'OTHER_CUSTOM') {{
-      var cmt = prompt("Enter custom rejection reason:");
-      if (!cmt) {{
+      showCustomReasonPanel(function(cmt) {{
+          if (!cmt) {{ sel.value = "REJECT_POOR_IMAGE"; return; }}
+          var reason = "Other Reason (Custom): " + cmt;
+          _applyBatchReject(reason);
           sel.value = "REJECT_POOR_IMAGE";
-          return;
-      }}
-      br = "Other Reason (Custom): " + cmt;
+      }});
+      return;
   }}
+  _applyBatchReject(br);
+}};
 
+function _applyBatchReject(br) {{
   var payload = {{}}, count = 0;
   for (var s in staged) {{ payload[s] = staged[s]; count++; }}
   for (var s in selected) {{ 
@@ -1019,7 +1127,31 @@ window.doBatchReject = function(pos) {{
   renderAll();
   updateSelCount();
   sendMsg('reject', payload);
-}};
+}}
+
+var _customReasonCallback = null;
+function showCustomReasonPanel(callback) {{
+  _customReasonCallback = callback;
+  var panel = document.getElementById('custom-reason-panel');
+  var input = document.getElementById('custom-reason-input');
+  input.value = '';
+  panel.style.display = 'block';
+  setTimeout(function() {{ input.focus(); }}, 50);
+}}
+function confirmCustomReason() {{
+  var input = document.getElementById('custom-reason-input');
+  var val = input.value.trim();
+  document.getElementById('custom-reason-panel').style.display = 'none';
+  if (_customReasonCallback) {{ _customReasonCallback(val); _customReasonCallback = null; }}
+}}
+function cancelCustomReason() {{
+  document.getElementById('custom-reason-panel').style.display = 'none';
+  _customReasonCallback = null;
+}}
+document.getElementById('custom-reason-input').addEventListener('keydown', function(e) {{
+  if (e.key === 'Enter') confirmCustomReason();
+  if (e.key === 'Escape') cancelCustomReason();
+}});
 
 window.doBatchUndo = function() {{
   if (window._undoTimer) {{ clearTimeout(window._undoTimer); window._undoTimer = null; }}
@@ -1048,19 +1180,28 @@ window.doDeselAll = function() {{ for (var k in selected) delete selected[k]; fo
 
 (function() {{
   if (!PREFETCH_URLS || !PREFETCH_URLS.length) return;
-  var container = document.getElementById('prefetch-container');
   var statusEl = document.getElementById('prefetch-status');
-  var i = 0, total = PREFETCH_URLS.length, done = 0;
+  var POOL_SIZE = 8;
+  var pool = [];
+  for (var p = 0; p < POOL_SIZE; p++) {{
+    var pi = new Image();
+    pi.referrerPolicy = "no-referrer";
+    pi.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
+    document.body.appendChild(pi);
+    pool.push(pi);
+  }}
+  var i = 0, done = 0, total = PREFETCH_URLS.length, slot = 0;
   var runner = window.requestIdleCallback || function(fn){{setTimeout(fn,300);}};
   function prefetchBatch() {{
-    var limit = 8, processed = 0;
+    var limit = POOL_SIZE, processed = 0;
     while (i < total && processed < limit) {{
       var url = PREFETCH_URLS[i++]; processed++;
-      var img = new Image();
-      img.referrerPolicy = "no-referrer";
-      img.onload = () => {{ done++; if (statusEl) statusEl.textContent = `Prefetched ${{done}}/${{total}}`; }};
-      img.style.cssText = 'width:1px;height:1px;opacity:0;position:absolute;pointer-events:none;';
-      container.appendChild(img);
+      var img = pool[slot % POOL_SIZE]; slot++;
+      img.onload = (function(u) {{ return function() {{
+        done++;
+        if (statusEl) statusEl.textContent = 'Prefetched ' + done + '/' + total;
+      }}; }})(url);
+      img.onerror = img.onload;
       img.src = url;
     }}
     if (i < total) runner(prefetchBatch);
@@ -1073,6 +1214,66 @@ window.addEventListener("scroll", function() {{
 }});
 
 {scroll_js}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────
+// ArrowLeft / ArrowRight = move card focus
+// A = clear staging (approve) focused card
+// R = reject focused card with last-used reason
+// Space = toggle selection on focused card
+var _focusedSid = null;
+var _lastReason = 'REJECT_POOR_IMAGE';
+
+function _getCardSids() {{
+  return getSortedCards().map(function(c) {{ return c.sid; }});
+}}
+
+function _moveFocus(dir) {{
+  var sids = _getCardSids();
+  if (!sids.length) return;
+  var idx = _focusedSid ? sids.indexOf(_focusedSid) : -1;
+  idx = Math.max(0, Math.min(sids.length - 1, idx + dir));
+  _focusedSid = sids[idx];
+  document.querySelectorAll('.card').forEach(function(c) {{ c.style.outline = ''; }});
+  var el = document.getElementById('card-' + escapeHtml(_focusedSid));
+  if (el) {{
+    el.style.outline = '3px solid #2196F3';
+    el.scrollIntoView({{ block: 'nearest', inline: 'nearest' }});
+  }}
+}}
+
+document.addEventListener('keydown', function(e) {{
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (document.getElementById('custom-reason-panel').style.display === 'block') return;
+  if (e.key === 'ArrowRight') {{ e.preventDefault(); _moveFocus(1); }}
+  else if (e.key === 'ArrowLeft') {{ e.preventDefault(); _moveFocus(-1); }}
+  else if ((e.key === 'a' || e.key === 'A') && _focusedSid) {{
+    delete selected[_focusedSid]; delete staged[_focusedSid];
+    replaceCard(_focusedSid); updateSelCount();
+  }}
+  else if ((e.key === 'r' || e.key === 'R') && _focusedSid) {{
+    var sid = _focusedSid;
+    if (_lastReason === 'OTHER_CUSTOM') {{
+      showCustomReasonPanel(function(cmt) {{
+        if (!cmt) return;
+        staged[sid] = 'Other Reason (Custom): ' + cmt;
+        replaceCard(sid); updateSelCount();
+      }});
+    }} else {{
+      if (sid in selected) delete selected[sid];
+      staged[sid] = _lastReason;
+      replaceCard(sid); updateSelCount();
+    }}
+  }}
+  else if (e.key === ' ' && _focusedSid) {{
+    e.preventDefault();
+    window.toggleSelect(_focusedSid, e);
+  }}
+}});
+
+['batch-reason-top','batch-reason-bottom'].forEach(function(id) {{
+  var el = document.getElementById(id);
+  if (el) el.addEventListener('change', function() {{ _lastReason = this.value; }});
+}});
 
 renderAll();
 </script>
@@ -1324,6 +1525,36 @@ def render_image_grid(support_files):
     if st.session_state.get("show_review_modal", False):
         visual_review_modal(support_files)
 
+def _render_export_card(title, df, desc, func, exports_config):
+    """Render a single export card using native Streamlit components."""
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        st.caption(desc)
+        st.metric(label="Rows", value=f"{len(df):,}")
+        if title not in st.session_state.exports_cache:
+            if st.button("Generate", key=f"gen_{title}", type="primary",
+                         use_container_width=True, icon=":material/download:", icon_position="left"):
+                with st.spinner("Generating all reports…"):
+                    for t2, d2, _, f2 in exports_config:
+                        if t2 not in st.session_state.exports_cache:
+                            res, fname, mime = f2(d2)
+                            st.session_state.exports_cache[t2] = {
+                                "data": res.getvalue(), "fname": fname, "mime": mime
+                            }
+                st.rerun()
+        else:
+            cache = st.session_state.exports_cache[title]
+            st.download_button(
+                "Download", data=cache["data"],
+                file_name=cache["fname"], mime=cache["mime"],
+                use_container_width=True, type="primary",
+                icon=":material/file_download:", key=f"dl_{title}",
+            )
+            if st.button("Clear", key=f"clr_{title}", use_container_width=True):
+                del st.session_state.exports_cache[title]
+                st.rerun()
+
+
 @st.fragment
 def render_exports_section(support_files, country_validator):
     if st.session_state.final_report.empty or st.session_state.get('file_mode') == 'post_qc':
@@ -1339,14 +1570,8 @@ def render_exports_section(support_files, country_validator):
     reasons_df = support_files.get('reasons', pd.DataFrame())
 
     st.markdown("---")
-    st.markdown(
-        f"<div style='background:linear-gradient(135deg,{JUMIA_COLORS['primary_orange']},"
-        f"{JUMIA_COLORS['secondary_orange']});padding:20px 24px;border-radius:10px;margin-bottom:20px;'>"
-        f"<h2 style='color:white;margin:0;font-size:24px;font-weight:700;'>{_t('download_reports')}</h2>"
-        f"<p style='color:rgba(255,255,255,0.9);margin:6px 0 0 0;font-size:13px;'>"
-        f"Export validation results in Excel or ZIP format</p></div>",
-        unsafe_allow_html=True,
-    )
+    st.header(f":material/download: {_t('download_reports')}", anchor=False)
+    st.caption("Export validation results in Excel or ZIP format")
 
     exports_config = [
         ("PIM Export",    fr,      'Complete validation report with all statuses',
@@ -1381,36 +1606,4 @@ def render_exports_section(support_files, country_validator):
             if i + j < len(exports_config):
                 title, df, desc, func = exports_config[i + j]
                 with col:
-                    with st.container(border=True):
-                        st.markdown(
-                            f"<div style='text-align:center;margin-bottom:15px;'>"
-                            f"<div style='font-size:18px;font-weight:700;'>{title}</div>"
-                            f"<div style='font-size:11px;margin-top:4px;opacity:0.7;'>{desc}</div>"
-                            f"<div style='background:{JUMIA_COLORS['light_gray']};"
-                            f"color:{JUMIA_COLORS['primary_orange']};padding:8px;border-radius:6px;"
-                            f"margin-top:12px;font-weight:600;'>{len(df):,} rows</div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                        if title not in st.session_state.exports_cache:
-                            if st.button("Generate", key=f"gen_{title}", type="primary",
-                                         use_container_width=True, icon=":material/download:", icon_position="left"):
-                                with st.spinner("Generating all reports…"):
-                                    for t2, d2, _, f2 in exports_config:
-                                        if t2 not in st.session_state.exports_cache:
-                                            res, fname, mime = f2(d2)
-                                            st.session_state.exports_cache[t2] = {
-                                                "data": res.getvalue(), "fname": fname, "mime": mime
-                                            }
-                                st.rerun()
-                        else:
-                            cache = st.session_state.exports_cache[title]
-                            st.download_button(
-                                "Download", data=cache["data"],
-                                file_name=cache["fname"], mime=cache["mime"],
-                                use_container_width=True, type="primary",
-                                icon=":material/file_download:", key=f"dl_{title}",
-                            )
-                            if st.button("Clear", key=f"clr_{title}", use_container_width=True):
-                                del st.session_state.exports_cache[title]
-                                st.rerun()
+                    _render_export_card(title, df, desc, func, exports_config)
