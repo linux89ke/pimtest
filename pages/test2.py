@@ -30,7 +30,7 @@ from translations import LANGUAGES, get_translation
 # ── NEW MODULAR IMPORTS ───────────────────────────────────────────────────────
 from constants import JUMIA_COLORS, PARQUET_CACHE_DIR, FLAG_CACHE_DIR, REASON_MAP, GRID_COLS
 from data_utils import (
-    clean_category_code, df_hash, standardize_input_data, validate_input_schema, 
+    clean_category_code, df_hash, standardize_input_data, validate_input_schema,
     filter_by_country, propagate_metadata, create_match_key, normalize_text,
     _detect_and_read_csv, _repair_mojibake
 )
@@ -44,6 +44,17 @@ from nigeria_rules import (
 )
 from morocco_rules import load_morocco_qc_rules, check_morocco_prohibited_brands
 from pricing_rules import check_wrong_price, check_category_max_price, check_suspicious_discount, CATEGORY_MAX_PRICES_USD
+
+# ── OPENCV CHECKS ─────────────────────────────────────────────────────────────
+from opencv_checks import (
+    check_image_product_coverage,
+    check_image_duplicate_visual,
+    check_image_color_mismatch,
+    check_image_exposure,
+    check_image_blurry_cv,
+    CV_FLAG_COL,
+    render_cv_badge,
+)
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
@@ -134,11 +145,11 @@ class CountryValidator:
         self.code = self.config["code"]
         self.skip_validations = self.config["skip_validations"]
 
-    def should_skip_validation(self, validation_name: str) -> bool: 
+    def should_skip_validation(self, validation_name: str) -> bool:
         return validation_name in self.skip_validations
-    
+
     def ensure_status_column(self, df: pd.DataFrame) -> pd.DataFrame:
-        if not df.empty and 'Status' not in df.columns: 
+        if not df.empty and 'Status' not in df.columns:
             df['Status'] = 'Approved'
         return df
 
@@ -184,6 +195,11 @@ FLAG_RELEVANT_COLS = {
     "NG - Xmas Tree Seller":  ["NAME", "SELLER_NAME"],
     "NG - Rice Brand Seller": ["CATEGORY_CODE", "BRAND", "SELLER_NAME"],
     "Powerbank Not Authorized":["CATEGORY_CODE", "NAME", "BRAND"],
+    # ── OpenCV checks ────────────────────────────────────────────────────────
+    "Image Product Coverage":  ["MAIN_IMAGE"],
+    "Image Visual Duplicate":  ["MAIN_IMAGE", "SELLER_NAME"],
+    "Image Color Mismatch":    ["MAIN_IMAGE", "COLOR", "CATEGORY_CODE"],
+    "Image Exposure":          ["MAIN_IMAGE"],
 }
 
 def compute_flag_input_hash(data: pd.DataFrame, flag_name: str, kwargs: dict) -> str:
@@ -262,10 +278,8 @@ def check_image_stretched(data: pd.DataFrame) -> pd.DataFrame:
 def check_image_blurry(data: pd.DataFrame) -> pd.DataFrame:
     """
     Flags images based on resolution:
-      - <= 200x200 px  → rejected (Comment_Detail set, Status driven by validation runner)
-      - > 200x200 and < 300x300 px → commentary only (Status stays Approved, just a note)
-    Returns ONLY rows that should be REJECTED (i.e. <= 200x200).
-    Rows in the 201–299 range are stored in session state as commentary but NOT rejected.
+      - <= 200x200 px  → rejected
+      - > 200x200 and < 300x300 px → commentary only
     """
     if 'MAIN_IMAGE' not in data.columns:
         return pd.DataFrame(columns=data.columns)
@@ -298,7 +312,6 @@ def check_image_blurry(data: pd.DataFrame) -> pd.DataFrame:
     if not url_data:
         return pd.DataFrame(columns=data.columns)
 
-    # Collect commentary-only rows (201–299 range) into session state
     commentary_map = {}
     reject_map = {}
     for url, (w, h) in url_data.items():
@@ -307,7 +320,6 @@ def check_image_blurry(data: pd.DataFrame) -> pd.DataFrame:
         elif w < 300 and h < 300:
             commentary_map[url] = f"Image resolution low ({w}x{h}px) — consider upgrading"
 
-    # Store commentary in session state so the UI can surface it without rejection
     try:
         existing = st.session_state.get('_image_blurry_commentary', {})
         sid_to_comment = {}
@@ -331,32 +343,17 @@ def check_image_blurry(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def check_image_mismatch(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Placeholder validation for Image Mismatch.
-    This flag is intended for manual use via the image grid reject dropdown.
-    The check returns an empty DataFrame (no automatic flagging) but registers
-    the validation so it appears in the flags_mapping lookup and export.
-    """
     return pd.DataFrame(columns=data.columns)
 
 
 def check_image_infringing(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Placeholder validation for Image Infringing.
-    This flag is intended for manual use via the image grid reject dropdown.
-    """
     return pd.DataFrame(columns=data.columns)
 
 
 def check_image_too_many_things(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Placeholder validation for Image Too Many Things Displayed.
-    This flag is intended for manual use via the image grid reject dropdown.
-    """
     return pd.DataFrame(columns=data.columns)
 
 
-# Keep the old name as an alias so existing cache/registry references don't break
 def check_poor_images_aspect_ratio(data: pd.DataFrame) -> pd.DataFrame:
     """Backwards-compatibility alias → delegates to check_image_stretched."""
     return check_image_stretched(data)
@@ -624,41 +621,31 @@ def check_unnecessary_words(data: pd.DataFrame, pattern: re.Pattern) -> pd.DataF
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_single_word_name(data: pd.DataFrame, book_category_codes: List[str], books_data: Dict = None) -> pd.DataFrame:
-    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns): 
+    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns):
         return pd.DataFrame(columns=data.columns)
-        
     cat_codes = (books_data or {}).get('category_codes') or set(clean_category_code(c) for c in book_category_codes)
-    
     d = data.copy()
-    
     names = d['NAME'].astype(str).str.strip()
     word_counts = names.str.split().str.len()
     char_counts = names.str.len()
-    
     bad_name_mask = (word_counts <= 2) | (char_counts < 15)
-    
     if '_cat_clean' in d.columns:
         non_books_mask = ~d['_cat_clean'].isin(cat_codes)
     else:
         non_books_mask = ~d['CATEGORY_CODE'].apply(clean_category_code).isin(cat_codes)
-        
     flagged = d[bad_name_mask & non_books_mask].copy()
-    
     if not flagged.empty:
         def get_reason(row):
             name_str = str(row['NAME']).strip()
             w_count = len(name_str.split())
             c_count = len(name_str)
-            
             if w_count <= 2 and c_count < 15:
                 return f"{w_count} words, {c_count} chars"
             elif w_count <= 2:
                 return f"{w_count} words"
             else:
                 return f"{c_count} chars"
-                
         flagged['Comment_Detail'] = flagged.apply(get_reason, axis=1)
-        
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_generic_brand_issues(data: pd.DataFrame, valid_category_codes_fas: List[str]) -> pd.DataFrame:
@@ -733,21 +720,16 @@ def load_valid_colors() -> set:
     return valid_set
 
 def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categories: List[str], country_code: str) -> pd.DataFrame:
-    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns) or pattern is None: 
+    if not {'CATEGORY_CODE', 'NAME'}.issubset(data.columns) or pattern is None:
         return pd.DataFrame(columns=data.columns)
-        
     target = data[data['_cat_clean'].isin(set(clean_category_code(c) for c in color_categories))].copy()
-    if target.empty: 
+    if target.empty:
         return pd.DataFrame(columns=data.columns)
-    
     has_color = 'COLOR' in data.columns
     names = target['NAME'].astype(str).values
     colors = target['COLOR'].astype(str).str.strip().str.lower().values if has_color else [''] * len(target)
-    
     valid_colors = load_valid_colors()
     null_like = {'nan', '', 'none', 'null', 'n/a', 'na', '-'}
-
-    # Placeholder/junk values that are NOT real colors — always flag these
     _JUNK_COLORS = {
         'random', 'random color', 'random colour', 'assorted', 'various',
         'as in the picture', 'as in the pictures', 'as the picture',
@@ -757,9 +739,6 @@ def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categorie
         'multi color', 'multi-colour', 'multi-color', 'multicolors',
         'mult', 'multic',
     }
-
-    # Color modifier words — "dark brown" → "brown" is the real color token
-    # These alone are NOT colors but combined with a base color they are valid
     _MODIFIER_WORDS = {
         'dark', 'light', 'bright', 'deep', 'pale', 'soft', 'matte', 'matt',
         'glossy', 'metallic', 'neon', 'pastel', 'dusty', 'warm', 'cool',
@@ -770,80 +749,45 @@ def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categorie
         'emerald', 'sapphire', 'ruby', 'amber', 'teal', 'aqua', 'indigo',
         'violet', 'lavender', 'lilac', 'magenta', 'fuchsia', 'maroon',
         'copper', 'bronze', 'gold', 'silver', 'platinum',
-        # Descriptive phrases that should NOT count as a base color token
         'dominantly', 'accent', 'accents', 'print', 'stripe', 'striped',
         'check', 'checked', 'pattern', 'bead', 'beaded', 'ring', 'with',
         'and', 'or',
     }
 
     def _is_valid_color(color_str: str, valid_set: set) -> bool:
-        """
-        Returns True if color_str represents a real, specific color.
-
-        Strategy:
-        1. Reject known junk/placeholder values outright.
-        2. Split by all common multi-color separators (comma, slash, ampersand,
-           hyphen, pipe, 'and', 'or', 'with').
-        3. For each part, check:
-           a. Exact match against valid_set (full part).
-           b. Word-level token match — any single word in the part that is in
-              valid_set and is NOT a pure modifier word.
-           This handles "Dark brown" (token "brown"), "nordic blue" (token "blue"),
-           "BLACK-RED" (tokens "black", "red"), etc.
-        """
         c = color_str.strip().lower()
-
-        # Step 1: reject known junk
         if c in _JUNK_COLORS:
             return False
-        # Also catch truncated/symbol-only values
         if re.match(r'^[.\-_*]{1,5}$', c):
             return False
-
         if not valid_set:
-            # No whitelist loaded — accept any non-null, non-junk value
             return True
-
-        # Step 2: split on all separator types
-        # Handles: "BLACK-RED", "light grey|dark grey|yellow",
-        #          "Black and white", "Black white beige light blue light grey"
         parts = re.split(r'[,/&|\-]|\s+and\s+|\s+or\s+|\s+with\s+', c)
-
         for part in parts:
             part = part.strip()
             if not part:
                 continue
-
-            # 3a. Exact match on the whole part
             if part in valid_set:
                 return True
-
-            # 3b. Word-token match — any token that is a known color (not just modifier)
             tokens = part.split()
             for token in tokens:
                 token = token.strip()
                 if token in valid_set and token not in _MODIFIER_WORDS:
                     return True
-
         return False
 
     mask = []
     for n, c in zip(names, colors):
-        # Pass Condition 1: Valid color word in Title
         is_name_valid = bool(pattern.search(n))
-
-        # Pass Condition 2: Valid color in COLOR field
         is_col_valid = False
         if has_color and c not in null_like:
             is_col_valid = _is_valid_color(c, valid_colors)
-
         if is_col_valid or is_name_valid:
             mask.append(False)
         else:
             mask.append(True)
 
     flagged = target[mask].copy()
-
     if not flagged.empty:
         def get_reason(row):
             c_val = str(row.get('COLOR', '')).strip().lower()
@@ -851,7 +795,6 @@ def check_missing_color(data: pd.DataFrame, pattern: re.Pattern, color_categorie
                 return f"Invalid color value provided: '{str(row.get('COLOR', '')).strip()}'"
             return "Color missing in both NAME and COLOR attributes"
         flagged['Comment_Detail'] = flagged.apply(get_reason, axis=1)
-
     return flagged.drop_duplicates(subset=['PRODUCT_SET_SID'])
 
 def check_weight_volume_in_name(data: pd.DataFrame, weight_category_codes: List[str]) -> pd.DataFrame:
@@ -914,7 +857,7 @@ def check_duplicate_products(data: pd.DataFrame, exempt_categories: List[str] = 
     first_occurrence = d.drop_duplicates(subset=['_dedup_key'], keep='first').set_index('_dedup_key')['NAME']
     rdf = d[d.duplicated(subset=['_dedup_key'], keep='first')].copy()
     rdf['Comment_Detail'] = rdf['_dedup_key'].map(lambda k: f"Duplicate: '{str(first_occurrence.get(k, ''))[:40]}'")
-    
+
     base_cols = data.columns.tolist()
     extra_cols = [c for c in ['Comment_Detail'] if c not in base_cols]
     return rdf[base_cols + extra_cols].drop_duplicates(subset=['PRODUCT_SET_SID'])
@@ -965,6 +908,12 @@ if _reg is not None:
         'load_nigeria_qc_rules':             load_nigeria_qc_rules,
         'check_morocco_prohibited_brands':   check_morocco_prohibited_brands,
         'load_morocco_qc_rules':             load_morocco_qc_rules,
+        # ── OpenCV ──────────────────────────────────────────────────────────
+        'check_image_product_coverage':      check_image_product_coverage,
+        'check_image_duplicate_visual':      check_image_duplicate_visual,
+        'check_image_color_mismatch':        check_image_color_mismatch,
+        'check_image_exposure':              check_image_exposure,
+        'check_image_blurry_cv':             check_image_blurry_cv,
     })
 
 # -------------------------------------------------
@@ -972,8 +921,7 @@ if _reg is not None:
 # -------------------------------------------------
 def validate_products(data: pd.DataFrame, support_files: Dict, country_validator: CountryValidator, data_has_warranty_cols: bool, common_sids: Optional[set] = None, skip_validators: Optional[List[str]] = None):
     data['PRODUCT_SET_SID'] = data['PRODUCT_SET_SID'].astype(str).str.strip()
-    
-    # Pre-calculate optimized lower-cased columns for speed
+
     data['_name_lower'] = data['NAME'].astype(str).str.lower().fillna('')
     data['_brand_lower'] = data['BRAND'].astype(str).str.lower().str.strip().fillna('')
     data['_seller_lower'] = data['SELLER_NAME'].astype(str).str.lower().str.strip().fillna('')
@@ -983,7 +931,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
     country_restricted_rules = support_files.get('restricted_brands_all', {}).get(country_validator.country, [])
     suspected_fake_df = support_files.get('suspected_fake', {}).get(country_validator.code, pd.DataFrame()) if isinstance(support_files.get('suspected_fake'), dict) else pd.DataFrame()
     country_prohibited_words = support_files.get('prohibited_words_all', {}).get(country_validator.code, [])
-    
+
     validations = [
         ("Wrong Category", check_miscellaneous_category, {
             'categories_list': support_files.get('categories_names_list', []),
@@ -1024,6 +972,12 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             'country_code': country_validator.code,
         }),
         ("Suspicious Discount", check_suspicious_discount, {'country_code': country_validator.code}),
+        # ── OpenCV image checks ───────────────────────────────────────────────
+        ("Image Product Coverage", check_image_product_coverage, {}),
+        ("Image Visual Duplicate",  check_image_duplicate_visual, {}),
+        ("Image Color Mismatch",    check_image_color_mismatch,
+            {"color_categories": support_files.get("color_categories", [])}),
+        ("Image Exposure",          check_image_exposure, {}),
     ]
 
     if country_validator.code == "NG":
@@ -1047,14 +1001,11 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
 
     if country_validator.code == "MA":
         _ma = load_morocco_qc_rules()
-
         validations = [v for v in validations if v[0] != "Restricted brands"]
         validations.insert(1, ("Restricted brands", check_restricted_brands, {"country_rules": _ma.get("restricted", [])}))
-
         ma_prohibited_rules = [{"keyword": kw, "categories": set()} for kw in _ma.get("prohibited_keywords", [])]
         validations = [v for v in validations if v[0] != "Prohibited products"]
         validations.append(("Prohibited products", check_prohibited_products, {"prohibited_rules": ma_prohibited_rules}))
-
         validations.append(("MA - Marque Interdite", check_morocco_prohibited_brands, {"ma_rules": _ma}))
 
     results = {}
@@ -1092,14 +1043,16 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
                         expanded_sids = set()
                         for sid in set(res['PRODUCT_SET_SID'].unique()): expanded_sids.update(dup_groups.get(sid, [sid]))
                         final_res = data[data['PRODUCT_SET_SID'].isin(expanded_sids)].copy()
-                        # Use SID-keyed maps — direct index assignment breaks when
-                        # final_res (subset of data) and res have different indices.
                         if 'Comment_Detail' in res.columns:
                             _cd_map = res.set_index('PRODUCT_SET_SID')['Comment_Detail'].to_dict()
                             final_res['Comment_Detail'] = final_res['PRODUCT_SET_SID'].map(_cd_map)
                         if 'Reason' in res.columns:
                             _r_map = res.set_index('PRODUCT_SET_SID')['Reason'].to_dict()
                             final_res['Reason'] = final_res['PRODUCT_SET_SID'].map(_r_map)
+                        # ── Carry CV_FLAG_COL from the check result ──────────
+                        if CV_FLAG_COL in res.columns:
+                            _cv_map = res.set_index('PRODUCT_SET_SID')[CV_FLAG_COL].to_dict()
+                            final_res[CV_FLAG_COL] = final_res['PRODUCT_SET_SID'].map(_cv_map).fillna(False)
                         if name in results and not results[name].empty: results[name] = pd.concat([results[name], final_res]).drop_duplicates(subset=['PRODUCT_SET_SID'])
                         else: results[name] = final_res
                     else:
@@ -1113,7 +1066,7 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         st.warning(f"{len(validation_errors)} validation checks encountered errors.")
         with st.expander("View Error Details"):
             for e_name, e_msg in validation_errors: st.error(f"**{e_name}**: {e_msg}")
-    
+
     if restricted_keys:
         data['match_key'] = data.apply(create_match_key, axis=1)
         for fname, keys in restricted_keys.items():
@@ -1134,11 +1087,14 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
         if 'Comment_Detail' not in flagged.columns and 'Comment_Detail' in res.columns:
             if isinstance(res['Comment_Detail'], pd.DataFrame): flagged['Comment_Detail'] = res['Comment_Detail'].iloc[:, 0]
             else: flagged['Comment_Detail'] = res['Comment_Detail']
-        # Merge Reason from result df if the check set it explicitly (e.g. powerbank counterfeit vs wrong-cat)
         if 'Reason' in res.columns:
             reason_map = res.set_index('PRODUCT_SET_SID')['Reason'].to_dict()
         else:
             reason_map = {}
+        # ── Build CV flag lookup for this check's results ────────────────
+        cv_lookup = {}
+        if CV_FLAG_COL in res.columns:
+            cv_lookup = res.set_index('PRODUCT_SET_SID')[CV_FLAG_COL].to_dict()
 
         for _, r in flagged.iterrows():
             sid = str(r['PRODUCT_SET_SID']).strip()
@@ -1146,9 +1102,6 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
             processed.add(sid)
             det = r.get('Comment_Detail', '')
             det_str = str(det) if pd.notna(det) and det else ''
-            # Powerbank in wrong category: emit directly as Wrong Category.
-            # Match on Comment_Detail text (set by check_nigeria_powerbanks) OR
-            # the Reason code — either signal is enough.
             if name == "Powerbank Not Authorized":
                 _pb_reason = reason_map.get(sid, '')
                 _is_wrong_cat = (
@@ -1156,28 +1109,28 @@ def validate_products(data: pd.DataFrame, support_files: Dict, country_validator
                     or 'power bank' in det_str.lower() and 'category' in det_str.lower()
                 )
                 if _is_wrong_cat:
-                    rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': _pb_reason or '1000007 - Wrong Category', 'Comment': det_str or flags_mapping.get("Wrong Category", rinfo).get(target_lang, ''), 'FLAG': 'Wrong Category', 'SellerName': r.get('SELLER_NAME', '')})
+                    rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': _pb_reason or '1000007 - Wrong Category', 'Comment': det_str or flags_mapping.get("Wrong Category", rinfo).get(target_lang, ''), 'FLAG': 'Wrong Category', 'SellerName': r.get('SELLER_NAME', ''), CV_FLAG_COL: False})
                     continue
-            # Use Comment_Detail directly as the full comment if it looks like a full sentence,
-            # otherwise fall back to the standard base_comment + detail pattern
             if det_str and len(det_str) > 60:
                 comment_str = det_str
             elif det_str:
                 comment_str = f"{base_comment} ({det_str})"
             else:
                 comment_str = base_comment
-            # Honour a Reason override set by the check function itself
             row_reason = reason_map.get(sid, rinfo['reason'])
-            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': row_reason, 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', '')})
+            # ── is this row OpenCV-detected? ─────────────────────────────
+            is_cv = bool(cv_lookup.get(sid, False))
+            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Rejected', 'Reason': row_reason, 'Comment': comment_str, 'FLAG': name, 'SellerName': r.get('SELLER_NAME', ''), CV_FLAG_COL: is_cv})
 
     for _, r in data[~data['PRODUCT_SET_SID'].astype(str).str.strip().isin(processed)].iterrows():
         sid = str(r['PRODUCT_SET_SID']).strip()
         if sid not in processed:
-            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Approved', 'Reason': "", 'Comment': "", 'FLAG': "", 'SellerName': r.get('SELLER_NAME', '')})
+            rows.append({'ProductSetSid': sid, 'ParentSKU': r.get('PARENTSKU', ''), 'Status': 'Approved', 'Reason': "", 'Comment': "", 'FLAG': "", 'SellerName': r.get('SELLER_NAME', ''), CV_FLAG_COL: False})
             processed.add(sid)
+
     final_df = pd.DataFrame(rows)
-    for c in ["ProductSetSid", "ParentSKU", "Status", "Reason", "Comment", "FLAG", "SellerName"]:
-        if c not in final_df.columns: final_df[c] = ""
+    for c in ["ProductSetSid", "ParentSKU", "Status", "Reason", "Comment", "FLAG", "SellerName", CV_FLAG_COL]:
+        if c not in final_df.columns: final_df[c] = "" if c != CV_FLAG_COL else False
     return country_validator.ensure_status_column(final_df), results
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -1286,7 +1239,7 @@ def get_default_country():
     except: pass
     return "Kenya"
 
-if 'selected_country' not in st.session_state: 
+if 'selected_country' not in st.session_state:
     st.session_state.selected_country = get_default_country()
 
 if st.session_state.main_toasts:
@@ -1336,7 +1289,6 @@ st.header(f":material/upload_file: {_t('upload_files')}", anchor=False)
 
 current_country = st.session_state.get('selected_country', get_default_country())
 
-# ── Flag SVG definitions (inline, no external files needed) ───────────────────
 _FLAG_SVGS = {
     "Kenya": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <path fill="#006600" d="M0 0h512v512H0z"/>
@@ -1375,12 +1327,10 @@ _FLAG_SVGS = {
 }
 
 def _svg_to_b64(svg_str: str) -> str:
-    # Decode to utf-8 properly in base64 encoding ensuring flags show
     encoded = base64.b64encode(svg_str.strip().encode('utf-8')).decode('utf-8')
     return f"data:image/svg+xml;base64,{encoded}"
 
-# Load from local SVG files if present, fall back to inline definitions
-_FLAG_DIR = Path("flags")  # put ke.svg, ug.svg, ng.svg, gh.svg, ma.svg here
+_FLAG_DIR = Path("flags")
 _FILE_MAP = {"Kenya":"ke","Uganda":"ug","Nigeria":"ng","Ghana":"gh","Morocco":"ma"}
 _flag_b64 = {}
 for _cname, _code in _FILE_MAP.items():
@@ -1460,8 +1410,6 @@ function selectCountry(name) {{
   document.querySelectorAll('.flag-btn').forEach(b => b.classList.remove('active'));
   var btn = document.getElementById('btn-' + name);
   if (btn) btn.classList.add('active');
-
-  // Write to Streamlit bridge
   try {{
     var par = window.parent;
     var inputs = par.document.querySelectorAll('input[type="text"]');
@@ -1484,10 +1432,8 @@ function selectCountry(name) {{
 </script>
 """
 
-# Slightly increased height to avoid the iframe hiding content borders/drop shadows.
 components.html(_flag_selector_html, height=85, scrolling=False)
 
-# Bridge input — hidden, receives country name from the HTML selector
 _country_bridge = st.text_input(
     "country_bridge",
     value="",
@@ -1509,15 +1455,12 @@ if country_choice and country_choice != current_country:
     st.session_state.display_df_cache = {}
     st.session_state.flags_expanded_initialized = False
     st.session_state.ui_lang = "fr" if country_choice == "Morocco" else "en"
-    st.session_state.country_bridge_counter += 1  # reset bridge so it doesn't re-fire
+    st.session_state.country_bridge_counter += 1
     st.toast(f"Switching to {country_choice}…", icon=":material/public:")
     st.rerun()
 
 country_validator = CountryValidator(st.session_state.selected_country)
 
-# ── Clear-all shortcut ────────────────────────────────────────────────────────
-# Cycling the key forces Streamlit to unmount + remount the file_uploader,
-# which is the only reliable way to clear its internal file list.
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -1545,7 +1488,7 @@ if _has_files:
         _dead_keys = [k for k in st.session_state.keys() if k.startswith(("quick_rej_", "grid_chk_", "toast_", "_sf_"))]
         for k in _dead_keys:
             del st.session_state[k]
-        st.session_state.uploader_key += 1  # remounts the uploader, clearing its UI
+        st.session_state.uploader_key += 1
         st.rerun()
 
 uploaded_files = st.file_uploader(
@@ -1567,18 +1510,15 @@ elif uploaded_files is not None and len(uploaded_files) == 0:
     st.session_state.display_df_cache = {}
     st.session_state.last_processed_files = "empty"
 
-# ── Large-file guard: quick row-count estimate from cached bytes ──────────────
 _large_file_threshold = 5_000
 _total_estimated_rows = 0
 for _fc in st.session_state.get("cached_uploaded_files", []):
     try:
         _peek = BytesIO(_fc["bytes"])
         if _fc["name"].endswith(".xlsx"):
-            _total_estimated_rows += pd.read_excel(_peek, engine="openpyxl", nrows=1, dtype=str).shape[0]  # just check it opens
-            # Estimate from file size: ~500 bytes/row for xlsx
+            _total_estimated_rows += pd.read_excel(_peek, engine="openpyxl", nrows=1, dtype=str).shape[0]
             _total_estimated_rows += max(0, len(_fc["bytes"]) // 500 - 1)
         else:
-            # CSV: count newlines for a fast estimate
             _total_estimated_rows += _fc["bytes"].count(b"\n")
     except Exception:
         pass
@@ -1614,7 +1554,7 @@ if st.session_state.get('last_processed_files') != process_signature:
         _engine_for_cache = _get_cat_matcher_engine() if _CAT_MATCHER_AVAILABLE else None
         _learning_stamp   = str(len(_engine_for_cache.learning_db)) if _engine_for_cache else "0"
         sig_hash = hashlib.md5((process_signature + _learning_stamp).encode()).hexdigest()
-        
+
         cached_data = load_df_parquet(f"{sig_hash}_data.parquet")
         cached_report = load_df_parquet(f"{sig_hash}_report.parquet")
 
@@ -1626,7 +1566,6 @@ if st.session_state.get('last_processed_files') != process_signature:
         else:
             try:
                 with st.status("Processing files…", expanded=True) as _status:
-                    # ── Step 1: Read files ───────────────────────────────────
                     st.write("Reading uploaded file(s)…")
                     all_dfs = []
                     file_sids_sets = []
@@ -1647,7 +1586,6 @@ if st.session_state.get('last_processed_files') != process_signature:
                         st.info("Post-QC file detected. Please use the Post-QC page.", icon=":material/fact_check:")
                         st.session_state.last_processed_files = process_signature
                     else:
-                        # ── Step 2: Standardise & merge ─────────────────────
                         st.write("Standardising and merging data…")
                         std_dfs = []
                         for raw_data in all_dfs:
@@ -1656,30 +1594,29 @@ if st.session_state.get('last_processed_files') != process_signature:
                                 std_data['PRODUCT_SET_SID'] = std_data['PRODUCT_SET_SID'].astype(str).str.strip()
                                 file_sids_sets.append(set(std_data['PRODUCT_SET_SID'].unique()))
                             std_dfs.append(std_data)
-                        
+
                         merged_data = pd.concat(std_dfs, ignore_index=True)
                         st.session_state.intersection_sids = set.intersection(*file_sids_sets) if len(file_sids_sets) > 1 else set()
                         st.session_state.intersection_count = len(st.session_state.intersection_sids)
 
-                        # ── Step 3: Schema validation ────────────────────────
                         st.write("Validating file schema…")
                         data_prop = propagate_metadata(merged_data)
                         is_valid, errors = validate_input_schema(data_prop)
-                        
+
                         if is_valid:
                             data_filtered, det_names = filter_by_country(data_prop, country_validator)
                             if data_filtered.empty:
                                 _status.update(label="No matching products found", state="error", expanded=True)
                                 st.error(f"No {country_validator.country} products found.", icon=":material/error:")
                                 st.stop()
-                            
+
                             actual_counts = data_filtered.groupby('PRODUCT_SET_SID')['PRODUCT_SET_SID'].transform('count')
                             if 'COUNT_VARIATIONS' in data_filtered.columns:
                                 file_counts = pd.to_numeric(data_filtered['COUNT_VARIATIONS'], errors='coerce').fillna(1)
                                 data_filtered['COUNT_VARIATIONS'] = actual_counts.combine(file_counts, max)
                             else:
                                 data_filtered['COUNT_VARIATIONS'] = actual_counts
-                                
+
                             data = data_filtered.drop_duplicates(subset=['PRODUCT_SET_SID'], keep='first')
                             if '_IS_MULTI_COUNTRY' not in data.columns: data['_IS_MULTI_COUNTRY'] = False
                             data_has_warranty = all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION'])
@@ -1687,20 +1624,19 @@ if st.session_state.get('last_processed_files') != process_signature:
                                 if c in data.columns: data[c] = data[c].astype(str).fillna('')
                             if 'COLOR_FAMILY' not in data.columns: data['COLOR_FAMILY'] = ""
 
-                            # ── Step 4: Run validators ───────────────────────
                             st.write(f"Running validation rules on {len(data):,} products…")
                             data_hash = df_hash(data) + country_validator.code
                             final_report, _ = cached_validate_products(data_hash, data, support_files, country_validator.code, data_has_warranty)
 
-                            # ── Step 5: Image checks summary ─────────────────
-                            _img_flags = ["Poor images", "Image Stretched", "Image Blurry", "Image Mismatch"]
+                            _img_flags = ["Poor images", "Image Stretched", "Image Blurry", "Image Mismatch",
+                                          "Image Product Coverage", "Image Visual Duplicate",
+                                          "Image Color Mismatch", "Image Exposure"]
                             _img_count = int(final_report[final_report['FLAG'].isin(_img_flags)].shape[0])
                             if _img_count:
                                 st.write(f"Image checks complete — {_img_count} product(s) flagged.")
                             else:
                                 st.write("Image checks complete — no image issues found.")
 
-                            # ── Step 6: Save & pre-warm ──────────────────────
                             st.write("Saving results and pre-warming review grid…")
                             st.session_state.final_report = final_report
                             st.session_state.all_data_map = data
@@ -1712,7 +1648,6 @@ if st.session_state.get('last_processed_files') != process_signature:
                             try:
                                 from constants import GRID_COLS
                                 _fr = final_report
-                                _committed_sids = set()
                                 _valid_sids = _fr[_fr["Status"] == "Approved"]["ProductSetSid"].tolist()
                                 if "MAIN_IMAGE" not in data.columns:
                                     data["MAIN_IMAGE"] = ""
@@ -1766,7 +1701,7 @@ def restore_single_item(sid):
     st.session_state.main_toasts.append("Reverted selections.")
 
 # -------------------------------------------------
-# JTBRIDGE (HTML GRID MESSAGE HANDLER)
+# JTBRIDGE
 # -------------------------------------------------
 _bridge_val = st.text_input(
     "jtbridge", value="",
@@ -1785,13 +1720,11 @@ if _bridge_val:
                 for _sid, _rkey in _payload.items(): _rgroups.setdefault(_rkey, []).append(_sid)
                 _total = 0
                 for _rkey, _sids in _rgroups.items():
-                    # ── Handle Custom Comments from the frontend ──
                     if _rkey.startswith("Other Reason (Custom): "):
                         _flag = "Other Reason (Custom)"
                         _code = "1000007 - Other Reason"
-                        _cmt = _rkey.split(": ", 1)[1] # Extract the comment they typed
+                        _cmt = _rkey.split(": ", 1)[1]
                     else:
-                        # Inline fallback for new image flags not yet in constants.REASON_MAP
                         _IMAGE_FLAG_FALLBACK = {
                             "REJECT_IMG_STRETCHED":  "Image Stretched",
                             "REJECT_IMG_BLURRY":     "Image Blurry",
@@ -1804,17 +1737,17 @@ if _bridge_val:
                         _code = _rinfo['reason']
                         _cmt_lang = 'fr' if st.session_state.selected_country == "Morocco" else 'en'
                         _cmt = _rinfo.get(_cmt_lang, _rinfo.get('en'))
-                    
+
                     st.session_state.final_report.loc[
                         st.session_state.final_report["ProductSetSid"].isin(_sids),
                         ["Status", "Reason", "Comment", "FLAG"]
                     ] = ["Rejected", _code, _cmt, _flag]
-                    
+
                     for _s in _sids:
                         st.session_state[f"quick_rej_{_s}"] = True
                         st.session_state[f"quick_rej_reason_{_s}"] = _flag
                     _total += len(_sids)
-                    
+
                 st.session_state.exports_cache.clear()
                 st.session_state.display_df_cache.clear()
                 st.session_state.main_toasts.append(f"Rejected {_total} product(s)")
@@ -1849,15 +1782,23 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
     st.header(f":material/bar_chart: {_t('val_results')}", anchor=False)
 
     with st.container(border=True):
-        cols = st.columns(5 if st.session_state.layout_mode == "wide" else 3)
+        cols = st.columns(6 if st.session_state.layout_mode == "wide" else 3)
         is_nigeria = st.session_state.get('selected_country') == 'Nigeria'
         multi_count = int(data['_IS_MULTI_COUNTRY'].sum()) if '_IS_MULTI_COUNTRY' in data.columns else 0
+
+        # ── OpenCV-detected count ──────────────────────────────────────────
+        _cv_flags = [
+            "Image Product Coverage", "Image Visual Duplicate",
+            "Image Color Mismatch", "Image Exposure", "Image Blurry",
+        ]
+        _cv_count = int(fr[fr['FLAG'].isin(_cv_flags)].shape[0])
 
         metrics_config = [
             (_t("total_prod"),  len(data), JUMIA_COLORS['dark_gray']),
             (_t("approved"),    len(app_df), JUMIA_COLORS['success_green']),
             (_t("rejected"),    len(rej_df), JUMIA_COLORS['jumia_red']),
             (_t("rej_rate"),    f"{(len(rej_df)/len(data)*100) if len(data)>0 else 0:.1f}%", JUMIA_COLORS['primary_orange']),
+            ("📷 CV Detected",  _cv_count, "#856404"),
             (_t("multi_skus") if is_nigeria else _t("common_skus"), multi_count if is_nigeria else st.session_state.intersection_count, JUMIA_COLORS['warning_yellow'] if is_nigeria else JUMIA_COLORS['medium_gray']),
         ]
         for i, (label, value, color) in enumerate(metrics_config):
@@ -1867,7 +1808,7 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
 
     st.subheader(f":material/flag: {_t('flags_breakdown')}", anchor=False)
 
-    # ── Near-blurry image commentary (201–299px) — informational, not rejected ──
+    # ── Near-blurry image commentary ──────────────────────────────────────
     _blurry_commentary = st.session_state.get('_image_blurry_commentary', {})
     _commentary_in_scope = {
         sid: comment for sid, comment in _blurry_commentary.items()
@@ -1892,6 +1833,37 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
                     })
             if _advisory_rows:
                 st.dataframe(pd.DataFrame(_advisory_rows), hide_index=True, use_container_width=True)
+
+    # ── Low product coverage advisory (OpenCV) ────────────────────────────
+    _coverage_commentary = st.session_state.get('_coverage_commentary', {})
+    _cov_in_scope = {
+        sid: comment for sid, comment in _coverage_commentary.items()
+        if not fr[fr['ProductSetSid'] == sid].empty
+        and fr[fr['ProductSetSid'] == sid]['Status'].eq('Approved').any()
+    }
+    if _cov_in_scope:
+        with st.expander(
+            f":material/photo_camera: Low Image Coverage Advisory — {len(_cov_in_scope)} product(s) (not rejected)",
+            expanded=False,
+        ):
+            st.info(
+                "These approved products have a product that fills less than 75% of the image canvas. "
+                "Not rejected — advisory only. Products below 55% coverage are automatically rejected.",
+                icon=":material/info:",
+            )
+            _cov_rows = []
+            for _sid, _comment in _cov_in_scope.items():
+                _row = data[data['PRODUCT_SET_SID'] == _sid]
+                if not _row.empty:
+                    _cov_rows.append({
+                        'PRODUCT_SET_SID': _sid,
+                        'NAME': _row.iloc[0].get('NAME', ''),
+                        'SELLER_NAME': _row.iloc[0].get('SELLER_NAME', ''),
+                        'Coverage Note': _comment,
+                    })
+            if _cov_rows:
+                st.dataframe(pd.DataFrame(_cov_rows), hide_index=True, use_container_width=True)
+
     if not rej_df.empty:
         if not st.session_state.flags_expanded_initialized and not rej_df.empty:
             top_flag = rej_df['FLAG'].value_counts().index[0]
@@ -1900,11 +1872,23 @@ if _files_for_processing and not st.session_state.final_report.empty and st.sess
 
         for title in rej_df['FLAG'].unique():
             df_flagged = rej_df[rej_df['FLAG'] == title]
-            with st.expander(f"{title} ({len(df_flagged)})", key=f"exp_{title}"):
+
+            # ── CV badge in expander header ───────────────────────────────
+            _is_cv_flag = title in _cv_flags
+            _cv_label = " 📷" if _is_cv_flag else ""
+            _cv_count_this = int(df_flagged[CV_FLAG_COL].sum()) if CV_FLAG_COL in df_flagged.columns else 0
+            _cv_sub = f" · {_cv_count_this} OpenCV" if _cv_count_this > 0 and not _is_cv_flag else ""
+
+            with st.expander(f"{title}{_cv_label} ({len(df_flagged)}){_cv_sub}", key=f"exp_{title}"):
+                # Show CV badge legend inside the expander if relevant
+                if _cv_count_this > 0 or _is_cv_flag:
+                    st.markdown(
+                        f"{render_cv_badge()} &nbsp; Products marked with this badge were detected by OpenCV image analysis.",
+                        unsafe_allow_html=True,
+                    )
                 render_flag_expander(title, df_flagged, data, all(c in data.columns for c in ['PRODUCT_WARRANTY', 'WARRANTY_DURATION']), support_files, country_validator, cached_validate_products)
     else:
         st.success("All products passed validation — no rejections found.")
-
 
     # ==========================================
     # CALL EXTERNAL RENDERERS
