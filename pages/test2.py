@@ -1229,12 +1229,12 @@ st.markdown(f"""
     <style>
         {rtl_css}
         div[data-testid="stTextInput"]:has(input[placeholder="JTBRIDGE_UNIQUE_DO_NOT_USE"]),
-        div[data-testid="stTextInput"]:has(input[placeholder="COUNTRY_BRIDGE_DO_NOT_USE"]) {
+        div[data-testid="stTextInput"]:has(input[placeholder="COUNTRY_BRIDGE_DO_NOT_USE"]) {{
             position: absolute !important; width: 1px !important; height: 1px !important;
             padding: 0 !important; margin: -1px !important; overflow: hidden !important;
             clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important;
             border: 0 !important; opacity: 0 !important; z-index: -9999 !important;
-        }
+        }}
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
         :root {{
             --jumia-orange: {JUMIA_COLORS['primary_orange']};
@@ -1375,7 +1375,9 @@ _FLAG_SVGS = {
 }
 
 def _svg_to_b64(svg_str: str) -> str:
-    return "data:image/svg+xml;base64," + base64.b64encode(svg_str.strip().encode()).decode()
+    # Decode to utf-8 properly in base64 encoding ensuring flags show
+    encoded = base64.b64encode(svg_str.strip().encode('utf-8')).decode('utf-8')
+    return f"data:image/svg+xml;base64,{encoded}"
 
 # Load from local SVG files if present, fall back to inline definitions
 _FLAG_DIR = Path("flags")  # put ke.svg, ug.svg, ng.svg, gh.svg, ma.svg here
@@ -1385,7 +1387,11 @@ for _cname, _code in _FILE_MAP.items():
     _svg_path = _FLAG_DIR / f"{_code}.svg"
     if _svg_path.exists():
         try:
-            _flag_b64[_cname] = _svg_to_b64(_svg_path.read_text())
+            content = _svg_path.read_text(encoding='utf-8').strip()
+            if content:
+                _flag_b64[_cname] = _svg_to_b64(content)
+            else:
+                _flag_b64[_cname] = _svg_to_b64(_FLAG_SVGS[_cname])
         except Exception:
             _flag_b64[_cname] = _svg_to_b64(_FLAG_SVGS[_cname])
     else:
@@ -1408,6 +1414,7 @@ _flag_buttons_html = "".join([
 
 _flag_selector_html = f"""
 <style>
+  body {{ margin: 0; padding: 0; background: transparent; }}
   .flag-bar {{
     display: flex; gap: 8px; align-items: center;
     padding: 6px 0; flex-wrap: wrap;
@@ -1477,7 +1484,8 @@ function selectCountry(name) {{
 </script>
 """
 
-components.html(_flag_selector_html, height=70, scrolling=False)
+# Slightly increased height to avoid the iframe hiding content borders/drop shadows.
+components.html(_flag_selector_html, height=85, scrolling=False)
 
 # Bridge input — hidden, receives country name from the HTML selector
 _country_bridge = st.text_input(
@@ -1577,7 +1585,7 @@ for _fc in st.session_state.get("cached_uploaded_files", []):
 
 if _total_estimated_rows > _large_file_threshold:
     st.info(
-        f"📂 **Large file detected** (~{_total_estimated_rows:,} rows estimated) — "
+        f"**Large file detected** (~{_total_estimated_rows:,} rows estimated) — "
         "validation may take 30–60 seconds. Image checks run in parallel to keep things fast.",
         icon=":material/hourglass_top:",
     )
@@ -1617,9 +1625,9 @@ if st.session_state.get('last_processed_files') != process_signature:
             st.toast("Loaded from cache", icon=":material/bolt:")
         else:
             try:
-                with st.status("⚙️ Processing files…", expanded=True) as _status:
+                with st.status("Processing files…", expanded=True) as _status:
                     # ── Step 1: Read files ───────────────────────────────────
-                    st.write("📂 Reading uploaded file(s)…")
+                    st.write("Reading uploaded file(s)…")
                     all_dfs = []
                     file_sids_sets = []
                     detected_modes = []
@@ -1640,7 +1648,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                         st.session_state.last_processed_files = process_signature
                     else:
                         # ── Step 2: Standardise & merge ─────────────────────
-                        st.write("🔧 Standardising and merging data…")
+                        st.write("Standardising and merging data…")
                         std_dfs = []
                         for raw_data in all_dfs:
                             std_data = standardize_input_data(raw_data)
@@ -1654,7 +1662,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                         st.session_state.intersection_count = len(st.session_state.intersection_sids)
 
                         # ── Step 3: Schema validation ────────────────────────
-                        st.write("✅ Validating file schema…")
+                        st.write("Validating file schema…")
                         data_prop = propagate_metadata(merged_data)
                         is_valid, errors = validate_input_schema(data_prop)
                         
@@ -1680,7 +1688,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                             if 'COLOR_FAMILY' not in data.columns: data['COLOR_FAMILY'] = ""
 
                             # ── Step 4: Run validators ───────────────────────
-                            st.write(f"🔍 Running validation rules on {len(data):,} products…")
+                            st.write(f"Running validation rules on {len(data):,} products…")
                             data_hash = df_hash(data) + country_validator.code
                             final_report, _ = cached_validate_products(data_hash, data, support_files, country_validator.code, data_has_warranty)
 
@@ -1688,12 +1696,12 @@ if st.session_state.get('last_processed_files') != process_signature:
                             _img_flags = ["Poor images", "Image Stretched", "Image Blurry", "Image Mismatch"]
                             _img_count = int(final_report[final_report['FLAG'].isin(_img_flags)].shape[0])
                             if _img_count:
-                                st.write(f"🖼️ Image checks complete — {_img_count} product(s) flagged.")
+                                st.write(f"Image checks complete — {_img_count} product(s) flagged.")
                             else:
-                                st.write("🖼️ Image checks complete — no image issues found.")
+                                st.write("Image checks complete — no image issues found.")
 
                             # ── Step 6: Save & pre-warm ──────────────────────
-                            st.write("💾 Saving results and pre-warming review grid…")
+                            st.write("Saving results and pre-warming review grid…")
                             st.session_state.final_report = final_report
                             st.session_state.all_data_map = data
                             st.session_state.last_processed_files = process_signature
@@ -1736,7 +1744,7 @@ if st.session_state.get('last_processed_files') != process_signature:
                             _rej_count = int(final_report[final_report['Status'] == 'Rejected'].shape[0])
                             _app_count = int(final_report[final_report['Status'] == 'Approved'].shape[0])
                             _status.update(
-                                label=f"✅ Done — {_app_count:,} approved, {_rej_count:,} rejected",
+                                label=f"Done — {_app_count:,} approved, {_rej_count:,} rejected",
                                 state="complete",
                                 expanded=False,
                             )
