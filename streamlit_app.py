@@ -320,8 +320,7 @@ def rule_based_short_desc(row: pd.Series) -> str:
     """
     bullets = []
 
-    # Bullet 1: Sport · Gender
-    # Use department_label (fuller/less truncated than type)
+    # Bullet 1: Sport · Gender — use department_label (fuller than truncated type)
     dept   = _clean(row.get("department_label", "")).replace("/", "·").title()
     sport  = dept if dept else _clean(row.get("type", "")).title()
     g_raw  = _clean(row.get("channable_gender", "")).split("|")[0].strip().upper()
@@ -330,8 +329,7 @@ def rule_based_short_desc(row: pd.Series) -> str:
         who = f" · {gender}" if gender else ""
         bullets.append(f"• {sport}{who}")
 
-    # Bullet 2: Key feature from designed_for
-    # Skip "Our team/designers created this…" boilerplate opener
+    # Bullet 2: Key feature — skip "Our team/designers" boilerplate opener
     desc = _clean(row.get("designed_for", ""))
     if desc:
         sentences = [s.strip() for s in re.split(r"[.!?]", desc) if len(s.strip()) > 20]
@@ -429,11 +427,7 @@ def ai_match_categories(rows_df, leaves, vectorizer, matrix, path_to_export,
 
 
 def _build_desc_query_per_model(group_df: pd.DataFrame) -> str:
-    """
-    Build a Groq prompt string from one model group.
-    Uses shared fields only — color/size excluded since description
-    applies to all SKUs of the model.
-    """
+    """One Groq query per model group — uses shared fields only, excludes color/size."""
     row   = group_df.iloc[0]
     parts = [
         _clean(row.get("product_name", "")),
@@ -446,22 +440,14 @@ def _build_desc_query_per_model(group_df: pd.DataFrame) -> str:
     return " | ".join(p for p in parts if p)
 
 
-def ai_short_descriptions(rows_df: pd.DataFrame, api_key: str, model: str,
-                          concurrency: int = 10) -> list:
+def ai_short_descriptions(rows_df, api_key, model, concurrency=10):
     """
     Generate short descriptions via Groq, deduplicated per model_code.
-
-    Flow:
-      1. Group rows_df by model_code → one Groq call per unique model (~5x fewer calls)
-      2. Fan the result back out to every matching row
-      3. Fall back to rule_based_short_desc() for any failed Groq call
-
-    Returns a list[str] aligned 1-to-1 with rows_df.
+    ~5x fewer API calls since all SKUs of a model share the same description.
     """
     # Step 1: one query per unique model_code
     model_queries: dict = {}
     model_repr:    dict = {}
-
     for i, (_, row) in enumerate(rows_df.iterrows()):
         mc = str(row.get("model_code", "")).strip()
         if mc and mc not in model_queries:
@@ -484,7 +470,7 @@ def ai_short_descriptions(rows_df: pd.DataFrame, api_key: str, model: str,
             bullets = data.get("bullets", [])
             model_to_desc[mc] = "\n".join(f"• {b}" for b in bullets[:3])
 
-    # Step 3: fan out to every row
+    # Step 3: fan out — every SKU row gets its model's description
     descs = []
     for _, row in rows_df.iterrows():
         mc = str(row.get("model_code", "")).strip()
@@ -492,7 +478,6 @@ def ai_short_descriptions(rows_df: pd.DataFrame, api_key: str, model: str,
             descs.append(model_to_desc[mc])
         else:
             descs.append(rule_based_short_desc(row))
-
     return descs
 
 
@@ -644,8 +629,8 @@ with st.sidebar:
     st.header("🔎 Search Fields")
     search_fields = st.multiselect(
         "Match terms against",
-        ["model_code", "model_label", "product_name", "sku_num_sku_r3", "Jumia SKU", "bar_code"],
-        default=["model_code", "model_label", "product_name"],
+        ["sku_num_sku_r3", "model_code", "model_label", "product_name", "Jumia SKU", "bar_code"],
+        default=["sku_num_sku_r3"],
     )
     st.markdown("---")
     show_images = st.checkbox("Show product images", value=True)
@@ -713,7 +698,12 @@ data_cols        = [c for c in df_master.columns if c not in img_cols_present]
 def search(q: str) -> pd.DataFrame:
     mask = pd.Series(False, index=df_master.index)
     for field in search_fields:
-        if field in df_master.columns:
+        if field not in df_master.columns:
+            continue
+        if field == "sku_num_sku_r3":
+            # Exact match — prevents e.g. "4271703" matching "42717030"
+            mask |= df_master[field].fillna("").str.strip() == q.strip()
+        else:
             mask |= df_master[field].fillna("").str.lower().str.contains(q.lower(), regex=False)
     return df_master[mask].copy()
 
