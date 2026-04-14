@@ -48,7 +48,7 @@ h1 { color: #0082C3; }
 """, unsafe_allow_html=True)
 
 st.title("🏅 Decathlon Product Lookup")
-st.markdown("Search by model number or product name — view details, images, and **download a filled upload template**.")
+st.markdown("Search by SKU number — view details, images, and **download a filled upload template**.")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 IMAGE_COLS    = ["OG_image"] + [f"picture_{i}" for i in range(1, 11)]
@@ -710,9 +710,9 @@ queries = []
 
 with tab1:
     uploaded_list = st.file_uploader(
-        "Upload file with model numbers / product names",
+        "Upload file with SKU numbers",
         type=["xlsx", "csv", "txt"],
-        help="One value per row. For Excel/CSV, values must be in column A.",
+        help="One SKU per row. For Excel/CSV, SKUs must be in column A.",
     )
     if uploaded_list:
         ext = uploaded_list.name.rsplit(".", 1)[-1].lower()
