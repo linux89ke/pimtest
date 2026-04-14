@@ -735,9 +735,9 @@ with tab1:
 
 with tab2:
     manual = st.text_area(
-        "Enter one model number or product name per line",
+        "Enter one SKU number per line",
         height=160,
-        placeholder="8641696\nKEEPDRY DDY LS BLACK\n4271703",
+        placeholder="4273417\n4273418\n4273423",
     )
     if manual.strip():
         queries = [q.strip() for q in manual.strip().splitlines() if q.strip()]
