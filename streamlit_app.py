@@ -627,11 +627,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🔎 Search Fields")
-    search_fields = st.multiselect(
-        "Match terms against",
-        ["sku_num_sku_r3", "model_code", "model_label", "product_name", "Jumia SKU", "bar_code"],
-        default=["sku_num_sku_r3"],
-    )
+    also_search_name = st.checkbox("Also search by product name", value=False)
     st.markdown("---")
     show_images = st.checkbox("Show product images", value=True)
     max_images  = st.slider("Max images per product", 1, 11, 5)
@@ -697,14 +693,11 @@ data_cols        = [c for c in df_master.columns if c not in img_cols_present]
 
 def search(q: str) -> pd.DataFrame:
     mask = pd.Series(False, index=df_master.index)
-    for field in search_fields:
-        if field not in df_master.columns:
-            continue
-        if field == "sku_num_sku_r3":
-            # Exact match — prevents e.g. "4271703" matching "42717030"
-            mask |= df_master[field].fillna("").str.strip() == q.strip()
-        else:
-            mask |= df_master[field].fillna("").str.lower().str.contains(q.lower(), regex=False)
+    # Always exact-match on SKU
+    mask |= df_master["sku_num_sku_r3"].fillna("").str.strip() == q.strip()
+    # Optionally also search product name
+    if also_search_name and "product_name" in df_master.columns:
+        mask |= df_master["product_name"].fillna("").str.lower().str.contains(q.lower(), regex=False)
     return df_master[mask].copy()
 
 
